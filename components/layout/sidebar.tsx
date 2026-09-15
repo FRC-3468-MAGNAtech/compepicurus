@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { ChevronsLeft, ChevronsRight, LogOut, Trophy } from "lucide-react";
 import { mainNav, secondaryNav, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
@@ -86,33 +86,36 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
         </button>
       </motion.aside>
 
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={onClose}
-          />
-          <motion.aside
-            initial={{ x: -300, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: -300, opacity: 0 }}
-            transition={spring}
-            className="glass-panel absolute left-3 top-3 bottom-3 flex w-[272px] flex-col gap-4 overflow-y-auto p-4"
-          >
-            <SidebarInner
-              collapsed={false}
-              name={name}
-              role={role}
-              onLogout={handleLogout}
-              onNavigate={onClose}
-              scope="mobile"
+      <AnimatePresence>
+        {mobileOpen && (
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={spring}
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              onClick={onClose}
             />
-          </motion.aside>
-        </div>
-      )}
+            <motion.aside
+              initial={{ x: -300, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -300, opacity: 0 }}
+              transition={spring}
+              className="glass-panel absolute left-3 top-3 bottom-3 flex w-[272px] flex-col gap-4 overflow-y-auto p-4"
+            >
+              <SidebarInner
+                collapsed={false}
+                name={name}
+                role={role}
+                onLogout={handleLogout}
+                onNavigate={onClose}
+                scope="mobile"
+              />
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

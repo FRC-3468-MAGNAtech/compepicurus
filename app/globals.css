@@ -22,6 +22,11 @@
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
 
+  /* Solid scrim behind floating overlays (dropdowns, popovers, tooltips) so
+     blur alone never has to carry legibility over arbitrary page content. */
+  --overlay-bg: rgba(23, 7, 12, 0.82);
+  --overlay-border: rgba(255, 255, 255, 0.18);
+
   --radius-lg: 28px;
   --radius-md: 20px;
   --radius-sm: 14px;
@@ -47,6 +52,9 @@
   --glass-bg: rgba(255, 226, 150, 0.06);
   --glass-bg-strong: rgba(255, 226, 150, 0.1);
   --glass-border: rgba(255, 214, 120, 0.16);
+
+  --overlay-bg: rgba(22, 17, 10, 0.82);
+  --overlay-border: rgba(255, 214, 120, 0.22);
 }
 
 @theme inline {
@@ -112,6 +120,18 @@ body {
   border: 1px solid var(--glass-border);
 }
 
+/* Floating overlays only: dropdowns, selects, popovers, tooltips, context
+   menus. These sit directly over arbitrary page content with no full-screen
+   scrim behind them, so they need a much more solid backing than the big
+   page-level glass panels above — blur softens edges but doesn't guarantee
+   the underlying text is actually hidden. Do not use this for page cards. */
+.glass-overlay {
+  background: var(--overlay-bg);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid var(--overlay-border);
+}
+
 .glass-pill {
   background: var(--glass-bg);
   backdrop-filter: blur(20px) saturate(140%);
@@ -155,6 +175,10 @@ body {
   );
   background-size: 200% 100%;
   animation: shimmer 1.8s ease-in-out infinite;
+}
+
+.bg-blob {
+  will-change: transform;
 }
 
 @keyframes drift-a {

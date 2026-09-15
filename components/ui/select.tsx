@@ -1,12 +1,45 @@
 "use client";
 
+import { createContext, useContext, useState } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
-export const Select = SelectPrimitive.Root;
+// Radix's own Presence only recognizes CSS animations/transitions when
+// deciding whether to keep a closed element mounted — it can't see Framer
+// Motion's WAAPI-driven exit animation, so without this it unmounts
+// SelectContent immediately and the exit animation never gets to play.
+// `forceMount` bypasses Radix's presence entirely; we track `open` ourselves
+// and let AnimatePresence own the mount/unmount lifecycle instead.
+const SelectOpenContext = createContext(false);
+
+export function Select({
+  open,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Root>) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen ?? false);
+  const isControlled = open !== undefined;
+  const resolvedOpen = isControlled ? open : internalOpen;
+
+  return (
+    <SelectOpenContext.Provider value={resolvedOpen}>
+      <SelectPrimitive.Root
+        open={open}
+        defaultOpen={defaultOpen}
+        onOpenChange={(v) => {
+          if (!isControlled) setInternalOpen(v);
+          onOpenChange?.(v);
+        }}
+        {...props}
+      />
+    </SelectOpenContext.Provider>
+  );
+}
+
 export const SelectValue = SelectPrimitive.Value;
 
 export function SelectTrigger({
@@ -35,26 +68,34 @@ export function SelectContent({
   children,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const open = useContext(SelectOpenContext);
+
   return (
     <SelectPrimitive.Portal>
-      <SelectPrimitive.Content
-        position="popper"
-        sideOffset={8}
-        className={cn(
-          "glass-strong z-50 overflow-hidden rounded-2xl border border-[var(--glass-border)] p-1 shadow-2xl",
-          className
+      <AnimatePresence>
+        {open && (
+          <SelectPrimitive.Content
+            position="popper"
+            sideOffset={8}
+            forceMount
+            className={cn(
+              "glass-overlay z-50 overflow-hidden rounded-2xl p-1 shadow-2xl",
+              className
+            )}
+            {...props}
+            asChild
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -4 }}
+              transition={spring}
+            >
+              <SelectPrimitive.Viewport>{children}</SelectPrimitive.Viewport>
+            </motion.div>
+          </SelectPrimitive.Content>
         )}
-        {...props}
-        asChild
-      >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96, y: -4 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={spring}
-        >
-          <SelectPrimitive.Viewport>{children}</SelectPrimitive.Viewport>
-        </motion.div>
-      </SelectPrimitive.Content>
+      </AnimatePresence>
     </SelectPrimitive.Portal>
   );
 }
