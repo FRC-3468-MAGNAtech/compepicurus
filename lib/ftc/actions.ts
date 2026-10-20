@@ -50,6 +50,8 @@ type RawMatch = {
   actualStartTime?: string | null;
   scoreRedFinal?: number | null;
   scoreBlueFinal?: number | null;
+  scoreRedFoul?: number | null;
+  scoreBlueFoul?: number | null;
   postResultTime?: string | null;
   teams: RawMatchTeam[];
 };
@@ -150,6 +152,8 @@ function toFtcMatch(type: MatchType, schedule: RawScheduleItem | null, match: Ra
     blueTeams,
     redScore: match?.scoreRedFinal ?? null,
     blueScore: match?.scoreBlueFinal ?? null,
+    redPenaltyPoints: match?.scoreRedFoul ?? null,
+    bluePenaltyPoints: match?.scoreBlueFoul ?? null,
     startTime: schedule?.startTime ?? match?.actualStartTime ?? null,
   };
 }

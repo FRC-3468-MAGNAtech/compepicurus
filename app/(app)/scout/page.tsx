@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { CalendarX2, CheckCircle2, Send, UserCog } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CounterControl } from "@/components/scout/counter-control";
 import { FieldToggle } from "@/components/scout/field-toggle";
@@ -25,6 +25,8 @@ import {
   saveEntry,
   type ScoutEntryFields,
 } from "@/lib/scout-entries";
+import { recomputeForEvent } from "@/lib/analytics/recompute";
+import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
 
 const SECTIONS: ScoutSection[] = [
   { id: "assigned-match", label: "Assigned Match" },
@@ -46,8 +48,7 @@ const GENERAL_FLAGS: { key: keyof ScoutEntryFields; label: string }[] = [
 ];
 
 function matchLabel(assigned: AssignedMatch) {
-  const prefix = assigned.type === "Qualification" ? "Q" : assigned.type === "Playoff" ? "M" : "P";
-  return `${assigned.type} ${prefix}${assigned.match.matchNumber}`;
+  return `${assigned.type} ${MATCH_TYPE_PREFIX[assigned.type]}${assigned.match.matchNumber}`;
 }
 
 export default function MatchScoutFormPage() {
@@ -57,6 +58,7 @@ export default function MatchScoutFormPage() {
   const [assignedMatch, setAssignedMatch] = useState<AssignedMatch | null>(null);
   const [teamNumber, setTeamNumber] = useState<number | null>(null);
   const [fields, setFields] = useState<ScoutEntryFields>(initialScoutEntryFields);
+  const [comments, setComments] = useState("");
 
   const [matchDialogOpen, setMatchDialogOpen] = useState(false);
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
@@ -110,11 +112,18 @@ export default function MatchScoutFormPage() {
       teamNumber: teamNumber!,
       fields,
       score,
+      comments,
     });
+    // Recomputes the whole event's accuracy/flags (not just this entry) so a
+    // different robot's entry can flip from "Needs Robots" to resolved once
+    // its alliance partner is scouted too. Fire-and-forget: it never throws
+    // (every call inside is already error-handled) and shouldn't block reset.
+    void recomputeForEvent(activeEvent!.code, activeEvent!.season);
 
     setJustSubmitted(true);
     setTimeout(() => setJustSubmitted(false), 2200);
     setFields(initialScoutEntryFields);
+    setComments("");
     setAssignedMatch(null);
     setTeamNumber(null);
   };
@@ -252,6 +261,17 @@ export default function MatchScoutFormPage() {
                 onChange={(v) => setField(f.key, v as ScoutEntryFields[typeof f.key])}
               />
             ))}
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+              Comments
+            </label>
+            <Textarea
+              rows={3}
+              value={comments}
+              onChange={(e) => setComments(e.target.value)}
+              placeholder="Anything notable — robot issues, standout driving, penalties..."
+            />
           </div>
         </GlassPanel>
       </section>

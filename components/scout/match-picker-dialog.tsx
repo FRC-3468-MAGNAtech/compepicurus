@@ -11,6 +11,7 @@ import { BracketPicker } from "@/components/scout/bracket-picker";
 import { useFtcQuery } from "@/lib/ftc/use-ftc-query";
 import { getMatchesForEvent } from "@/lib/ftc/actions";
 import type { FtcEvent, FtcMatch, MatchType } from "@/lib/ftc/types";
+import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
 
 export type AssignedMatch = { type: MatchType; match: FtcMatch };
 
@@ -152,7 +153,7 @@ function MatchList({
         >
           <div className="flex items-center gap-3">
             <span className="font-semibold">
-              {type === "Qualification" ? "Q" : "M"}
+              {MATCH_TYPE_PREFIX[type]}
               {m.matchNumber}
             </span>
             {m.startTime && (

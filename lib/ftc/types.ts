@@ -38,6 +38,11 @@ export type FtcMatch = {
   blueTeams: number[];
   redScore: number | null;
   blueScore: number | null;
+  // Points awarded to this alliance for fouls committed by the opponent —
+  // already folded into redScore/blueScore, but exposed separately since the
+  // accuracy formula compares them against scouted robot totals on their own.
+  redPenaltyPoints: number | null;
+  bluePenaltyPoints: number | null;
   startTime: string | null;
 };
 

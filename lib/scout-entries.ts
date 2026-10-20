@@ -49,6 +49,37 @@ export function computeScore(fields: ScoutEntryFields): ScoreBreakdown {
   return { auto, teleop, endgame, total: auto + teleop + endgame };
 }
 
+export type AccuracyStatus = "complete" | "needs-robots" | "awaiting-results" | "not-applicable";
+
+export type AccuracyResult = {
+  status: AccuracyStatus;
+  value: number | null;
+  scoutedTotal: number | null;
+  penaltyPoints: number | null;
+  officialScore: number | null;
+};
+
+export const notApplicableAccuracy: AccuracyResult = {
+  status: "not-applicable",
+  value: null,
+  scoutedTotal: null,
+  penaltyPoints: null,
+  officialScore: null,
+};
+
+export type ManualFlagReason =
+  | "No teleop score"
+  | "No auto score"
+  | "Unrealistic scoring"
+  | "Wrong team scouted"
+  | "Scout started late"
+  | "Scout left early"
+  | "Duplicate entry"
+  | "Other";
+
+export type AutoFlag = { ruleId: string; dismissed: boolean };
+export type ManualFlag = { id: string; reason: ManualFlagReason; note?: string; addedAt: string };
+
 export type ScoutEntry = {
   id: string;
   scoutName: string;
@@ -58,7 +89,12 @@ export type ScoutEntry = {
   teamNumber: number;
   fields: ScoutEntryFields;
   score: ScoreBreakdown;
+  comments: string;
   submittedAt: string;
+  excluded: boolean;
+  autoFlags: AutoFlag[];
+  manualFlags: ManualFlag[];
+  accuracy: AccuracyResult | null;
 };
 
 const STORAGE_KEY = "compepicurus.scout-entries";
@@ -85,11 +121,17 @@ function persist(entries: ScoutEntry[]) {
   }
 }
 
-export function saveEntry(input: Omit<ScoutEntry, "id" | "submittedAt">): ScoutEntry {
+export function saveEntry(
+  input: Omit<ScoutEntry, "id" | "submittedAt" | "excluded" | "autoFlags" | "manualFlags" | "accuracy">
+): ScoutEntry {
   const entry: ScoutEntry = {
     ...input,
     id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     submittedAt: new Date().toISOString(),
+    excluded: false,
+    autoFlags: [],
+    manualFlags: [],
+    accuracy: null,
   };
   persist([...load(), entry]);
   return entry;
@@ -101,4 +143,19 @@ export function getEntries(): ScoutEntry[] {
 
 export function getEntriesForEvent(eventCode: string): ScoutEntry[] {
   return load().filter((e) => e.eventCode === eventCode);
+}
+
+export function updateEntry(id: string, patch: Partial<ScoutEntry>): ScoutEntry | null {
+  const entries = load();
+  const index = entries.findIndex((e) => e.id === id);
+  if (index === -1) return null;
+  const updated = { ...entries[index], ...patch };
+  const next = [...entries];
+  next[index] = updated;
+  persist(next);
+  return updated;
+}
+
+export function deleteEntry(id: string): void {
+  persist(load().filter((e) => e.id !== id));
 }
