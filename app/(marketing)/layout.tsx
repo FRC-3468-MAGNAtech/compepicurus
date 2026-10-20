@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { PlaceholderBanner } from "@/components/ui/placeholder-banner";
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -31,7 +32,12 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
         </div>
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main className="flex-1">
+        <div className="flex justify-center pt-4">
+          <PlaceholderBanner />
+        </div>
+        {children}
+      </main>
 
       <footer className="mt-16 flex flex-col items-center gap-3 py-8 text-sm text-[var(--muted-foreground)] sm:flex-row sm:justify-between">
         <span>&copy; {new Date().getFullYear()} FTC Team 3468 &mdash; MAGNAtech</span>
