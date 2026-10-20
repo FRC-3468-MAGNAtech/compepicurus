@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { GlassShadeControl } from "@/components/theme/glass-shade-control";
 import { PlaceholderBanner } from "@/components/ui/placeholder-banner";
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           <div className="hidden sm:block">
             <ThemeSwitcher compact />
           </div>
+          <GlassShadeControl compact side="bottom" />
           <Link href="/login">
             <Button variant="ghost" size="sm">
               Log in

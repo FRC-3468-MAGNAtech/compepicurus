@@ -5,6 +5,7 @@ import { Menu, Trophy } from "lucide-react";
 import { motion } from "framer-motion";
 import { springSnappy } from "@/lib/motion";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { GlassShadeControl } from "@/components/theme/glass-shade-control";
 
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   return (
@@ -20,6 +21,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       </Link>
       <div className="flex items-center gap-2">
         <ThemeSwitcher compact />
+        <GlassShadeControl compact side="bottom" />
         <motion.button
           whileTap={{ scale: 0.92 }}
           transition={springSnappy}

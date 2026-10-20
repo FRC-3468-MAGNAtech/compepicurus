@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { MockAuthProvider } from "@/lib/mock-auth";
 import { ActiveEventProvider } from "@/lib/active-event";
+import { GlassShadeProvider } from "@/lib/glass-shade";
 import { BackgroundBlobs } from "@/components/layout/background-blobs";
 
 const geistSans = Geist({
@@ -26,6 +27,10 @@ const themeInitScript = `
   try {
     var theme = localStorage.getItem("compepicurus.theme") || "team";
     document.documentElement.setAttribute("data-theme", theme);
+    var shade = parseFloat(localStorage.getItem("compepicurus.glass-shade"));
+    if (shade >= 0.3 && shade <= 2) {
+      document.documentElement.style.setProperty("--glass-shade", String(shade));
+    }
   } catch (e) {}
 })();
 `;
@@ -43,12 +48,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <ThemeProvider>
-          <MockAuthProvider>
-            <ActiveEventProvider>
-              <BackgroundBlobs />
-              {children}
-            </ActiveEventProvider>
-          </MockAuthProvider>
+          <GlassShadeProvider>
+            <MockAuthProvider>
+              <ActiveEventProvider>
+                <BackgroundBlobs />
+                {children}
+              </ActiveEventProvider>
+            </MockAuthProvider>
+          </GlassShadeProvider>
         </ThemeProvider>
       </body>
     </html>

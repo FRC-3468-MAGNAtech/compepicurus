@@ -17,14 +17,20 @@
   --blob-2: #1a0a12;
   --blob-3: #241102;
 
-  --glass-bg: rgba(255, 255, 255, 0.07);
-  --glass-bg-strong: rgba(255, 255, 255, 0.11);
+  /* User-adjustable glass intensity (see lib/glass-shade.tsx): a multiplier
+     on every glass surface's base alpha below, 1 = default. Persisted and
+     applied as an inline custom property on <html>, so it works the same
+     way across both themes without duplicating the control per-theme. */
+  --glass-shade: 1;
+
+  --glass-bg: rgba(255, 255, 255, calc(0.07 * var(--glass-shade)));
+  --glass-bg-strong: rgba(255, 255, 255, calc(0.11 * var(--glass-shade)));
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
 
   /* Solid scrim behind floating overlays (dropdowns, popovers, tooltips) so
      blur alone never has to carry legibility over arbitrary page content. */
-  --overlay-bg: rgba(23, 7, 12, 0.82);
+  --overlay-bg: rgba(23, 7, 12, calc(0.82 * var(--glass-shade)));
   --overlay-border: rgba(255, 255, 255, 0.18);
 
   --radius-lg: 28px;
@@ -49,11 +55,11 @@
   --blob-2: #140f08;
   --blob-3: #2e2308;
 
-  --glass-bg: rgba(255, 226, 150, 0.06);
-  --glass-bg-strong: rgba(255, 226, 150, 0.1);
+  --glass-bg: rgba(255, 226, 150, calc(0.06 * var(--glass-shade)));
+  --glass-bg-strong: rgba(255, 226, 150, calc(0.1 * var(--glass-shade)));
   --glass-border: rgba(255, 214, 120, 0.16);
 
-  --overlay-bg: rgba(22, 17, 10, 0.82);
+  --overlay-bg: rgba(22, 17, 10, calc(0.82 * var(--glass-shade)));
   --overlay-border: rgba(255, 214, 120, 0.22);
 }
 

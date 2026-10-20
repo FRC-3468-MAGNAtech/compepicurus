@@ -9,6 +9,7 @@ import { mainNav, secondaryNav, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { GlassShadeControl } from "@/components/theme/glass-shade-control";
 import { Avatar } from "@/components/ui/avatar";
 import { useMockAuth } from "@/lib/mock-auth";
 
@@ -163,7 +164,10 @@ function SidebarInner({
       </nav>
 
       <div className="flex flex-col gap-3 border-t border-[var(--glass-border)] pt-3">
-        {!collapsed && <ThemeSwitcher compact />}
+        <div className={cn("flex items-center gap-2", collapsed && "justify-center")}>
+          {!collapsed && <ThemeSwitcher compact />}
+          <GlassShadeControl compact />
+        </div>
         <div className="flex items-center gap-2.5 px-1">
           <Avatar name={name} size="sm" />
           {!collapsed && (
