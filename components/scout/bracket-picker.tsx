@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Trophy } from "lucide-react";
 import { useFtcQuery } from "@/lib/ftc/use-ftc-query";
 import { getPlayoffBracket } from "@/lib/ftc/actions";
 import type { BracketMatch, BracketStructure, FtcMatch } from "@/lib/ftc/types";
@@ -71,9 +71,15 @@ const COL_WIDTH = 190;
 const ROW_HEIGHT = 56;
 const BOX_WIDTH = 158;
 const BOX_HEIGHT = 48;
+// Left gutter for the rotated "Upper/Lower Bracket" labels, and a header row
+// for the Round 1-5/Finals column labels — matching the reference layout.
+const GUTTER_WIDTH = 34;
+const HEADER_HEIGHT = 30;
+
+const COLUMN_LABELS = ["Round 1", "Round 2", "Round 3", "Round 4", "Round 5", "Finals"];
 
 function slotPixel(slot: Slot) {
-  return { x: slot.col * COL_WIDTH, y: slot.row * ROW_HEIGHT };
+  return { x: slot.col * COL_WIDTH + GUTTER_WIDTH, y: slot.row * ROW_HEIGHT + HEADER_HEIGHT };
 }
 
 type SlotMatchMap = Partial<Record<SlotId, BracketMatch>>;
@@ -126,8 +132,11 @@ export function BracketPicker({
 
   const { slots, unrecognizedCount } = useMemo(() => mapBracketToSlots(bracketQuery.data), [bracketQuery.data]);
 
-  const width = (Math.max(...SLOTS.map((s) => s.col)) + 1) * COL_WIDTH + 24;
-  const height = (Math.max(...SLOTS.map((s) => s.row)) + 1) * ROW_HEIGHT + BOX_HEIGHT;
+  const width = (Math.max(...SLOTS.map((s) => s.col)) + 1) * COL_WIDTH + GUTTER_WIDTH + 24;
+  const height = (Math.max(...SLOTS.map((s) => s.row)) + 1) * ROW_HEIGHT + BOX_HEIGHT + HEADER_HEIGHT;
+
+  const upperRows = SLOTS.filter((s) => ["M1", "M2", "M3", "M4", "M7", "M8", "M11"].includes(s.id)).map((s) => s.row);
+  const lowerLeftRows = SLOTS.filter((s) => s.id === "M5" || s.id === "M6").map((s) => s.row);
 
   if (bracketQuery.status === "loading") {
     return <div className="glass-card p-6 text-center text-sm text-[var(--muted-foreground)]">Loading bracket…</div>;
@@ -151,6 +160,53 @@ export function BracketPicker({
       )}
       <div className="overflow-x-auto rounded-2xl border border-[var(--glass-border)] bg-black/10 p-3">
         <div className="relative" style={{ width, height }}>
+          {COLUMN_LABELS.map((label, col) => (
+            <div
+              key={label}
+              style={{ position: "absolute", left: col * COL_WIDTH + GUTTER_WIDTH, top: 0, width: BOX_WIDTH, height: HEADER_HEIGHT }}
+              className="flex items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]"
+            >
+              {label}
+            </div>
+          ))}
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: Math.min(...upperRows) * ROW_HEIGHT + HEADER_HEIGHT - 4,
+              width: GUTTER_WIDTH,
+              height: (Math.max(...upperRows) - Math.min(...upperRows)) * ROW_HEIGHT + BOX_HEIGHT + 8,
+            }}
+            className="flex items-center justify-center"
+          >
+            <span
+              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+              className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]"
+            >
+              Upper Bracket
+            </span>
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: Math.min(...lowerLeftRows) * ROW_HEIGHT + HEADER_HEIGHT - 4,
+              width: GUTTER_WIDTH,
+              height: (Math.max(...lowerLeftRows) - Math.min(...lowerLeftRows)) * ROW_HEIGHT + BOX_HEIGHT + 8,
+            }}
+            className="flex items-center justify-center"
+          >
+            <span
+              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+              className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]"
+            >
+              Lower Bracket
+            </span>
+          </div>
+          <Trophy
+            className="absolute h-5 w-5 text-[var(--color-secondary)]"
+            style={{ left: 5 * COL_WIDTH + GUTTER_WIDTH + BOX_WIDTH / 2 - 10, top: 2 * ROW_HEIGHT + HEADER_HEIGHT - 26 }}
+          />
           <svg className="pointer-events-none absolute inset-0" width={width} height={height}>
             {EDGES.map(([fromId, toId]) => {
               const from = SLOTS.find((s) => s.id === fromId)!;
