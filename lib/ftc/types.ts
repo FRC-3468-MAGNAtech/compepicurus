@@ -56,6 +56,7 @@ export type BracketMatch = {
 
 export type BracketRound = {
   label: string;
+  round: number;
   matches: BracketMatch[];
 };
 

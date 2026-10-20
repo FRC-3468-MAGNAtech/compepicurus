@@ -63,6 +63,7 @@ function buildRounds(
         .sort((a, b) => a.matchNumber - b.matchNumber);
       return {
         label: `${bracketName} Round ${round}`,
+        round,
         matches: roundMatches.map((m, i) => toBracketMatch(`${bracketName} R${round}M${i + 1}`, m)),
       };
     })
