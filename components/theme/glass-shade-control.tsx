@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Droplets, RotateCcw } from "lucide-react";
 import { DEFAULT_GLASS_SHADE, GLASS_SHADE_MAX, GLASS_SHADE_MIN, useGlassShade } from "@/lib/glass-shade";
+import { useGlassOverlap } from "@/lib/use-glass-overlap";
 import { springSnappy } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,7 @@ export function GlassShadeControl({ compact = false, side = "top" }: { compact?:
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const overGlass = useGlassOverlap(popoverRef, open);
 
   // Rendered via a portal to document.body — several of this button's real
   // placements (the sidebar, in particular) have `overflow-hidden` for their
@@ -92,6 +94,7 @@ export function GlassShadeControl({ compact = false, side = "top" }: { compact?:
                   left: coords.left,
                   top: side === "top" ? undefined : coords.top,
                   bottom: side === "top" ? window.innerHeight - coords.top : undefined,
+                  ...(overGlass ? {} : ({ "--glass-shade": 1 } as React.CSSProperties)),
                 }}
               >
                 <div className="mb-3 flex items-center justify-between">

@@ -1,11 +1,12 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useRef, useState } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { useGlassOverlap } from "@/lib/use-glass-overlap";
 
 // Radix's own Presence only recognizes CSS animations/transitions when
 // deciding whether to keep a closed element mounted — it can't see Framer
@@ -69,6 +70,12 @@ export function SelectContent({
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   const open = useContext(SelectOpenContext);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // Only shapes genuinely stacked over another glass surface should respond
+  // to the shading slider — detected from what's actually rendered
+  // underneath, not assumed just because this is a dropdown. See
+  // lib/use-glass-overlap.ts.
+  const overGlass = useGlassOverlap(contentRef, open);
 
   return (
     <SelectPrimitive.Portal>
@@ -86,10 +93,12 @@ export function SelectContent({
             asChild
           >
             <motion.div
+              ref={contentRef}
               initial={{ opacity: 0, scale: 0.96, y: -4 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: -4 }}
               transition={spring}
+              style={overGlass ? undefined : ({ "--glass-shade": 1 } as React.CSSProperties)}
             >
               <SelectPrimitive.Viewport>{children}</SelectPrimitive.Viewport>
             </motion.div>
