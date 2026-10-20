@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { MockAuthProvider } from "@/lib/mock-auth";
+import { ActiveEventProvider } from "@/lib/active-event";
 import { BackgroundBlobs } from "@/components/layout/background-blobs";
 
 const geistSans = Geist({
@@ -43,8 +44,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <ThemeProvider>
           <MockAuthProvider>
-            <BackgroundBlobs />
-            {children}
+            <ActiveEventProvider>
+              <BackgroundBlobs />
+              {children}
+            </ActiveEventProvider>
           </MockAuthProvider>
         </ThemeProvider>
       </body>
