@@ -29,10 +29,11 @@ async function buildMatchLookup(eventCode: string, season: number): Promise<Map<
  * just the new entry) is what lets a *different* robot's entry flip from
  * "Needs Robots" to "Complete" once its alliance partner gets scouted too.
  */
-export async function recomputeForEvent(eventCode: string, season: number): Promise<void> {
+export async function recomputeForEvent(teamId: string, eventCode: string, season: number): Promise<void> {
   const matchLookup = await buildMatchLookup(eventCode, season);
-  const entries = getEntriesForEvent(eventCode);
+  const entries = await getEntriesForEvent(teamId, eventCode);
 
+  const writes: Promise<void>[] = [];
   for (const entry of entries) {
     const match = matchLookup.get(matchKey(entry.matchType, entry.matchNumber)) ?? null;
     const allianceColor = match ? allianceForTeam(match, entry.teamNumber) : null;
@@ -65,6 +66,7 @@ export async function recomputeForEvent(eventCode: string, season: number): Prom
     const previouslyDismissed = new Set(entry.autoFlags.filter((f) => f.dismissed).map((f) => f.ruleId));
     const autoFlags = triggeredIds.map((ruleId) => ({ ruleId, dismissed: previouslyDismissed.has(ruleId) }));
 
-    updateEntry(entry.id, { accuracy, autoFlags });
+    writes.push(updateEntry(entry.id, { accuracy, autoFlags }));
   }
+  await Promise.all(writes);
 }

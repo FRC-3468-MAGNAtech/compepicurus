@@ -11,13 +11,16 @@ import { AnalyticsDataTable, type SortState } from "@/components/analytics/data-
 import { ConfigModal } from "@/components/analytics/config-modal";
 import { ImportCsvDialog } from "@/components/analytics/import-csv-dialog";
 import { useActiveEvent } from "@/lib/active-event";
+import { useAuth } from "@/lib/auth";
 import { GAMES, DEFAULT_GAME_ID } from "@/lib/analytics/game-schema";
 import { entriesToCsv } from "@/lib/analytics/csv";
 import { recomputeForEvent } from "@/lib/analytics/recompute";
-import { deleteEntry, getEntriesForEvent, updateEntry, type ManualFlagReason, type ScoutEntry } from "@/lib/scout-entries";
+import { deleteEntry, subscribeEntries, updateEntry, type ManualFlagReason, type ScoutEntry } from "@/lib/scout-entries";
 
 export default function MatchScoutAnalyticsPage() {
   const { activeEvent } = useActiveEvent();
+  const { user, profile } = useAuth();
+  const teamId = profile?.teamId ?? null;
 
   const [loaded, setLoaded] = useState(false);
   const [entries, setEntries] = useState<ScoutEntry[]>([]);
@@ -33,22 +36,22 @@ export default function MatchScoutAnalyticsPage() {
 
   const schema = GAMES[gameId] ?? GAMES[DEFAULT_GAME_ID];
 
-  const refresh = useCallback(() => {
-    if (!activeEvent) {
+  useEffect(() => {
+    if (!teamId || !activeEvent) {
+      // Deliberate: clears stale entries from a previous team/event once
+      // either becomes unavailable, rather than leaving them on screen.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries([]);
+      setLoaded(true);
       return;
     }
-    setEntries(getEntriesForEvent(activeEvent.code));
-  }, [activeEvent]);
-
-  useEffect(() => {
-    // Deliberately deferred to an effect: localStorage isn't available during
-    // SSR, so the first render matches the server (empty) and real entries
-    // sync in right after mount, same pattern as the other local data stores.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    refresh();
-    setLoaded(true);
-  }, [refresh]);
+    setLoaded(false);
+    const unsubscribe = subscribeEntries(teamId, activeEvent.code, (next) => {
+      setEntries(next);
+      setLoaded(true);
+    });
+    return unsubscribe;
+  }, [teamId, activeEvent]);
 
   const nameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -107,18 +110,16 @@ export default function MatchScoutAnalyticsPage() {
   };
 
   const handleRecalculate = async () => {
-    if (!activeEvent) return;
+    if (!activeEvent || !teamId) return;
     setRecalculating(true);
-    await recomputeForEvent(activeEvent.code, activeEvent.season);
-    refresh();
+    await recomputeForEvent(teamId, activeEvent.code, activeEvent.season);
     setRecalculating(false);
   };
 
   const withEntry = (id: string, patch: (entry: ScoutEntry) => Partial<ScoutEntry>) => {
     const entry = entries.find((e) => e.id === id);
     if (!entry) return;
-    updateEntry(id, patch(entry));
-    refresh();
+    void updateEntry(id, patch(entry));
   };
 
   const handleDismissAutoFlags = (id: string) =>
@@ -134,14 +135,13 @@ export default function MatchScoutAnalyticsPage() {
 
   const handleToggleExclude = (id: string) => {
     withEntry(id, (e) => ({ excluded: !e.excluded }));
-    if (activeEvent) void recomputeForEvent(activeEvent.code, activeEvent.season).then(refresh);
+    if (activeEvent && teamId) void recomputeForEvent(teamId, activeEvent.code, activeEvent.season);
   };
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
-    deleteEntry(deleteTarget.id);
+    void deleteEntry(deleteTarget.id);
     setDeleteTarget(null);
-    refresh();
   };
 
   if (!activeEvent) {
@@ -224,17 +224,20 @@ export default function MatchScoutAnalyticsPage() {
         onToggleExclude={handleToggleExclude}
       />
 
-      <ImportCsvDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        schema={schema}
-        eventCode={activeEvent.code}
-        existingEntries={entries}
-        onImported={() => {
-          refresh();
-          void recomputeForEvent(activeEvent.code, activeEvent.season).then(refresh);
-        }}
-      />
+      {teamId && user && (
+        <ImportCsvDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          schema={schema}
+          teamId={teamId}
+          uid={user.uid}
+          eventCode={activeEvent.code}
+          existingEntries={entries}
+          onImported={() => {
+            void recomputeForEvent(teamId, activeEvent.code, activeEvent.season);
+          }}
+        />
+      )}
 
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>

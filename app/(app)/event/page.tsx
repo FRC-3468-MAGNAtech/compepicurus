@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useActiveEvent } from "@/lib/active-event";
+import { usePermissions } from "@/lib/permissions";
 import { useFtcQuery } from "@/lib/ftc/use-ftc-query";
 import { getEvents, getMatchesForEvent, getTeamsForEvent } from "@/lib/ftc/actions";
 import { getDefaultSeason, getSelectableSeasons } from "@/lib/ftc/config";
@@ -33,6 +34,7 @@ function formatDateRange(start: string, end: string) {
 
 export default function EventSelectionPage() {
   const { activeEvent, setActiveEvent } = useActiveEvent();
+  const { isAdmin } = usePermissions();
   const seasons = useMemo(() => getSelectableSeasons(), []);
   const [season, setSeason] = useState(() => getDefaultSeason());
   const [search, setSearch] = useState("");
@@ -48,11 +50,12 @@ export default function EventSelectionPage() {
   }, [eventsQuery.data, search]);
 
   const selectEvent = (event: FtcEvent) => {
+    if (!isAdmin) return;
     if (activeEvent && activeEvent.code !== event.code) {
       setPendingEvent(event);
       return;
     }
-    setActiveEvent(event);
+    void setActiveEvent(event);
   };
 
   return (
@@ -60,7 +63,9 @@ export default function EventSelectionPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Active Event</h1>
         <p className="text-sm text-[var(--muted-foreground)]">
-          Pick the event the team is scouting right now &mdash; every other page reads from this.
+          {isAdmin
+            ? "Pick the event the team is scouting right now — every other page reads from this."
+            : "Only admins can change the active event — every other page reads from what they pick."}
         </p>
       </div>
 
@@ -118,7 +123,7 @@ export default function EventSelectionPage() {
             {filteredEvents.map((event, i) => (
               <motion.div key={event.code} variants={cardEntranceVariants} initial="hidden" animate="show" custom={i}>
                 <GlassPanel
-                  interactive
+                  interactive={isAdmin}
                   onClick={() => selectEvent(event)}
                   className={cn(
                     "flex h-full flex-col gap-3",
@@ -165,7 +170,7 @@ export default function EventSelectionPage() {
             </Button>
             <Button
               onClick={() => {
-                if (pendingEvent) setActiveEvent(pendingEvent);
+                if (pendingEvent) void setActiveEvent(pendingEvent);
                 setPendingEvent(null);
               }}
             >

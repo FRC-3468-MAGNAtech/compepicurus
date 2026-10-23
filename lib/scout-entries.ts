@@ -1,3 +1,19 @@
+"use client";
+
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  type Unsubscribe,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase/client";
 import type { MatchType } from "@/lib/ftc/types";
 
 export type ScoutEntryFields = {
@@ -80,8 +96,19 @@ export type ManualFlagReason =
 export type AutoFlag = { ruleId: string; dismissed: boolean };
 export type ManualFlag = { id: string; reason: ManualFlagReason; note?: string; addedAt: string };
 
+/** Matches lib/analytics/game-schema.ts's DEFAULT_GAME_ID — the one game/form this season. */
+const FORM_ID = "biobuzz";
+const FORM_VERSION = 1;
+
 export type ScoutEntry = {
   id: string;
+  teamId: string;
+  uid: string;
+  /** 'event' today; later prompts add 'practice' | 'live'. */
+  source: "event";
+  mode: null;
+  formId: string;
+  formVersion: number;
   scoutName: string;
   eventCode: string;
   matchType: MatchType;
@@ -90,6 +117,7 @@ export type ScoutEntry = {
   fields: ScoutEntryFields;
   score: ScoreBreakdown;
   comments: string;
+  /** Client-set ISO timestamp, usable immediately (including offline, before createdAt syncs). */
   submittedAt: string;
   excluded: boolean;
   autoFlags: AutoFlag[];
@@ -97,65 +125,70 @@ export type ScoutEntry = {
   accuracy: AccuracyResult | null;
 };
 
-const STORAGE_KEY = "compepicurus.scout-entries";
+const COLLECTION = "scoutEntries";
 
-let cache: ScoutEntry[] | null = null;
+export type SaveEntryInput = Pick<
+  ScoutEntry,
+  "scoutName" | "eventCode" | "matchType" | "matchNumber" | "teamNumber" | "fields" | "score" | "comments"
+>;
 
-function load(): ScoutEntry[] {
-  if (cache) return cache;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    cache = raw ? (JSON.parse(raw) as ScoutEntry[]) : [];
-  } catch {
-    cache = [];
-  }
-  return cache;
-}
-
-function persist(entries: ScoutEntry[]) {
-  cache = entries;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-  } catch {
-    // ignore storage failures (e.g. private browsing quota)
-  }
-}
-
-export function saveEntry(
-  input: Omit<ScoutEntry, "id" | "submittedAt" | "excluded" | "autoFlags" | "manualFlags" | "accuracy">
-): ScoutEntry {
-  const entry: ScoutEntry = {
+export async function saveEntry(teamId: string, uid: string, input: SaveEntryInput): Promise<void> {
+  await addDoc(collection(db, COLLECTION), {
     ...input,
-    id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    teamId,
+    uid,
+    source: "event",
+    mode: null,
+    formId: FORM_ID,
+    formVersion: FORM_VERSION,
     submittedAt: new Date().toISOString(),
+    createdAt: serverTimestamp(),
     excluded: false,
     autoFlags: [],
     manualFlags: [],
     accuracy: null,
-  };
-  persist([...load(), entry]);
-  return entry;
+  });
 }
 
-export function getEntries(): ScoutEntry[] {
-  return load();
+function toEntry(id: string, data: Record<string, unknown>): ScoutEntry {
+  return { id, ...data } as ScoutEntry;
 }
 
-export function getEntriesForEvent(eventCode: string): ScoutEntry[] {
-  return load().filter((e) => e.eventCode === eventCode);
+export async function getEntries(teamId: string): Promise<ScoutEntry[]> {
+  const snap = await getDocs(query(collection(db, COLLECTION), where("teamId", "==", teamId)));
+  return snap.docs.map((d) => toEntry(d.id, d.data()));
 }
 
-export function updateEntry(id: string, patch: Partial<ScoutEntry>): ScoutEntry | null {
-  const entries = load();
-  const index = entries.findIndex((e) => e.id === id);
-  if (index === -1) return null;
-  const updated = { ...entries[index], ...patch };
-  const next = [...entries];
-  next[index] = updated;
-  persist(next);
-  return updated;
+export async function getEntriesForEvent(teamId: string, eventCode: string): Promise<ScoutEntry[]> {
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where("teamId", "==", teamId), where("eventCode", "==", eventCode))
+  );
+  return snap.docs.map((d) => toEntry(d.id, d.data()));
 }
 
-export function deleteEntry(id: string): void {
-  persist(load().filter((e) => e.id !== id));
+/**
+ * Realtime subscription for one event's entries. `pendingWrites` counts how
+ * many of the returned docs are local writes not yet acknowledged by the
+ * server (Firestore tracks this per-document already — no custom bookkeeping
+ * needed), which is what drives the "N pending sync" indicator.
+ */
+export function subscribeEntries(
+  teamId: string,
+  eventCode: string,
+  callback: (entries: ScoutEntry[], pendingWrites: number) => void
+): Unsubscribe {
+  const q = query(collection(db, COLLECTION), where("teamId", "==", teamId), where("eventCode", "==", eventCode));
+  return onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
+    const entries = snap.docs.map((d) => toEntry(d.id, d.data()));
+    const pendingWrites = snap.docs.filter((d) => d.metadata.hasPendingWrites).length;
+    callback(entries, pendingWrites);
+  });
+}
+
+export async function updateEntry(id: string, patch: Partial<ScoutEntry>): Promise<void> {
+  await updateDoc(doc(db, COLLECTION, id), patch);
+}
+
+export async function deleteEntry(id: string): Promise<void> {
+  await deleteDoc(doc(db, COLLECTION, id));
 }

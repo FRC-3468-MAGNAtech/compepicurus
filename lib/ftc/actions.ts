@@ -3,6 +3,7 @@
 import { getDefaultSeason } from "./config";
 import { ftcFetch, FtcApiError } from "./http";
 import { buildPlayoffBracket } from "./bracket";
+import { requireUser } from "@/lib/server/require-user";
 import type {
   ActionResult,
   BracketStructure,
@@ -12,6 +13,11 @@ import type {
   FtcTeam,
   MatchType,
 } from "./types";
+
+const UNAUTHORIZED_RESULT = {
+  ok: false as const,
+  error: { code: "unauthorized" as const, message: "Sign in to view FIRST API data." },
+};
 
 // --- Raw FIRST API response shapes (only the fields we use) ---------------
 
@@ -161,6 +167,7 @@ function toFtcMatch(type: MatchType, schedule: RawScheduleItem | null, match: Ra
 // --- Public API --------------------------------------------------------
 
 export async function getEvents(params?: { season?: number; search?: string }): Promise<ActionResult<FtcEvent[]>> {
+  if (!(await requireUser())) return UNAUTHORIZED_RESULT;
   const season = params?.season ?? getDefaultSeason();
   return run(async () => {
     const res = await ftcFetch<{ events: RawEvent[] }>(`/${season}/events`);
@@ -176,6 +183,7 @@ export async function getEvents(params?: { season?: number; search?: string }): 
 }
 
 export async function getEvent(eventCode: string, season?: number): Promise<ActionResult<FtcEvent | null>> {
+  if (!(await requireUser())) return UNAUTHORIZED_RESULT;
   const resolvedSeason = season ?? getDefaultSeason();
   return run(async () => {
     const res = await ftcFetch<{ events: RawEvent[] }>(`/${resolvedSeason}/events`, { eventCode });
@@ -185,6 +193,7 @@ export async function getEvent(eventCode: string, season?: number): Promise<Acti
 }
 
 export async function getTeamsForEvent(eventCode: string, season?: number): Promise<ActionResult<FtcTeam[]>> {
+  if (!(await requireUser())) return UNAUTHORIZED_RESULT;
   const resolvedSeason = season ?? getDefaultSeason();
   return run(async () => {
     const res = await ftcFetch<{ teams: RawTeam[] }>(`/${resolvedSeason}/teams`, { eventCode });
@@ -202,6 +211,7 @@ export async function getMatchesForEvent(
   matchType: MatchType,
   season?: number
 ): Promise<ActionResult<FtcMatch[]>> {
+  if (!(await requireUser())) return UNAUTHORIZED_RESULT;
   // FIRST's API only publishes official Qualification/Playoff results —
   // practice matches are informal and never tracked, so there's no endpoint
   // to call. Returning an empty list here (rather than guessing at a request

@@ -10,12 +10,15 @@ export class FtcApiError extends Error {
   }
 }
 
-// Short-lived in-memory dedupe cache: several components can ask for the same
-// event's data within the same render pass (or in quick succession) without
-// each one hammering the upstream API. This is deliberately tiny/server-local —
-// the longer-lived "don't refetch across pages" cache lives client-side in
+// In-memory cache, keyed by request URL: several components (or several
+// different users, on a warm Vercel instance) can ask for the same event's
+// data within a short window without each one hammering the upstream API and
+// burning its rate limit. Server-local and reset on cold start — "light"
+// caching, not a durable layer — which is fine since FIRST's data changes on
+// the order of minutes during a live event, not seconds. The separate,
+// longer-lived "don't refetch across pages" cache lives client-side in
 // use-ftc-query.ts.
-const DEDUPE_TTL_MS = 20_000;
+const CACHE_TTL_MS = 3 * 60 * 1000;
 const dedupeCache = new Map<string, { expires: number; promise: Promise<unknown> }>();
 
 function buildUrl(path: string, searchParams?: Record<string, string | number | undefined>) {
@@ -74,7 +77,7 @@ export function ftcFetch<T>(path: string, searchParams?: Record<string, string |
   }
 
   const promise = fetchJson<T>(url);
-  dedupeCache.set(url, { expires: now + DEDUPE_TTL_MS, promise });
+  dedupeCache.set(url, { expires: now + CACHE_TTL_MS, promise });
   // Don't let a cached rejection poison subsequent calls past this request.
   promise.catch(() => dedupeCache.delete(url));
   return promise;

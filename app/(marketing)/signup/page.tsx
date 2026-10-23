@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -8,21 +8,55 @@ import { UserPlus } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useMockAuth } from "@/lib/mock-auth";
+import { useAuth } from "@/lib/auth";
+import { useTeamDoc } from "@/lib/team";
 import { cardEntranceVariants } from "@/lib/motion";
+
+function authErrorMessage(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  switch (code) {
+    case "auth/email-already-in-use":
+      return "That email already has an account — try logging in instead.";
+    case "auth/weak-password":
+      return "Password must be at least 6 characters.";
+    case "auth/invalid-email":
+      return "That doesn't look like a valid email address.";
+    default:
+      return err instanceof Error ? err.message : "Something went wrong creating your account.";
+  }
+}
 
 export default function SignupPage() {
   const router = useRouter();
-  const { login } = useMockAuth();
+  const { user, signup, firebaseReady } = useAuth();
+  const { loaded: teamLoaded, exists: teamExists } = useTeamDoc();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [subteam, setSubteam] = useState("Scouting");
+  const [password, setPassword] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (user) router.replace("/dashboard");
+  }, [user, router]);
+
+  useEffect(() => {
+    if (teamLoaded && teamExists === false) router.replace("/setup");
+  }, [teamLoaded, teamExists, router]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    login(name || "New Scout", "scout");
-    router.push("/dashboard");
+    setError(null);
+    setSubmitting(true);
+    try {
+      await signup(name, email, password, joinCode);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -35,6 +69,12 @@ export default function SignupPage() {
               Create your CompEpicurus scouting account.
             </p>
           </div>
+
+          {!firebaseReady && (
+            <p className="rounded-lg bg-amber-500/15 px-3 py-2 text-center text-xs text-amber-300">
+              Firebase isn&apos;t configured yet &mdash; add your project&apos;s keys to .env.local.
+            </p>
+          )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
@@ -53,28 +93,34 @@ export default function SignupPage() {
               />
             </div>
             <div>
-              <Label htmlFor="subteam">Sub-team</Label>
-              <Select value={subteam} onValueChange={setSubteam}>
-                <SelectTrigger id="subteam">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["Scouting", "Mechanical", "Programming", "Business", "CAD"].map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="signup-password">Password</Label>
+              <Input
+                id="signup-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+                minLength={6}
+                required
+              />
             </div>
-            <Button type="submit" size="lg" className="mt-2 gap-2">
-              <UserPlus className="h-4 w-4" /> Create account
+            <div>
+              <Label htmlFor="join-code">Join code</Label>
+              <Input
+                id="join-code"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                placeholder="From a teammate or mentor"
+                required
+              />
+            </div>
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            <Button type="submit" size="lg" className="mt-2 gap-2" disabled={submitting || !firebaseReady}>
+              <UserPlus className="h-4 w-4" /> {submitting ? "Creating account…" : "Create account"}
             </Button>
           </form>
-
-          <p className="text-center text-xs text-[var(--muted-foreground)]">
-            This is a placeholder signup &mdash; no data leaves your browser.
-          </p>
 
           <p className="text-center text-sm text-[var(--muted-foreground)]">
             Already have an account?{" "}

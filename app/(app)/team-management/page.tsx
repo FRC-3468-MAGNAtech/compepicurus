@@ -1,42 +1,44 @@
 "use client";
 
 import { useState } from "react";
-import { UserPlus } from "lucide-react";
+import { Copy, Eye, EyeOff } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
-import { Avatar } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { people, type Person } from "@/lib/mock-data";
-
-const subteams: Person["subteam"][] = ["Mechanical", "Programming", "Scouting", "Business", "CAD"];
+import { MemberRow } from "@/components/team/member-row";
+import { useAuth } from "@/lib/auth";
+import { useTeamDoc } from "@/lib/team";
+import { usePermissions } from "@/lib/permissions";
+import { setMemberAdmin, setMemberPrimaryRole, setMemberSecondaryRoles, useTeamMembers } from "@/lib/team-members";
+import type { RoleId } from "@/lib/roles";
 
 export default function TeamManagementPage() {
-  const [roster, setRoster] = useState(people);
-  const [name, setName] = useState("");
-  const [subteam, setSubteam] = useState<Person["subteam"]>("Scouting");
-  const [role, setRole] = useState("");
-  const [open, setOpen] = useState(false);
+  const { profile } = useAuth();
+  const { team, loaded: teamLoaded } = useTeamDoc();
+  const { isAdmin } = usePermissions();
+  const { members, loaded: membersLoaded } = useTeamMembers(profile?.teamId ?? null);
+  const [showJoinCode, setShowJoinCode] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const addMember = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setRoster((r) => [
-      ...r,
-      {
-        id: `p${r.length + 1}`,
-        name,
-        grade: "9th",
-        subteam,
-        role: role || "Member",
-        email: `${name.split(" ")[0].toLowerCase()}@compepicurus.org`,
-      },
-    ]);
-    setName("");
-    setRole("");
-    setOpen(false);
+  const adminCount = members.filter((m) => m.isAdmin).length;
+
+  const handleCopyJoinCode = async () => {
+    if (!team?.joinCode) return;
+    try {
+      await navigator.clipboard.writeText(team.joinCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard access can fail silently (permissions, insecure context); the code is still shown on screen.
+    }
+  };
+
+  const handleToggleAdmin = (uid: string, current: boolean) => {
+    void setMemberAdmin(uid, !current);
+  };
+
+  const handleToggleSecondaryRole = (uid: string, roles: RoleId[], role: RoleId) => {
+    const next = roles.includes(role) ? roles.filter((r) => r !== role) : [...roles, role];
+    void setMemberSecondaryRoles(uid, next);
   };
 
   return (
@@ -44,74 +46,60 @@ export default function TeamManagementPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Team Management</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">Assign sub-teams and roles across the roster.</p>
+          <p className="text-sm text-[var(--muted-foreground)]">Roles, admin access, and the team join code.</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-2">
-              <UserPlus className="h-4 w-4" /> Add member
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogTitle>Add a team member</DialogTitle>
-            <DialogDescription>Placeholder only &mdash; nothing is saved beyond this session.</DialogDescription>
-            <form onSubmit={addMember} className="mt-4 flex flex-col gap-4">
-              <div>
-                <Label htmlFor="member-name">Name</Label>
-                <Input id="member-name" value={name} onChange={(e) => setName(e.target.value)} required />
-              </div>
-              <div>
-                <Label htmlFor="member-role">Role</Label>
-                <Input id="member-role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Scout" />
-              </div>
-              <div>
-                <Label htmlFor="member-subteam">Sub-team</Label>
-                <Select value={subteam} onValueChange={(v) => setSubteam(v as Person["subteam"])}>
-                  <SelectTrigger id="member-subteam">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {subteams.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button type="submit" className="mt-1">Add to roster</Button>
-            </form>
-          </DialogContent>
-        </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 xl:grid-cols-5">
-        {subteams.map((st) => {
-          const members = roster.filter((p) => p.subteam === st);
-          return (
-            <GlassPanel key={st} className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">{st}</h2>
-                <Badge variant="glass">{members.length}</Badge>
-              </div>
-              <div className="flex flex-col gap-2">
-                {members.map((m) => (
-                  <div key={m.id} className="glass-card flex items-center gap-2.5 p-2.5">
-                    <Avatar name={m.name} size="sm" />
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-medium">{m.name}</div>
-                      <div className="truncate text-[10px] text-[var(--muted-foreground)]">{m.role}</div>
-                    </div>
-                  </div>
-                ))}
-                {members.length === 0 && (
-                  <p className="text-xs text-[var(--muted-foreground)]">No members yet.</p>
-                )}
-              </div>
-            </GlassPanel>
-          );
-        })}
-      </div>
+      <GlassPanel className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--muted-foreground)]">Team</div>
+          <div className="text-xl font-semibold">{teamLoaded ? `FTC ${team?.number ?? "—"}` : "Loading…"}</div>
+        </div>
+        {isAdmin && team && (
+          <div className="flex items-center gap-2">
+            {showJoinCode ? (
+              <>
+                <span className="glass-card rounded-xl px-4 py-2 font-mono text-lg tracking-[0.25em]">{team.joinCode}</span>
+                <Button variant="glass" size="sm" className="gap-2" onClick={handleCopyJoinCode}>
+                  <Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy"}
+                </Button>
+              </>
+            ) : null}
+            <Button variant="glass" size="sm" className="gap-2" onClick={() => setShowJoinCode((v) => !v)}>
+              {showJoinCode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showJoinCode ? "Hide join code" : "Show join code"}
+            </Button>
+          </div>
+        )}
+      </GlassPanel>
+
+      <GlassPanel className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+          Members {membersLoaded && `(${members.length})`}
+        </h2>
+        <div className="flex flex-col gap-2">
+          {!membersLoaded ? (
+            <div className="glass-card h-16 animate-pulse" />
+          ) : members.length === 0 ? (
+            <p className="text-sm text-[var(--muted-foreground)]">No members yet.</p>
+          ) : (
+            members.map((m) => (
+              <MemberRow
+                key={m.uid}
+                member={m}
+                editable={isAdmin}
+                lastAdminBlocked={m.isAdmin && adminCount <= 1}
+                onPrimaryRoleChange={(role) => void setMemberPrimaryRole(m.uid, role)}
+                onToggleSecondaryRole={(role) => handleToggleSecondaryRole(m.uid, m.secondaryRoles, role)}
+                onToggleAdmin={() => {
+                  if (m.isAdmin && adminCount <= 1) return;
+                  handleToggleAdmin(m.uid, m.isAdmin);
+                }}
+              />
+            ))
+          )}
+        </div>
+      </GlassPanel>
     </div>
   );
 }

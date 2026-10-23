@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -8,20 +8,69 @@ import { LogIn } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useMockAuth } from "@/lib/mock-auth";
+import { useAuth } from "@/lib/auth";
+import { useTeamDoc } from "@/lib/team";
 import { cardEntranceVariants } from "@/lib/motion";
+
+function authErrorMessage(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  switch (code) {
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "That email or password doesn't match an account.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Try again in a bit.";
+    default:
+      return err instanceof Error ? err.message : "Something went wrong logging in.";
+  }
+}
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useMockAuth();
-  const [email, setEmail] = useState("scout@compepicurus.org");
+  const { user, login, resetPassword, firebaseReady } = useAuth();
+  const { loaded: teamLoaded, exists: teamExists } = useTeamDoc();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [resetSent, setResetSent] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (user) router.replace("/dashboard");
+  }, [user, router]);
+
+  useEffect(() => {
+    if (teamLoaded && teamExists === false) router.replace("/setup");
+  }, [teamLoaded, teamExists, router]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const name = email.split("@")[0].replace(/[._]/g, " ") || "Scout";
-    login(name.replace(/\b\w/g, (c) => c.toUpperCase()), "lead");
-    router.push("/dashboard");
+    setError(null);
+    setResetSent(false);
+    setSubmitting(true);
+    try {
+      await login(email, password);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError("Enter your email above first, then click \"Forgot password\".");
+      return;
+    }
+    setError(null);
+    try {
+      await resetPassword(email);
+      setResetSent(true);
+    } catch (err) {
+      setError(authErrorMessage(err));
+    }
   };
 
   return (
@@ -34,6 +83,12 @@ export default function LoginPage() {
               Log in to your CompEpicurus account.
             </p>
           </div>
+
+          {!firebaseReady && (
+            <p className="rounded-lg bg-amber-500/15 px-3 py-2 text-center text-xs text-amber-300">
+              Firebase isn&apos;t configured yet &mdash; add your project&apos;s keys to .env.local.
+            </p>
+          )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
@@ -58,14 +113,22 @@ export default function LoginPage() {
                 required
               />
             </div>
-            <Button type="submit" size="lg" className="mt-2 gap-2">
-              <LogIn className="h-4 w-4" /> Log in
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
+            {resetSent && <p className="text-sm text-emerald-400">Password reset email sent.</p>}
+
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              className="self-start text-xs text-[var(--muted-foreground)] underline underline-offset-4 hover:text-[var(--foreground)]"
+            >
+              Forgot password?
+            </button>
+
+            <Button type="submit" size="lg" className="mt-2 gap-2" disabled={submitting || !firebaseReady}>
+              <LogIn className="h-4 w-4" /> {submitting ? "Logging in…" : "Log in"}
             </Button>
           </form>
-
-          <p className="text-center text-xs text-[var(--muted-foreground)]">
-            This is a placeholder login &mdash; any email/password works.
-          </p>
 
           <p className="text-center text-sm text-[var(--muted-foreground)]">
             No account?{" "}

@@ -104,24 +104,6 @@ export const changelog: ChangelogEntry[] = [
   },
 ];
 
-export type Person = {
-  id: string;
-  name: string;
-  grade: string;
-  subteam: "Mechanical" | "Programming" | "Scouting" | "Business" | "CAD";
-  role: string;
-  email: string;
-};
-
-export const people: Person[] = [
-  { id: "p1", name: "Priya Nandakumar", grade: "12th", subteam: "Scouting", role: "Lead Scout", email: "priya@compepicurus.org" },
-  { id: "p2", name: "Marcus Webb", grade: "11th", subteam: "Programming", role: "Software Lead", email: "marcus@compepicurus.org" },
-  { id: "p3", name: "Ana Torres", grade: "10th", subteam: "Scouting", role: "Scout", email: "ana@compepicurus.org" },
-  { id: "p4", name: "Devon Ellis", grade: "12th", subteam: "Mechanical", role: "Drive Coach", email: "devon@compepicurus.org" },
-  { id: "p5", name: "Kai Fujimoto", grade: "9th", subteam: "CAD", role: "CAD Designer", email: "kai@compepicurus.org" },
-  { id: "p6", name: "Lena Brandt", grade: "Mentor", subteam: "Business", role: "Mentor", email: "lena@compepicurus.org" },
-];
-
 export type PickListEntry = {
   rank: number;
   teamNumber: number;

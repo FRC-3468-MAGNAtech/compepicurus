@@ -1,0 +1,84 @@
+rules_version = '2';
+
+// See docs/ARCHITECTURE.md for the data model and docs/ASSUMPTIONS.md for
+// the trade-offs noted inline below (all prefixed "P1:").
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function sameTeam(teamId) {
+      return isSignedIn() && myProfile().teamId == teamId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && myProfile().isAdmin == true;
+    }
+
+    match /teams/{teamId} {
+      // P1: publicly get-able (not list-able) so first-run detection and
+      // join-code validation work before the caller is authenticated, with
+      // no Cloud Function needed. The join code is an organizational gate,
+      // not a cryptographic secret, for one small team's internal tool.
+      allow get: if true;
+      allow list: if false;
+
+      // A team doc can only ever be created once per fixed id (teams/default).
+      allow create: if isSignedIn() && !exists(/databases/$(database)/documents/teams/$(teamId));
+
+      // Only an admin of *this* team can change its settings afterward
+      // (including active event/season and the join code).
+      allow update: if sameTeam(teamId) && isAdmin();
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && sameTeam(resource.data.teamId);
+
+      // Create: always as yourself, into a team that already exists.
+      // isAdmin can only be true while that team hasn't claimed its first
+      // admin yet (see teams.firstAdminClaimed and lib/auth.tsx's
+      // firstRunSetup) — P1: this leaves a narrow race window between that
+      // user doc's creation and the team doc's update flipping the flag,
+      // documented in docs/ASSUMPTIONS.md as a v1 limitation.
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && exists(/databases/$(database)/documents/teams/$(request.resource.data.teamId))
+        && (
+          request.resource.data.isAdmin == false
+          || get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.firstAdminClaimed == false
+        );
+
+      // You can update your own profile, but never teamId, primaryRole,
+      // secondaryRoles, or isAdmin — those are admin-only (see below).
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.primaryRole == resource.data.primaryRole
+        && request.resource.data.secondaryRoles == resource.data.secondaryRoles
+        && request.resource.data.isAdmin == resource.data.isAdmin;
+
+      // Admins of the same team can change anyone's roles/admin status.
+      allow update: if sameTeam(resource.data.teamId) && isAdmin();
+
+      allow delete: if false;
+    }
+
+    match /scoutEntries/{entryId} {
+      allow read: if sameTeam(resource.data.teamId);
+
+      // Create as yourself (CSV import also writes with the importing
+      // admin's own uid — see components/analytics/import-csv-dialog.tsx).
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && sameTeam(request.resource.data.teamId);
+
+      allow update, delete: if sameTeam(resource.data.teamId) && isAdmin();
+    }
+  }
+}

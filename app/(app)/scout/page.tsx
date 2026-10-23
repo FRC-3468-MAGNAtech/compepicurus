@@ -16,7 +16,7 @@ import { ScoreBar } from "@/components/scout/score-bar";
 import { MatchPickerDialog, type AssignedMatch } from "@/components/scout/match-picker-dialog";
 import { TeamPickerDialog } from "@/components/scout/team-picker-dialog";
 import { useActiveEvent } from "@/lib/active-event";
-import { useMockAuth } from "@/lib/mock-auth";
+import { useAuth } from "@/lib/auth";
 import { springSnappy } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import {
@@ -53,7 +53,8 @@ function matchLabel(assigned: AssignedMatch) {
 
 export default function MatchScoutFormPage() {
   const { activeEvent } = useActiveEvent();
-  const { name } = useMockAuth();
+  const { user, profile } = useAuth();
+  const name = profile?.name ?? "";
 
   const [assignedMatch, setAssignedMatch] = useState<AssignedMatch | null>(null);
   const [teamNumber, setTeamNumber] = useState<number | null>(null);
@@ -94,17 +95,17 @@ export default function MatchScoutFormPage() {
     setTimeout(() => setSubInRequested(false), 3000);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const missingMatch = !assignedMatch;
     const missingTeam = teamNumber === null;
-    if (missingMatch || missingTeam) {
+    if (missingMatch || missingTeam || !profile || !user) {
       setValidation({ match: missingMatch, team: missingTeam });
       document.getElementById("assigned-match")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
     setValidation({});
 
-    saveEntry({
+    await saveEntry(profile.teamId, user.uid, {
       scoutName: name,
       eventCode: activeEvent!.code,
       matchType: assignedMatch.type,
@@ -118,7 +119,7 @@ export default function MatchScoutFormPage() {
     // different robot's entry can flip from "Needs Robots" to resolved once
     // its alliance partner is scouted too. Fire-and-forget: it never throws
     // (every call inside is already error-handled) and shouldn't block reset.
-    void recomputeForEvent(activeEvent!.code, activeEvent!.season);
+    void recomputeForEvent(profile.teamId, activeEvent!.code, activeEvent!.season);
 
     setJustSubmitted(true);
     setTimeout(() => setJustSubmitted(false), 2200);

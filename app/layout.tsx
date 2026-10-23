@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/theme-provider";
-import { MockAuthProvider } from "@/lib/mock-auth";
-import { ActiveEventProvider } from "@/lib/active-event";
+import { AuthProvider } from "@/lib/auth";
 import { GlassShadeProvider } from "@/lib/glass-shade";
 import { BackgroundBlobs } from "@/components/layout/background-blobs";
 
@@ -49,12 +48,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <ThemeProvider>
           <GlassShadeProvider>
-            <MockAuthProvider>
-              <ActiveEventProvider>
-                <BackgroundBlobs />
-                {children}
-              </ActiveEventProvider>
-            </MockAuthProvider>
+            <AuthProvider>
+              <BackgroundBlobs />
+              {children}
+            </AuthProvider>
           </GlassShadeProvider>
         </ThemeProvider>
       </body>

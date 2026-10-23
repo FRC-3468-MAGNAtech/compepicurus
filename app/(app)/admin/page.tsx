@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
@@ -10,13 +11,22 @@ import { Avatar } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { scouts } from "@/lib/mock-data";
+import { usePermissions } from "@/lib/permissions";
 
 const roles = ["scout", "lead", "admin"];
 
 export default function AdminPanelPage() {
+  const router = useRouter();
+  const { isAdmin } = usePermissions();
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [allowSignups, setAllowSignups] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) router.replace("/dashboard");
+  }, [isAdmin, router]);
+
+  if (!isAdmin) return null;
 
   return (
     <div className="flex flex-col gap-6">

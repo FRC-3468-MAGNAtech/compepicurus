@@ -14,6 +14,8 @@ export function ImportCsvDialog({
   open,
   onOpenChange,
   schema,
+  teamId,
+  uid,
   eventCode,
   existingEntries,
   onImported,
@@ -21,6 +23,11 @@ export function ImportCsvDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   schema: GameSchema;
+  /** The importing admin's own team/uid — imported rows can name any scout
+   * via their free-text `scoutName`, but `uid` (who's allowed to write the
+   * doc, per firestore.rules) is attributed to whoever ran the import. */
+  teamId: string;
+  uid: string;
   eventCode: string;
   existingEntries: ScoutEntry[];
   onImported: () => void;
@@ -55,22 +62,31 @@ export function ImportCsvDialog({
     setSkipped(dupes);
   };
 
-  const confirmImport = () => {
-    for (const row of toInsert) {
-      saveEntry({
-        scoutName: row.scoutName,
-        eventCode,
-        matchType: row.matchType,
-        matchNumber: row.matchNumber,
-        teamNumber: row.teamNumber,
-        fields: row.fields,
-        score: computeScore(row.fields),
-        comments: row.comments,
-      });
+  const [importing, setImporting] = useState(false);
+
+  const confirmImport = async () => {
+    setImporting(true);
+    try {
+      await Promise.all(
+        toInsert.map((row) =>
+          saveEntry(teamId, uid, {
+            scoutName: row.scoutName,
+            eventCode,
+            matchType: row.matchType,
+            matchNumber: row.matchNumber,
+            teamNumber: row.teamNumber,
+            fields: row.fields,
+            score: computeScore(row.fields),
+            comments: row.comments,
+          })
+        )
+      );
+      onImported();
+      onOpenChange(false);
+      reset();
+    } finally {
+      setImporting(false);
     }
-    onImported();
-    onOpenChange(false);
-    reset();
   };
 
   return (
@@ -136,8 +152,8 @@ export function ImportCsvDialog({
               {toInsert.length > 8 && (
                 <p className="text-xs text-[var(--muted-foreground)]">...and {toInsert.length - 8} more.</p>
               )}
-              <Button size="lg" disabled={toInsert.length === 0} onClick={confirmImport}>
-                Import {toInsert.length} row{toInsert.length === 1 ? "" : "s"}
+              <Button size="lg" disabled={toInsert.length === 0 || importing} onClick={confirmImport}>
+                {importing ? "Importing…" : `Import ${toInsert.length} row${toInsert.length === 1 ? "" : "s"}`}
               </Button>
             </>
           )}

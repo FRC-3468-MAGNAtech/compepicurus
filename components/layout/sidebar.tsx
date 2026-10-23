@@ -10,8 +10,10 @@ import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { GlassShadeControl } from "@/components/theme/glass-shade-control";
+import { ConnectionStatus } from "@/components/layout/connection-status";
 import { Avatar } from "@/components/ui/avatar";
-import { useMockAuth } from "@/lib/mock-auth";
+import { useAuth } from "@/lib/auth";
+import { getRole } from "@/lib/roles";
 
 function NavLink({
   item,
@@ -60,11 +62,14 @@ function NavLink({
 
 export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose?: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
-  const { name, role, logout } = useMockAuth();
+  const { profile, logout } = useAuth();
   const router = useRouter();
+  const name = profile?.name ?? "";
+  const isAdmin = profile?.isAdmin ?? false;
+  const visibleSecondaryNav = secondaryNav.filter((item) => item.href !== "/admin" || isAdmin);
 
   const handleLogout = () => {
-    logout();
+    void logout();
     onClose?.();
     router.push("/");
   };
@@ -77,7 +82,14 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
         transition={spring}
         className="glass-panel sticky top-4 z-30 hidden h-[calc(100vh-2rem)] flex-col gap-4 overflow-hidden p-4 lg:flex"
       >
-        <SidebarInner collapsed={collapsed} name={name} role={role} onLogout={handleLogout} scope="desktop" />
+        <SidebarInner
+          collapsed={collapsed}
+          name={name}
+          primaryRole={profile?.primaryRole}
+          navItems={visibleSecondaryNav}
+          onLogout={handleLogout}
+          scope="desktop"
+        />
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="glass-pill absolute -right-3 top-8 flex h-7 w-7 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -108,7 +120,8 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
               <SidebarInner
                 collapsed={false}
                 name={name}
-                role={role}
+                primaryRole={profile?.primaryRole}
+                navItems={visibleSecondaryNav}
                 onLogout={handleLogout}
                 onNavigate={onClose}
                 scope="mobile"
@@ -124,18 +137,21 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
 function SidebarInner({
   collapsed,
   name,
-  role,
+  primaryRole,
+  navItems,
   onLogout,
   onNavigate,
   scope,
 }: {
   collapsed: boolean;
   name: string;
-  role: string;
+  primaryRole?: string;
+  navItems: NavItem[];
   onLogout: () => void;
   onNavigate?: () => void;
   scope: string;
 }) {
+  const role = primaryRole ? getRole(primaryRole) : null;
   return (
     <>
       <Link href="/dashboard" className="flex items-center gap-2.5 px-1.5 py-1">
@@ -158,22 +174,25 @@ function SidebarInner({
           <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} />
         ))}
         <div className="my-2 h-px bg-[var(--glass-border)]" />
-        {secondaryNav.map((item) => (
+        {navItems.map((item) => (
           <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} />
         ))}
       </nav>
 
       <div className="flex flex-col gap-3 border-t border-[var(--glass-border)] pt-3">
-        <div className={cn("flex items-center gap-2", collapsed && "justify-center")}>
+        <div className={cn("flex items-center gap-2", collapsed ? "justify-center" : "justify-between")}>
           {!collapsed && <ThemeSwitcher compact />}
-          <GlassShadeControl compact />
+          <div className="flex items-center gap-1.5">
+            <ConnectionStatus collapsed={collapsed} />
+            <GlassShadeControl compact />
+          </div>
         </div>
         <div className="flex items-center gap-2.5 px-1">
           <Avatar name={name} size="sm" />
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{name}</div>
-              <div className="truncate text-[11px] capitalize text-[var(--muted-foreground)]">{role}</div>
+              {role && <div className={cn("mt-0.5 inline-block truncate rounded-full px-2 py-0.5 text-[10px] font-medium", role.className)}>{role.label}</div>}
             </div>
           )}
           <button
