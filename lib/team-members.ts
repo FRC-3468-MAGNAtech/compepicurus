@@ -12,6 +12,8 @@ export type TeamMember = {
   primaryRole: RoleId;
   secondaryRoles: RoleId[];
   isAdmin: boolean;
+  /** Set only by app/api/auth/sync-roles — see docs/ASSUMPTIONS.md (P1b). Owner rows can't be edited by anyone through the UI (also enforced in firestore.rules). */
+  isOwner: boolean;
 };
 
 /** Realtime roster for a team — backs both Team Management (editable, admin-only) and People (read-only). */
@@ -41,6 +43,7 @@ export function useTeamMembers(teamId: string | null) {
             primaryRole: data.primaryRole,
             secondaryRoles: data.secondaryRoles ?? [],
             isAdmin: !!data.isAdmin,
+            isOwner: !!data.isOwner,
           };
         })
       );

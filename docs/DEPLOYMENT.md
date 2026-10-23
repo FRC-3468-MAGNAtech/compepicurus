@@ -47,6 +47,8 @@ Firebase project for testing) can use different values without a commit.
 | `FIREBASE_ADMIN_CLIENT_EMAIL` | Same JSON file → `client_email` field |
 | `FIREBASE_ADMIN_PRIVATE_KEY` | Same JSON file → `private_key` field — see the gotcha below |
 | `CRON_SECRET` | Any random string you generate (e.g. `openssl rand -hex 32`). **Reserved for a future scheduled job (P2+) — nothing reads it yet.** Set it now so it's already in place when that lands. |
+| `OWNER_EMAILS` | Comma-separated emails (e.g. `you@example.com,mentor@example.com`) that should always have owner + admin access, synced on every login by `app/api/auth/sync-roles` — **after** that email verifies. Set it to your own email before you first sign up. |
+| `ADMIN_EMAILS` | Comma-separated emails that should get admin (not owner) the same way. Optional. |
 
 **Pasting the private key:** the downloaded JSON's `private_key` field is a
 single string with literal `\n` sequences marking line breaks (it is *not*
@@ -56,23 +58,28 @@ field exactly as it appears in the JSON file — quotes and `\n` included.
 runtime, since most dashboard env var inputs (Vercel's included) only accept
 single-line values.
 
-## 3. Firebase Auth → Authorized domains
+## 3. Enable the Google sign-in provider (manual — I do this myself)
+
+Firebase Console → Authentication → Sign-in method → add **Google** as a
+provider, and give it a support email. Nothing in the app needs reconfiguring
+once that's on — `lib/auth.tsx` constructs a plain `GoogleAuthProvider()` with
+no extra setup.
+
+## 4. Firebase Auth → Authorized domains
 
 Firebase Console → Authentication → Settings → Authorized domains. Add your
 production domain (e.g. `compepicurus.vercel.app` or a custom domain).
 
-This matters less here than it would for a Google/OAuth sign-in flow — this
-app only uses email/password auth, so there's no popup/redirect domain check
-blocking sign-in. The one place it does matter: password-reset emails
-(`resetPassword()` in `lib/auth.tsx`) link back to a continue URL that must
-be on an authorized domain, or Firebase will reject sending the email.
-Preview deployments get a new `*.vercel.app` subdomain per deployment, and
-Firebase Authorized Domains doesn't support wildcards — add a specific
-preview domain only if you need password reset to work from that preview
-(it isn't required for sign-up/login/every-day use, only for the reset-email
-link).
+This now matters for real sign-in, not just for password-reset emails:
+Google sign-in's popup/redirect flow (P1b) checks the *current* domain
+against this list and fails outright if it isn't there. Preview deployments
+get a new `*.vercel.app` subdomain per deployment, and Firebase Authorized
+Domains doesn't support wildcards, so Google sign-in (and the password-reset
+email's continue link) will only work on domains you've explicitly added —
+add a specific preview domain if you need either to work from that preview;
+neither is required for ordinary password sign-up/login.
 
-## 4. Firestore rules & indexes
+## 5. Firestore rules & indexes
 
 Not deployed by this prompt — do this yourself once you're ready:
 
@@ -80,7 +87,7 @@ Not deployed by this prompt — do this yourself once you're ready:
 firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-## 5. FIRST API proxy — now requires a signed-in user
+## 6. FIRST API proxy — requires a signed-in user
 
 `getEvents`/`getEvent`/`getTeamsForEvent`/`getMatchesForEvent`
 (`lib/ftc/actions.ts`) each check for a valid session before calling the
@@ -97,7 +104,7 @@ intentionally "light" caching (reset on cold start, not shared across
 instances), which is fine since event data doesn't change faster than that
 during a live competition.
 
-## 6. Local development
+## 7. Local development
 
 ```bash
 npm install
@@ -105,7 +112,15 @@ cp .env.example .env.local   # fill in real values — never commit .env.local
 npm run dev
 ```
 
+`next dev` already runs the API routes (`/api/team/create`, `/api/team/join`,
+`/api/auth/sync-roles`, `/api/public/config`, `/api/admin/team-creation`,
+`/api/auth/session`) alongside the rest of the app — nothing extra (like
+`vercel dev`) is needed for local development against your real Firebase
+project.
+
 `npm run build`, `npm run lint`, and `npm run test` should all be run (and
 pass) before deploying. `npm run test:rules` additionally needs a JVM and
-the Firebase CLI (`npm install -g firebase-tools`) — see
-`docs/ASSUMPTIONS.md` (P1-12) for why that wasn't verified in this session.
+the Firebase CLI (`npm install -g firebase-tools`) — it runs both
+`firestore.rules.test.ts` and `api-routes.emulator.test.ts` (P1b) against
+the Auth + Firestore emulators together; see `docs/ASSUMPTIONS.md` (P1-12,
+P1b-9) for why neither was verified in this session.

@@ -1,6 +1,7 @@
 import "server-only";
 import { cert, getApps, getApp, initializeApp, type App } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
 // Server-only counterpart to lib/firebase/client.ts. Used by app/api/auth/session
 // (to mint/verify session cookies) and lib/server/require-user.ts (to verify
@@ -24,6 +25,7 @@ export function isFirebaseAdminConfigured(): boolean {
 
 let app: App | null = null;
 let authInstance: Auth | null = null;
+let firestoreInstance: Firestore | null = null;
 
 function getAdminApp(): App | null {
   if (app) return app;
@@ -40,4 +42,13 @@ export function getAdminAuth(): Auth | null {
   if (!adminApp) return null;
   authInstance = getAuth(adminApp);
   return authInstance;
+}
+
+/** Firestore via the Admin SDK — bypasses security rules entirely, used only from trusted API routes (team creation/join, role sync, the owner-only settings toggle). Null when unconfigured, same convention as getAdminAuth(). */
+export function getAdminFirestore(): Firestore | null {
+  if (firestoreInstance) return firestoreInstance;
+  const adminApp = getAdminApp();
+  if (!adminApp) return null;
+  firestoreInstance = getFirestore(adminApp);
+  return firestoreInstance;
 }

@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // See docs/ARCHITECTURE.md for the data model and docs/ASSUMPTIONS.md for
-// the trade-offs noted inline below (all prefixed "P1:").
+// the trade-offs noted inline below (prefixed "P1:"/"P1b:").
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -22,18 +22,21 @@ service cloud.firestore {
     }
 
     match /teams/{teamId} {
-      // P1: publicly get-able (not list-able) so first-run detection and
-      // join-code validation work before the caller is authenticated, with
-      // no Cloud Function needed. The join code is an organizational gate,
-      // not a cryptographic secret, for one small team's internal tool.
-      allow get: if true;
+      // P1b: no more public read. Team lookup by join code, the first-run
+      // "does a team exist" check, and team creation itself all moved
+      // server-side (app/api/team/join, app/api/team/create — both use the
+      // Admin SDK, which bypasses these rules entirely) once more than one
+      // team could exist, closing the P1-4 trade-off this replaced.
+      allow get: if sameTeam(teamId);
       allow list: if false;
 
-      // A team doc can only ever be created once per fixed id (teams/default).
-      allow create: if isSignedIn() && !exists(/databases/$(database)/documents/teams/$(teamId));
+      // P1b: teams are only ever created via /api/team/create's
+      // transaction (Admin SDK) — never directly by a client.
+      allow create: if false;
 
-      // Only an admin of *this* team can change its settings afterward
-      // (including active event/season and the join code).
+      // Admins of *this* team can still update its settings directly
+      // (active event/season — see lib/team.ts's setActiveEvent) the same
+      // way as P1.
       allow update: if sameTeam(teamId) && isAdmin();
       allow delete: if false;
     }
@@ -41,32 +44,42 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isSignedIn() && sameTeam(resource.data.teamId);
 
-      // Create: always as yourself, into a team that already exists.
-      // isAdmin can only be true while that team hasn't claimed its first
-      // admin yet (see teams.firstAdminClaimed and lib/auth.tsx's
-      // firstRunSetup) — P1: this leaves a narrow race window between that
-      // user doc's creation and the team doc's update flipping the flag,
-      // documented in docs/ASSUMPTIONS.md as a v1 limitation.
-      allow create: if isSignedIn()
-        && request.auth.uid == uid
-        && exists(/databases/$(database)/documents/teams/$(request.resource.data.teamId))
-        && (
-          request.resource.data.isAdmin == false
-          || get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.firstAdminClaimed == false
-        );
+      // P1b: user docs are only ever created via /api/team/join or
+      // /api/team/create (Admin SDK) — never directly by a client. This
+      // also closes a P1 gap where the create rule checked a target team
+      // *existed* but never that the caller's `teamId` actually matched a
+      // join code they supplied, which would have let anyone join any team
+      // by id once more than one could exist.
+      allow create: if false;
 
       // You can update your own profile, but never teamId, primaryRole,
-      // secondaryRoles, or isAdmin — those are admin-only (see below).
+      // secondaryRoles, isAdmin, or isOwner — those are admin-only (or,
+      // for isOwner, nobody — see below).
       allow update: if isSignedIn() && request.auth.uid == uid
         && request.resource.data.teamId == resource.data.teamId
         && request.resource.data.primaryRole == resource.data.primaryRole
         && request.resource.data.secondaryRoles == resource.data.secondaryRoles
-        && request.resource.data.isAdmin == resource.data.isAdmin;
+        && request.resource.data.isAdmin == resource.data.isAdmin
+        && request.resource.data.isOwner == resource.data.isOwner;
 
-      // Admins of the same team can change anyone's roles/admin status.
-      allow update: if sameTeam(resource.data.teamId) && isAdmin();
+      // Admins of the same team can change anyone's roles/admin status —
+      // except an owner's. isOwner itself can never be changed by a client
+      // either way (only app/api/auth/sync-roles, via the Admin SDK, which
+      // bypasses these rules). P1b: "nobody, including other admins" can
+      // edit an owner's row — see docs/ASSUMPTIONS.md.
+      allow update: if sameTeam(resource.data.teamId) && isAdmin()
+        && resource.data.isOwner != true
+        && request.resource.data.isOwner == resource.data.isOwner;
 
       allow delete: if false;
+    }
+
+    // P1b: appSettings/global holds teamCreationEnabled. Every read and
+    // write goes through API routes using the Admin SDK (app/api/public/config,
+    // app/api/team/create, app/api/admin/team-creation) — no client ever
+    // needs direct access, so it's denied outright, including to admins.
+    match /appSettings/{document} {
+      allow read, write: if false;
     }
 
     match /scoutEntries/{entryId} {

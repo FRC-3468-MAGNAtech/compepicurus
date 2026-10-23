@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ShieldCheck } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -59,7 +60,12 @@ export default function PeoplePage() {
                       </Badge>
                     );
                   })}
-                  {p.isAdmin && (
+                  {p.isOwner && (
+                    <Badge variant="glass" className="gap-1 text-[10px]">
+                      <ShieldCheck className="h-3 w-3" /> Owner
+                    </Badge>
+                  )}
+                  {p.isAdmin && !p.isOwner && (
                     <Badge variant="glass" className="text-[10px]">
                       Admin
                     </Badge>

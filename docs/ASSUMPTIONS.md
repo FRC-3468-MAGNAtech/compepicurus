@@ -256,6 +256,124 @@ field (in BIOBUZZ's `general` section) so the whole form, comments included,
 renders from the schema as the prompt intends, without adding a second,
 redundant comments box.
 
+## P1b — Auth Update: Google Sign-In, Team-Creation Lock & Owner Accounts
+
+**P1b-1. `teams` moved off a single fixed id to a real (auto-id) collection.**
+P1 deliberately hard-coded `teams/default`, since the prompt explicitly said
+"do not build team creation or multi-team signup now." P1b's own language —
+the owner switch can "re-enable [creation] later for **other teams**," and
+owner auto-attach applies when "**exactly one** team exists" — only makes
+sense if more than one team can exist. Rather than building actual
+multi-team UI (team switching/selection — nothing in P1b asks for that, and
+every page still reads `profile.teamId` for "my one team," never a list),
+the minimal, contained change was made: `teams/{teamId}` is now an
+auto-generated id created by `/api/team/create`'s transaction, and every
+place that used to hard-code `TEAM_ID = "default"` now reads `teamId`
+dynamically from the signed-in user's own profile (`lib/team.ts`'s
+`useTeamDoc(teamId)`, `lib/active-event.tsx` resolving it via `useAuth()`
+internally so its own call sites didn't need to change at all). No user can
+belong to more than one team, no page lists multiple teams — only the
+*storage* stopped assuming there's exactly one.
+
+**P1b-2. Added `/api/team/join`, beyond what P1b explicitly asked for.**
+P1b only mandates a server-side transaction for *creating* a team. But P1's
+`users/{uid}` create rule only ever checked that the target `teamId`
+*existed* — never that the caller had actually supplied a matching join
+code (join-code validation was client-side JS only, a UI nicety, not a rule).
+That was an accepted trade-off for a single-team app (P1-4: "the join code
+is a social, not cryptographic, gate"), but P1b-1's multi-team shift turns
+it into a real cross-team access hole: without this route, *any* signed-in
+user could join *any* team by id, bypassing its join code entirely, once
+more than one team can exist. `/api/team/join` closes it the same way team
+creation was already being hardened: look up the team by join code
+server-side (an Admin SDK query, immune to the now-much-stricter
+`firestore.rules`), then create the user doc — and `firestore.rules`'
+`users/{uid}` create rule becomes a flat `allow create: if false`, since
+every legitimate path is now server-side.
+
+**P1b-3. Owner rows are locked for *everyone*, including the owner's own
+edits to themself, in Team Management/People.** The prompt says both "The
+toggle controls for an owner row are hidden or disabled for everyone except
+the owner themself" and, two sentences later, "Nobody (including other
+admins) can remove an owner's admin status, change their `isOwner`, change
+their roles, or remove them from the team" — the second, unqualified
+statement is what `firestore.rules` and the UI both actually enforce,
+treating the first sentence as emphasis ("no exceptions — not even other
+admins") rather than a literal carve-out for the owner's own row. Since
+`isOwner`/`isAdmin` for an owner are entirely env-var/sync-route-driven,
+there would be nothing meaningful for the owner to toggle about *themself*
+here anyway. An owner's display name/theme remain editable as normal
+(`updateUserProfile`) — only the Team-Management-style role/admin controls
+are locked.
+
+**P1b-4. Signup and Finish Setup share one component
+(`<TeamEnrollmentScreen/>`), not two parallel implementations.** The prompt
+frames them as separate screens that happen to offer "the same two choices."
+Implemented as: Signup's pre-auth form (name/email/password + inline
+Join/Create fields, for the password path) hands off to
+`<TeamEnrollmentScreen/>` the moment `user` exists but `profile` doesn't —
+which is also `/finish-setup`'s entire content. This covers every path with
+one enrollment implementation: password signup enrolls inline in one submit;
+a Google sign-in from Signup, Login, or a stale "closed the tab" session all
+land on the identical screen, whichever page they came from.
+
+**P1b-5. Google popup/redirect fallback: only `auth/popup-blocked` falls
+back to redirect.** "Falling back to redirect if the popup is blocked or on
+mobile" — mobile is checked up front (user-agent sniff) and always uses
+`signInWithRedirect` directly; for desktop, only `auth/popup-blocked`
+triggers a redirect fallback. `auth/popup-closed-by-user` and
+`auth/cancelled-popup-request` are treated as a deliberate cancel (no error
+shown, no redirect) — silently redirecting the whole tab to Google after
+someone closes a popup on purpose would be surprising, not helpful.
+
+**P1b-6. Admin, once granted via `ADMIN_EMAILS` (or by another admin in
+Team Management), is never auto-revoked by `sync-roles`** — only `isOwner`
+has an explicit revocation rule ("if a user's isOwner is true but their
+email is no longer in OWNER_EMAILS, set isOwner back to false (**admin
+stays**)"). One real consequence worth flagging: demoting an
+`ADMIN_EMAILS`-listed person via Team Management's toggle only lasts until
+their next login — `sync-roles` runs again, sees their email still matches
+`ADMIN_EMAILS`, and re-grants `isAdmin: true`. This is intentional (an
+env-var-controlled admin list is meant to be authoritative), not a bug;
+permanently demoting such a person means removing their email from
+`ADMIN_EMAILS`, not just toggling them off in the UI.
+
+**P1b-7. `firstAdminClaimed` is gone, not just unused.** P1's bootstrap-race
+workaround (P1-6) existed because the *first* admin had to create their own
+user doc client-side before any admin existed to authorize it. P1b moves
+all team/admin creation into `/api/team/create`'s single atomic Admin SDK
+transaction, which has no such chicken-and-egg problem — removed instead of
+left dangling.
+
+**P1b-8. Custom claims drive API-route/UI-fast-path checks; `firestore.rules`
+and `usePermissions()` still key off the Firestore fields.** Expanded on in
+`docs/ARCHITECTURE.md` ("Custom claims vs. the Firestore fields") — the
+short version is that a security rule can only read the *caller's* own
+token claims, never the claims of the user whose document is being written,
+so protecting an owner's row from being edited still has to check that
+document's own `isOwner` field, not a claim.
+
+**P1b-9. API route tests are unverified here, same as the P1 rules tests** —
+no Java/Firebase CLI in this sandbox (see P1-12). `api-routes.emulator.test.ts`
+is written against both the Auth and Firestore emulators (creating real test
+users via the client SDK pointed at the Auth emulator, to get real ID tokens
+for the routes to verify) and covers every case the prompt lists: team
+creation succeeds once and is then rejected, a simulated simultaneous race
+only lets one attempt win, unverified emails never receive owner/admin, a
+verified owner email gets claims and the "attach to the one existing team"
+convenience, and the public config route reports the right flag before and
+after a team exists. Run via `npm run test:rules` (renamed in spirit, kept
+the same script name — it now runs both emulator-dependent files from
+`vitest.rules.config.ts`).
+
+**P1b-10. The email-verification banner only shows for password-auth
+users.** `components/layout/verify-email-banner.tsx` checks
+`linkedProviders.includes("password")` — Google accounts are inherently
+verified (`user.emailVerified` is already `true`), so the condition already
+excludes them, but checking the provider explicitly (not just
+`!emailVerified`) avoids ever showing it for a provider type where "verify
+your email" wouldn't even make sense.
+
 ## Commands to run locally
 
 ```bash
@@ -265,20 +383,28 @@ npm install -g firebase-tools
 # Pure-logic unit tests (scoring, accuracy, auto-flags) — already run and passing
 npm run test
 
-# Firestore security rules tests — requires a JVM + the Firebase CLI,
-# neither available in the sandboxed environment this was built in
+# Firestore security rules AND API route tests — requires a JVM + the
+# Firebase CLI (both Auth and Firestore emulators), neither available in
+# the sandboxed environment this was built in
 npm run test:rules
 
 # Once your Firebase project's config AND a FIREBASE_ADMIN_* service account
 # are in .env.local (see .env.example and docs/DEPLOYMENT.md):
 npm run dev
-# then walk through: first-run setup -> copy the join code -> sign up a
-# second account with it -> Team Management role/admin edits (including the
-# last-admin block) -> Event Selection as admin vs. non-admin (this now also
-# exercises the session-cookie auth proxy — Event Selection calls getEvents()
-# under the hood) -> Scout Form submit -> Match Analytics -> toggle devtools
-# network throttling to "Offline" and confirm the nav shows "N pending
-# sync", then back online and confirm it clears.
+# then walk through: Signup (password) with "Create a team" -> copy the
+# join code -> sign up a second account with "Join a team" and that code ->
+# log out, log back in with "Continue with Google" on a third email -> land
+# on Finish Setup, join the same team -> Account Settings: Link Google on
+# the first (password) account, confirm "Sign-in methods" shows both ->
+# Team Management role/admin edits (including the last-admin block) ->
+# if OWNER_EMAILS/ADMIN_EMAILS are set, confirm that email becomes
+# owner/admin only after clicking the verification email's link, and that
+# its Team Management row shows locked controls -> Admin Panel's "Allow
+# team creation" switch (owner only) -> Event Selection as admin vs.
+# non-admin (this now also exercises the session-cookie auth proxy — Event
+# Selection calls getEvents() under the hood) -> Scout Form submit -> Match
+# Analytics -> toggle devtools network throttling to "Offline" and confirm
+# the nav shows "N pending sync", then back online and confirm it clears.
 #
 # Without FIREBASE_ADMIN_* configured, Event Selection (and anything else
 # calling the FIRST API) will show "Sign in to view FIRST API data." even

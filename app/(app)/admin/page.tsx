@@ -12,19 +12,43 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { scouts } from "@/lib/mock-data";
 import { usePermissions } from "@/lib/permissions";
+import { fetchTeamCreationEnabled, setTeamCreationEnabled } from "@/lib/team-enrollment";
 
 const roles = ["scout", "lead", "admin"];
 
 export default function AdminPanelPage() {
   const router = useRouter();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isOwner } = usePermissions();
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [allowSignups, setAllowSignups] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [teamCreationEnabled, setTeamCreationEnabledState] = useState<boolean | null>(null);
+  const [togglingTeamCreation, setTogglingTeamCreation] = useState(false);
+  const [teamCreationError, setTeamCreationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAdmin) router.replace("/dashboard");
   }, [isAdmin, router]);
+
+  useEffect(() => {
+    if (!isOwner) return;
+    fetchTeamCreationEnabled().then(setTeamCreationEnabledState);
+  }, [isOwner]);
+
+  const handleToggleTeamCreation = async (checked: boolean) => {
+    setTeamCreationError(null);
+    setTogglingTeamCreation(true);
+    const previous = teamCreationEnabled;
+    setTeamCreationEnabledState(checked);
+    try {
+      await setTeamCreationEnabled(checked);
+    } catch (err) {
+      setTeamCreationEnabledState(previous);
+      setTeamCreationError(err instanceof Error ? err.message : "Couldn't change this.");
+    } finally {
+      setTogglingTeamCreation(false);
+    }
+  };
 
   if (!isAdmin) return null;
 
@@ -44,6 +68,26 @@ export default function AdminPanelPage() {
         </div>
         <Badge variant="danger" className="ml-auto">Privileged area</Badge>
       </GlassPanel>
+
+      {isOwner && (
+        <GlassPanel className="flex flex-col gap-4 border-amber-400/20">
+          <h2 className="text-base font-semibold">Owner settings</h2>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">Allow team creation</div>
+              <div className="text-xs text-[var(--muted-foreground)]">
+                Lets the Signup / Finish Setup page offer &ldquo;Create a team&rdquo; again. Off by default once a team exists.
+              </div>
+            </div>
+            <Switch
+              checked={teamCreationEnabled ?? false}
+              onCheckedChange={handleToggleTeamCreation}
+              disabled={teamCreationEnabled === null || togglingTeamCreation}
+            />
+          </div>
+          {teamCreationError && <p className="text-sm text-red-400">{teamCreationError}</p>}
+        </GlassPanel>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <GlassPanel className="flex flex-col gap-4">

@@ -2,21 +2,43 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { KeyRound, Save } from "lucide-react";
+import { KeyRound, Save, ShieldCheck } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Avatar } from "@/components/ui/avatar";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { GoogleButton } from "@/components/auth/google-button";
 import { themes } from "@/lib/themes";
 import { useAppTheme } from "@/components/theme/theme-provider";
 import { useAuth } from "@/lib/auth";
 import { getRole } from "@/lib/roles";
 import { spring } from "@/lib/motion";
 
+const PROVIDER_LABELS: Record<string, string> = {
+  password: "Email & password",
+  "google.com": "Google",
+};
+
 export default function AccountSettingsPage() {
-  const { user, profile, updateUserProfile, changePassword } = useAuth();
+  const { user, profile, linkedProviders, updateUserProfile, changePassword, linkGoogle } = useAuth();
   const { themeId, setThemeId } = useAppTheme();
+  const [linkingGoogle, setLinkingGoogle] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const hasGoogle = linkedProviders.includes("google.com");
+  const hasPassword = linkedProviders.includes("password");
+
+  const handleLinkGoogle = async () => {
+    setLinkError(null);
+    setLinkingGoogle(true);
+    try {
+      await linkGoogle();
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Couldn't link Google.");
+    } finally {
+      setLinkingGoogle(false);
+    }
+  };
   const [displayName, setDisplayName] = useState(profile?.name ?? "");
   const [savingName, setSavingName] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
@@ -92,8 +114,35 @@ export default function AccountSettingsPage() {
         <Avatar name={displayName || profile?.name || ""} size="lg" />
         <div>
           <div className="font-semibold">{displayName || profile?.name}</div>
-          {primaryRole && <Badge className={`mt-1 ${primaryRole.className}`}>{primaryRole.label}</Badge>}
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {primaryRole && <Badge className={primaryRole.className}>{primaryRole.label}</Badge>}
+            {profile?.isOwner && (
+              <Badge variant="glass" className="gap-1">
+                <ShieldCheck className="h-3 w-3" /> Owner
+              </Badge>
+            )}
+          </div>
         </div>
+      </GlassPanel>
+
+      <GlassPanel className="flex flex-col gap-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Sign-in methods</h2>
+        <div className="flex flex-col gap-2">
+          {linkedProviders.map((id) => (
+            <div key={id} className="glass-card flex items-center justify-between gap-3 p-3 text-sm">
+              <span>{PROVIDER_LABELS[id] ?? id}</span>
+              <Badge variant="success" className="text-[10px]">
+                Linked
+              </Badge>
+            </div>
+          ))}
+        </div>
+        {!hasGoogle && (
+          <div className="flex flex-col gap-2 self-start">
+            <GoogleButton onClick={handleLinkGoogle} disabled={linkingGoogle} label="Link Google" />
+            {linkError && <p className="text-sm text-red-400">{linkError}</p>}
+          </div>
+        )}
       </GlassPanel>
 
       <GlassPanel className="flex flex-col gap-4">
@@ -164,10 +213,17 @@ export default function AccountSettingsPage() {
       </GlassPanel>
 
       <GlassPanel className="flex flex-col gap-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Password</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+          {hasPassword ? "Password" : "Set a password"}
+        </h2>
+        {!hasPassword && (
+          <p className="text-xs text-[var(--muted-foreground)]">
+            You signed up with Google. Set a password to also be able to log in without it.
+          </p>
+        )}
         <form onSubmit={handleChangePassword} className="flex flex-col gap-4 sm:max-w-sm">
           <div>
-            <Label htmlFor="new-password">New password</Label>
+            <Label htmlFor="new-password">{hasPassword ? "New password" : "Password"}</Label>
             <Input
               id="new-password"
               type="password"
@@ -179,9 +235,9 @@ export default function AccountSettingsPage() {
             />
           </div>
           {passwordError && <p className="text-sm text-red-400">{passwordError}</p>}
-          {passwordSaved && <p className="text-sm text-emerald-400">Password changed.</p>}
+          {passwordSaved && <p className="text-sm text-emerald-400">{hasPassword ? "Password changed." : "Password set."}</p>}
           <Button className="gap-2 self-start" type="submit" disabled={savingPassword}>
-            <KeyRound className="h-4 w-4" /> {savingPassword ? "Changing…" : "Change password"}
+            <KeyRound className="h-4 w-4" /> {savingPassword ? "Saving…" : hasPassword ? "Change password" : "Set password"}
           </Button>
         </form>
       </GlassPanel>

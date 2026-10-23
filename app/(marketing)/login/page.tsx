@@ -8,8 +8,8 @@ import { LogIn } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { GoogleButton } from "@/components/auth/google-button";
 import { useAuth } from "@/lib/auth";
-import { useTeamDoc } from "@/lib/team";
 import { cardEntranceVariants } from "@/lib/motion";
 
 function authErrorMessage(err: unknown): string {
@@ -28,21 +28,31 @@ function authErrorMessage(err: unknown): string {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, login, resetPassword, firebaseReady } = useAuth();
-  const { loaded: teamLoaded, exists: teamExists } = useTeamDoc();
+  const {
+    user,
+    profile,
+    loading,
+    login,
+    loginWithGoogle,
+    resetPassword,
+    firebaseReady,
+    pendingGoogleLink,
+    completeGoogleLink,
+    dismissGoogleLinkPrompt,
+  } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
+  const [linkPassword, setLinkPassword] = useState("");
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user) router.replace("/dashboard");
-  }, [user, router]);
-
-  useEffect(() => {
-    if (teamLoaded && teamExists === false) router.replace("/setup");
-  }, [teamLoaded, teamExists, router]);
+    if (loading || !user) return;
+    router.replace(profile ? "/dashboard" : "/finish-setup");
+  }, [loading, user, profile, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +66,32 @@ export default function LoginPage() {
       setError(authErrorMessage(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError(null);
+    setGoogleSubmitting(true);
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setGoogleSubmitting(false);
+    }
+  };
+
+  const handleCompleteLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLinkSubmitting(true);
+    try {
+      await completeGoogleLink(linkPassword);
+      setLinkPassword("");
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setLinkSubmitting(false);
     }
   };
 
@@ -73,6 +109,45 @@ export default function LoginPage() {
     }
   };
 
+  if (pendingGoogleLink) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center py-16">
+        <motion.div variants={cardEntranceVariants} initial="hidden" animate="show" className="w-full max-w-sm">
+          <GlassPanel strong className="flex flex-col gap-6">
+            <div className="text-center">
+              <h1 className="text-2xl font-semibold">Account already exists</h1>
+              <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+                <strong>{pendingGoogleLink.email}</strong> already has a password account. Sign in with your password to link
+                Google to it.
+              </p>
+            </div>
+            <form onSubmit={handleCompleteLink} className="flex flex-col gap-4">
+              <div>
+                <Label htmlFor="link-password">Password</Label>
+                <Input
+                  id="link-password"
+                  type="password"
+                  value={linkPassword}
+                  onChange={(e) => setLinkPassword(e.target.value)}
+                  placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+                  required
+                  autoFocus
+                />
+              </div>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              <Button type="submit" size="lg" className="mt-1" disabled={linkSubmitting}>
+                {linkSubmitting ? "Linking…" : "Sign in and link Google"}
+              </Button>
+              <Button type="button" variant="ghost" onClick={dismissGoogleLinkPrompt}>
+                Cancel
+              </Button>
+            </form>
+          </GlassPanel>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-[70vh] items-center justify-center py-16">
       <motion.div variants={cardEntranceVariants} initial="hidden" animate="show" className="w-full max-w-sm">
@@ -89,6 +164,14 @@ export default function LoginPage() {
               Firebase isn&apos;t configured yet &mdash; add your project&apos;s keys to .env.local.
             </p>
           )}
+
+          <GoogleButton onClick={handleGoogle} disabled={googleSubmitting || !firebaseReady} />
+
+          <div className="flex items-center gap-3 text-xs text-[var(--muted-foreground)]">
+            <div className="h-px flex-1 bg-[var(--glass-border)]" />
+            or
+            <div className="h-px flex-1 bg-[var(--glass-border)]" />
+          </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>

@@ -14,7 +14,8 @@ import { setDoc, doc, getDoc, updateDoc, deleteDoc, collection, addDoc } from "f
 
 let testEnv: RulesTestEnvironment;
 
-const TEAM_ID = "default";
+const TEAM_ID = "team-1";
+const OWNER_UID = "owner-1";
 const ADMIN_UID = "admin-1";
 const SCOUT_UID = "scout-1";
 const OTHER_TEAM_UID = "outsider-1";
@@ -41,12 +42,22 @@ beforeEach(async () => {
     const db = ctx.firestore();
     await setDoc(doc(db, "teams", TEAM_ID), {
       number: 3468,
+      name: null,
       joinCode: "ABC123",
       activeEventCode: null,
       activeSeasonId: null,
       activeEvent: null,
-      firstAdminClaimed: true,
       createdAt: new Date(),
+    });
+    await setDoc(doc(db, "users", OWNER_UID), {
+      name: "Owner Person",
+      email: "owner@example.com",
+      teamId: TEAM_ID,
+      primaryRole: "lead-scout",
+      secondaryRoles: [],
+      isAdmin: true,
+      isOwner: true,
+      themeId: "team",
     });
     await setDoc(doc(db, "users", ADMIN_UID), {
       name: "Admin Person",
@@ -55,6 +66,7 @@ beforeEach(async () => {
       primaryRole: "lead-scout",
       secondaryRoles: [],
       isAdmin: true,
+      isOwner: false,
       themeId: "team",
     });
     await setDoc(doc(db, "users", SCOUT_UID), {
@@ -64,27 +76,31 @@ beforeEach(async () => {
       primaryRole: "match-scout",
       secondaryRoles: [],
       isAdmin: false,
+      isOwner: false,
       themeId: "team",
     });
   });
 });
 
 describe("teams/{teamId}", () => {
-  it("is readable (get) even when signed out — join-code lookup must work pre-auth", async () => {
-    const db = testEnv.unauthenticatedContext().firestore();
-    await assertSucceeds(getDoc(doc(db, "teams", TEAM_ID)));
+  it("is readable only by a member of that team — P1b dropped the public read", async () => {
+    const memberDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(getDoc(doc(memberDb, "teams", TEAM_ID)));
+
+    const outDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(outDb, "teams", TEAM_ID)));
   });
 
-  it("cannot be created a second time, even by a signed-in user", async () => {
+  it("can never be created directly by a client — only /api/team/create (Admin SDK)", async () => {
     const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
     await assertFails(
-      setDoc(doc(db, "teams", TEAM_ID), {
+      setDoc(doc(db, "teams", "new-team"), {
         number: 9999,
+        name: null,
         joinCode: "ZZZZZZ",
         activeEventCode: null,
         activeSeasonId: null,
         activeEvent: null,
-        firstAdminClaimed: true,
       })
     );
   });
@@ -106,11 +122,23 @@ describe("teams/{teamId}", () => {
         primaryRole: "lead-scout",
         secondaryRoles: [],
         isAdmin: true,
+        isOwner: false,
         themeId: "team",
       });
     });
     const db = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
     await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USNYLI" }));
+  });
+});
+
+describe("appSettings/global", () => {
+  it("is denied to every client, read and write — even an owner or admin", async () => {
+    const ownerDb = testEnv.authenticatedContext(OWNER_UID).firestore();
+    await assertFails(getDoc(doc(ownerDb, "appSettings", "global")));
+    await assertFails(setDoc(doc(ownerDb, "appSettings", "global"), { teamCreationEnabled: true }));
+
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(getDoc(doc(adminDb, "appSettings", "global")));
   });
 });
 
@@ -134,6 +162,7 @@ describe("users/{uid}", () => {
         primaryRole: "match-scout",
         secondaryRoles: [],
         isAdmin: false,
+        isOwner: false,
         themeId: "team",
       });
     });
@@ -141,14 +170,31 @@ describe("users/{uid}", () => {
     await assertFails(getDoc(doc(db, "users", SCOUT_UID)));
   });
 
+  it("can never be created directly by a client — only /api/team/join or /api/team/create (Admin SDK)", async () => {
+    const db = testEnv.authenticatedContext("new-user-1").firestore();
+    await assertFails(
+      setDoc(doc(db, "users", "new-user-1"), {
+        name: "New Scout",
+        email: "new@example.com",
+        teamId: TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      })
+    );
+  });
+
   it("lets a user update their own display name and theme", async () => {
     const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
     await assertSucceeds(updateDoc(doc(db, "users", SCOUT_UID), { name: "New Name", themeId: "biobuzz" }));
   });
 
-  it("blocks a user from granting themselves admin", async () => {
+  it("blocks a user from granting themselves admin or owner", async () => {
     const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
     await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { isAdmin: true }));
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { isOwner: true }));
   });
 
   it("blocks a user from changing their own primaryRole or secondaryRoles", async () => {
@@ -162,7 +208,7 @@ describe("users/{uid}", () => {
     await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { teamId: OTHER_TEAM_ID }));
   });
 
-  it("lets an admin change another member's role and admin status", async () => {
+  it("lets an admin change another (non-owner) member's role and admin status", async () => {
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
     await assertSucceeds(updateDoc(doc(db, "users", SCOUT_UID), { primaryRole: "pit-scout", secondaryRoles: ["media"] }));
     await assertSucceeds(updateDoc(doc(db, "users", SCOUT_UID), { isAdmin: true }));
@@ -173,49 +219,26 @@ describe("users/{uid}", () => {
     await assertFails(updateDoc(doc(db, "users", ADMIN_UID), { primaryRole: "pit-scout" }));
   });
 
-  it("lets a new signee create their own non-admin profile for an existing team", async () => {
-    const db = testEnv.authenticatedContext("new-user-1").firestore();
-    await assertSucceeds(
-      setDoc(doc(db, "users", "new-user-1"), {
-        name: "New Scout",
-        email: "new@example.com",
-        teamId: TEAM_ID,
-        primaryRole: "match-scout",
-        secondaryRoles: [],
-        isAdmin: false,
-        themeId: "team",
-      })
-    );
+  it("blocks an admin from setting isOwner on anyone via a client update", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { isOwner: true }));
   });
 
-  it("blocks self-creating a profile as admin once the team already has one", async () => {
-    const db = testEnv.authenticatedContext("new-user-2").firestore();
-    await assertFails(
-      setDoc(doc(db, "users", "new-user-2"), {
-        name: "Sneaky",
-        email: "sneaky@example.com",
-        teamId: TEAM_ID,
-        primaryRole: "match-scout",
-        secondaryRoles: [],
-        isAdmin: true,
-        themeId: "team",
-      })
-    );
+  it("P1b: blocks another admin from editing an owner's row at all — role, admin status, or anything else", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { primaryRole: "pit-scout" }));
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { secondaryRoles: ["media"] }));
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { isAdmin: false }));
   });
 
-  it("blocks creating a profile under someone else's uid", async () => {
-    const db = testEnv.authenticatedContext("new-user-3").firestore();
-    await assertFails(
-      setDoc(doc(db, "users", "someone-else"), {
-        name: "Impersonator",
-        email: "impersonator@example.com",
-        teamId: TEAM_ID,
-        primaryRole: "match-scout",
-        secondaryRoles: [],
-        isAdmin: false,
-        themeId: "team",
-      })
-    );
+  it("P1b: blocks even the owner themself from changing their own isAdmin/isOwner/roles through this path", async () => {
+    // Owner status is env-var-driven via app/api/auth/sync-roles (Admin
+    // SDK) only — the self-update rule's isAdmin/isOwner/role equality
+    // checks apply to every uid, owner included.
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { isAdmin: false }));
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { primaryRole: "pit-scout" }));
+    await assertSucceeds(updateDoc(doc(db, "users", OWNER_UID), { name: "Still Owner" }));
   });
 });
 

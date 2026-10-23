@@ -9,6 +9,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["node_modules/**", ".next/**", "**/*.rules.test.ts"],
+    exclude: ["node_modules/**", ".next/**", "**/*.rules.test.ts", "**/*.emulator.test.ts"],
   },
 });

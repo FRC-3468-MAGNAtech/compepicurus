@@ -39,23 +39,38 @@ minutes server-side to stay under FIRST's rate limit (`lib/ftc/http.ts`).
 
 ## Firestore collections
 
-All collections are scoped by `teamId`. There is only one team today
-(`teams/default` — see P1-3), but every query and rule is written as if
-there could be more, so multi-team support later doesn't need a rewrite.
+All collections are scoped by `teamId`. P1 assumed a single fixed team doc;
+P1b replaced that with a real (if still usually-one-row) `teams` collection
+once "create another team later" became an explicit possibility — see
+docs/ASSUMPTIONS.md, P1b-1.
 
 ### `teams/{teamId}`
 
 | Field | Type | Notes |
 |---|---|---|
 | `number` | `number` | FTC team number |
-| `joinCode` | `string` | Random 6-char code (no ambiguous 0/O/1/I), shown to admins only in the UI; the *document* itself is publicly `get`-able — see P1-4 |
+| `name` | `string \| null` | Optional team name (P1b) |
+| `joinCode` | `string` | Random 6-char code (no ambiguous 0/O/1/I). No longer publicly readable (P1b — see `firestore.rules` and P1b-1); only a team's own members can read it, mainly so Team Management can show it to admins |
 | `activeEventCode` | `string \| null` | FIRST API event code |
 | `activeSeasonId` | `number \| null` | FIRST API season year |
 | `activeEvent` | `FtcEvent \| null` | Denormalized full event object (P1-5) so pages don't need a second API round-trip just to show the active event's name/dates |
-| `firstAdminClaimed` | `boolean` | Flips `false → true` once the team's first admin user doc exists — closes the admin-bootstrap hole (see P1-6 and `firestore.rules`) |
 | `createdAt` | `Timestamp` | |
 
-Fixed document id `"default"` (exported as `TEAM_ID` from `lib/auth.tsx`).
+Auto-generated document id, created only via `app/api/team/create`'s
+transaction (P1b) — never directly by a client (`firestore.rules` denies
+client creates outright). P1's `firstAdminClaimed` bootstrap-race field is
+gone: the transaction makes team + first-admin creation properly atomic, so
+the workaround it existed for no longer applies.
+
+### `appSettings/global` (P1b)
+
+| Field | Type | Notes |
+|---|---|---|
+| `teamCreationEnabled` | `boolean` | Whether Signup/Finish Setup may offer "Create a team". Defaults to `true` only if no team exists yet; flipped to `false` inside `app/api/team/create`'s transaction, flippable back by an owner via `app/api/admin/team-creation` |
+
+Denied to every client, read and write, no exceptions (`firestore.rules`) —
+only ever touched by the Admin SDK from `app/api/public/config`,
+`app/api/team/create`, and `app/api/admin/team-creation`.
 
 ### `users/{uid}`
 
@@ -63,14 +78,19 @@ Fixed document id `"default"` (exported as `TEAM_ID` from `lib/auth.tsx`).
 |---|---|---|
 | `name` | `string` | |
 | `email` | `string` | Mirrors the Firebase Auth email |
-| `teamId` | `string` | Always `"default"` today |
+| `teamId` | `string` | References a `teams/{teamId}` doc |
 | `primaryRole` | `RoleId` | One of `lib/roles.ts`'s `ROLES`; shown as a colored pill |
 | `secondaryRoles` | `RoleId[]` | Shown as neutral pills |
 | `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management |
-| `themeId` | `string` | Applied on login (see `app/(app)/layout.tsx`) |
+| `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own (see P1b-3) |
+| `themeId` | `string` | Applied once the profile first loads (see `app/(app)/layout.tsx`) |
 | `createdAt` | `Timestamp` | |
 
-Document id is the Firebase Auth `uid`.
+Document id is the Firebase Auth `uid`. Created only via
+`app/api/team/join` or `app/api/team/create` (Admin SDK) — P1b also removed
+the client's ability to create its own doc directly, closing a gap where
+the old create rule checked a target team *existed* but never that the
+caller supplied a matching join code (see P1b-2).
 
 ### `scoutEntries/{entryId}`
 
@@ -105,22 +125,28 @@ Document id is the Firebase Auth `uid`.
   missing `.env.local` config doesn't crash the whole app on import.
 - `lib/auth.tsx` — `AuthProvider`/`useAuth()`. Firebase `onAuthStateChanged`
   + a live `onSnapshot` on the signed-in user's own `users/{uid}` doc.
-  Exposes `login`, `signup`, `firstRunSetup`, `logout`, `resetPassword`,
-  `changePassword`, `updateUserProfile`. `TEAM_ID = "default"` lives here.
-- `lib/team.ts` — `useTeamDoc()` (realtime `onSnapshot` on `teams/default`)
-  and `setActiveEvent()` (admin-gated at call sites via `usePermissions()`,
-  enforced again in `firestore.rules`).
+  Exposes `login`, `loginWithGoogle`, `linkGoogle`, `signup` (account
+  creation only — see "Accounts & roles (P1b)" below for team enrollment),
+  `logout`, `resetPassword`, `changePassword`, `updateUserProfile`,
+  `resendVerificationEmail`, `linkedProviders`, and the Google
+  account-linking-conflict pair `pendingGoogleLink`/`completeGoogleLink`.
+- `lib/team.ts` — `useTeamDoc(teamId)` (realtime `onSnapshot` on a specific
+  `teams/{teamId}` — `teamId` comes from the caller's own profile, not a
+  fixed id; see P1b-1) and `setActiveEvent(teamId, event)` (admin-gated at
+  call sites via `usePermissions()`, enforced again in `firestore.rules`).
 - `lib/active-event.tsx` — thin shim over `lib/team.ts` so every existing
   consumer (Event Selection, Scout Form, Match Analytics) keeps calling
-  `useActiveEvent()` unchanged.
+  `useActiveEvent()` with no arguments — it resolves `teamId` from
+  `useAuth().profile` internally.
 - `lib/team-members.ts` — `useTeamMembers(teamId)` (realtime roster) plus
   `setMemberPrimaryRole`/`setMemberSecondaryRoles`/`setMemberAdmin`. Backs
-  both Team Management (editable) and People (read-only).
+  both Team Management (editable) and People (read-only). `TeamMember` now
+  carries `isOwner` too (P1b).
 - `lib/roles.ts` — the 9-role config (`ROLES`, `RoleId`, `getRole`,
   `DEFAULT_ROLE_ID`), each with a fixed Tailwind color token.
-- `lib/permissions.ts` — `usePermissions()` → `{ isAdmin, can(action) }`.
-  Actions so far: `"manageTeam"`, `"manageScoutData"` (both admin-only).
-  Later prompts add actions here.
+- `lib/permissions.ts` — `usePermissions()` → `{ isAdmin, isOwner,
+  can(action) }`. Actions: `"manageTeam"`, `"manageScoutData"` (admin-only),
+  `"toggleTeamCreation"` (owner-only, P1b).
 - `lib/scout-entries.ts` — Firestore-backed `saveEntry`, `getEntries`,
   `getEntriesForEvent`, `subscribeEntries` (realtime; also reports
   `pendingWrites` via `doc.metadata.hasPendingWrites`, driving the
@@ -155,12 +181,20 @@ can, so the FIRST API proxy uses a Firebase session cookie instead:
   "not signed in" into the same `ActionResult` error shape every other
   failure already uses (`code: "unauthorized"`).
 - `lib/auth.tsx`'s `AuthProvider` calls a `syncServerSession(user)` helper
-  every time `onAuthStateChanged` fires (covers login, signup, first-run
-  setup, and restoring a session on page load) to keep this cookie in sync
-  with the client Firebase SDK's auth state, and also awaits it explicitly
-  inside `login`/`signup`/`firstRunSetup` before those functions return — so
-  a caller that redirects immediately after doesn't race the cookie write
-  and see a spurious "unauthorized" error on the very next FIRST API call.
+  every time `onAuthStateChanged` fires (covers password login, Google
+  sign-in, and restoring a session on page load) to keep this cookie in
+  sync with the client Firebase SDK's auth state, and also awaits it
+  explicitly inside `login`/`signup`/the Google sign-in paths before they
+  return — so a caller that redirects immediately after doesn't race the
+  cookie write and see a spurious "unauthorized" error on the very next
+  FIRST API call.
+- `lib/server/require-user.ts` also exports `verifyBearerToken(request)` —
+  verifies an `Authorization: Bearer <idToken>` header instead of the
+  session cookie, returning the full decoded token (uid, email,
+  email_verified, custom claims). Used by the P1b API routes below, which
+  the client calls directly with a fresh ID token rather than relying on
+  the cookie (those calls can happen before a user doc, or even the cookie
+  sync, exists yet).
 
 ### Scout form schema & reusable form (P2)
 
@@ -211,16 +245,109 @@ can, so the FIRST API proxy uses a Firebase session cookie instead:
   `FieldToggle`/`CounterControl`/`CheckboxTile` (all pre-existing) gained a
   `disabled` prop to support `lockedFields`.
 
+### Accounts & roles (P1b)
+
+Google sign-in, a server-enforced team-creation lock, and owner/admin
+accounts driven by env vars — patching P1's accounts system in place
+(nothing from P1's data model changed shape except the two notes above:
+`teams` moved off a fixed id, and `users` gained `isOwner`).
+
+- `lib/firebase/admin.ts` also exports `getAdminFirestore()` — Firestore via
+  the Admin SDK, used only by the API routes below (bypasses
+  `firestore.rules` entirely, by design — these routes *are* the
+  authoritative check the rules can't express, e.g. "has anyone already
+  created a team").
+- `lib/server/owner-admin.ts` — `isOwnerEmail(email)` /
+  `isPreconfiguredAdminEmail(email)`, reading the server-only
+  `OWNER_EMAILS`/`ADMIN_EMAILS` env vars (comma-separated, compared
+  case-insensitively).
+- `lib/server/team-settings.ts` — `randomJoinCode()` (moved here from
+  `lib/auth.tsx` now that team creation is server-only),
+  `getTeamCreationEnabled(db)` (plain read, computing + persisting the
+  default the first time), and `getTeamCreationEnabledInTransaction(db,
+  txn)` (the transaction-safe read `app/api/team/create` uses, per
+  Firestore's reads-before-writes rule).
+- `lib/team-enrollment.ts` — the client-side functions that call the API
+  routes below with the current user's fresh ID token: `joinTeam`,
+  `createTeam`, `fetchTeamCreationEnabled`, `setTeamCreationEnabled`,
+  `syncRoles`. Deliberately outside `lib/auth.tsx`'s context (plain
+  functions reading `auth.currentUser` directly), matching how
+  `lib/team.ts`/`lib/team-members.ts` aren't context-based either.
+- `components/auth/team-enrollment.tsx` — `useTeamEnrollment()` (Join/Create
+  tab + field state, fetches `teamCreationEnabled` on mount),
+  `<TeamEnrollmentFields/>` (the tab/field UI, shared), and
+  `<TeamEnrollmentScreen/>` (the full "you're signed in, now join or
+  create" screen — used standalone by `/finish-setup` and rendered in
+  place of Signup's pre-auth form once a Google sign-in there has no
+  profile yet). See P1b-4 for why Signup and Finish Setup share this
+  instead of being two separate implementations.
+- `components/auth/google-button.tsx` — the glass "Continue with Google"
+  button (inline multi-color G mark, no external asset).
+- `components/layout/verify-email-banner.tsx` — shown in the app shell only
+  for password-auth users (`linkedProviders.includes("password")`) who
+  haven't verified; never for Google users (inherently verified) and never
+  blocks anything — only owner/admin auto-grants require verification.
+
+**API routes** (all Route Handlers, all using the Admin SDK, all called by
+the client with `Authorization: Bearer <idToken>` except the public one):
+
+- `GET /api/public/config` → `{ teamCreationEnabled }`. The *only* way an
+  unauthenticated visitor learns this — `teams` and `appSettings` are both
+  fully locked down to clients in `firestore.rules`.
+- `POST /api/team/create` — body `{ teamNumber, teamName?, name? }`. One
+  Firestore transaction: confirms `teamCreationEnabled`, creates the team
+  doc (auto id), creates the caller's own user doc as admin, flips
+  `teamCreationEnabled` to `false` — all atomically, so two simultaneous
+  attempts can't both succeed (the loser's transaction retries against the
+  now-`false` flag). Replaces P1's client-side `firstRunSetup()` and
+  `/setup` page entirely.
+- `POST /api/team/join` — body `{ joinCode, name? }`. Looks up the team by
+  `joinCode` (an Admin SDK query, unaffected by rules) and creates the
+  caller's own user doc as a non-admin. Not explicitly asked for by P1b —
+  added alongside team creation to close the join-code-bypass gap in P1's
+  rules (see P1b-2).
+- `POST /api/auth/sync-roles` — called right after every sign-in (from
+  `lib/auth.tsx`'s `onSignedIn`). Requires `email_verified === true` on the
+  token; otherwise a no-op. Grants (never revokes admin; can revoke
+  `isOwner` if the email drops out of `OWNER_EMAILS`) `isOwner`/`isAdmin`
+  per `OWNER_EMAILS`/`ADMIN_EMAILS`, mirrors the result onto Firebase custom
+  claims (`{ owner, admin }`), and — the "owner convenience" case — if a
+  verified owner has no profile yet and exactly one team exists, attaches
+  them to it automatically, no join code needed. `lib/auth.tsx` force
+  -refreshes the ID token (`getIdToken(true)`) whenever this reports
+  `changed: true`, so new claims apply immediately rather than waiting for
+  the ~1 hour natural refresh.
+- `POST /api/admin/team-creation` — body `{ enabled }`. Owner-only, gated on
+  the `owner` custom claim read straight off the verified token (no
+  Firestore read needed) — backs Admin Panel's "Allow team creation"
+  switch.
+
+**Custom claims vs. the Firestore fields** — rules can only ever read the
+*caller's own* token claims (`request.auth.token.x`), never another user's;
+checking whether the *target* of a write is protected (e.g. "is this doc an
+owner's") still has to read that document's own Firestore field
+(`resource.data.isOwner`). So claims drive the two places that specifically
+need a fast, no-Firestore-read check of the caller (`/api/admin/team-
+creation`'s owner gate, and client-side UI like the Admin Panel toggle),
+while `firestore.rules` and `usePermissions()` continue to key off the
+`users/{uid}` Firestore fields — which is also the only source of truth for
+admins promoted through Team Management, since they never get a custom
+claim at all. `sync-roles` keeps both in sync for owner/`ADMIN_EMAILS`
+grants specifically.
+
 ## Conventions
 
-- **IDs**: Firestore auto-ids for `scoutEntries`; the Firebase Auth `uid` for
-  `users`; the fixed string `"default"` for the one `teams` doc.
+- **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`
+  too; the Firebase Auth `uid` for `users`; the fixed path `appSettings/global`
+  (P1b) for the one settings doc.
 - **Timestamps**: `createdAt` is always `serverTimestamp()`. Where a value
   needs to be usable immediately offline (e.g. `ScoutEntry.submittedAt`), a
   client-set ISO string is stored alongside it instead of relying on the
   server timestamp resolving.
 - **`teamId` everywhere**: every collection's documents and every Firestore
-  query/rule includes `teamId`, even though there's only one team right now.
+  query/rule includes `teamId`. In practice there's still almost always just
+  one (team creation locks itself after the first), but nothing in the code
+  assumes that anymore as of P1b.
 - **`source` / `mode`**: `source` distinguishes Real Event vs. practice vs.
   live (P2+); `mode` is reserved, currently always `null`.
 - **Realtime vs. one-shot reads**: anything team-wide and likely to change

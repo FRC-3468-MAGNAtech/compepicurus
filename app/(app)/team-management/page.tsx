@@ -13,7 +13,7 @@ import type { RoleId } from "@/lib/roles";
 
 export default function TeamManagementPage() {
   const { profile } = useAuth();
-  const { team, loaded: teamLoaded } = useTeamDoc();
+  const { team, loaded: teamLoaded } = useTeamDoc(profile?.teamId ?? null);
   const { isAdmin } = usePermissions();
   const { members, loaded: membersLoaded } = useTeamMembers(profile?.teamId ?? null);
   const [showJoinCode, setShowJoinCode] = useState(false);
@@ -89,10 +89,16 @@ export default function TeamManagementPage() {
                 member={m}
                 editable={isAdmin}
                 lastAdminBlocked={m.isAdmin && adminCount <= 1}
-                onPrimaryRoleChange={(role) => void setMemberPrimaryRole(m.uid, role)}
-                onToggleSecondaryRole={(role) => handleToggleSecondaryRole(m.uid, m.secondaryRoles, role)}
+                onPrimaryRoleChange={(role) => {
+                  if (m.isOwner) return;
+                  void setMemberPrimaryRole(m.uid, role);
+                }}
+                onToggleSecondaryRole={(role) => {
+                  if (m.isOwner) return;
+                  handleToggleSecondaryRole(m.uid, m.secondaryRoles, role);
+                }}
                 onToggleAdmin={() => {
-                  if (m.isAdmin && adminCount <= 1) return;
+                  if (m.isOwner || (m.isAdmin && adminCount <= 1)) return;
                   handleToggleAdmin(m.uid, m.isAdmin);
                 }}
               />

@@ -8,8 +8,9 @@ import { UserPlus } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { GoogleButton } from "@/components/auth/google-button";
+import { TeamEnrollmentFields, TeamEnrollmentScreen, useTeamEnrollment } from "@/components/auth/team-enrollment";
 import { useAuth } from "@/lib/auth";
-import { useTeamDoc } from "@/lib/team";
 import { cardEntranceVariants } from "@/lib/motion";
 
 function authErrorMessage(err: unknown): string {
@@ -28,29 +29,44 @@ function authErrorMessage(err: unknown): string {
 
 export default function SignupPage() {
   const router = useRouter();
-  const { user, signup, firebaseReady } = useAuth();
-  const { loaded: teamLoaded, exists: teamExists } = useTeamDoc();
+  const {
+    user,
+    profile,
+    loading,
+    signup,
+    loginWithGoogle,
+    firebaseReady,
+    pendingGoogleLink,
+    completeGoogleLink,
+    dismissGoogleLinkPrompt,
+  } = useAuth();
+  const enrollment = useTeamEnrollment();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [joinCode, setJoinCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linkPassword, setLinkPassword] = useState("");
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user) router.replace("/dashboard");
-  }, [user, router]);
+    if (!loading && user && profile) router.replace("/dashboard");
+  }, [loading, user, profile, router]);
 
-  useEffect(() => {
-    if (teamLoaded && teamExists === false) router.replace("/setup");
-  }, [teamLoaded, teamExists, router]);
+  // Google created the account but there's no profile yet — hand off to the
+  // same join/create screen Finish Setup uses, instead of duplicating it.
+  if (!loading && user && !profile) {
+    return <TeamEnrollmentScreen greeting={user.displayName ? `Hi, ${user.displayName}` : undefined} onComplete={() => router.push("/dashboard")} />;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await signup(name, email, password, joinCode);
+      await signup(name, email, password);
+      await enrollment.enroll(name);
       router.push("/dashboard");
     } catch (err) {
       setError(authErrorMessage(err));
@@ -58,6 +74,73 @@ export default function SignupPage() {
       setSubmitting(false);
     }
   };
+
+  const handleGoogle = async () => {
+    setError(null);
+    setGoogleSubmitting(true);
+    try {
+      await loginWithGoogle();
+      // Success routes through the `user && !profile` branch above (or
+      // straight to /dashboard if sync-roles' owner auto-attach applied).
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setGoogleSubmitting(false);
+    }
+  };
+
+  const handleCompleteLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLinkSubmitting(true);
+    try {
+      await completeGoogleLink(linkPassword);
+      setLinkPassword("");
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setLinkSubmitting(false);
+    }
+  };
+
+  if (pendingGoogleLink) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center py-16">
+        <motion.div variants={cardEntranceVariants} initial="hidden" animate="show" className="w-full max-w-sm">
+          <GlassPanel strong className="flex flex-col gap-6">
+            <div className="text-center">
+              <h1 className="text-2xl font-semibold">Account already exists</h1>
+              <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+                <strong>{pendingGoogleLink.email}</strong> already has a password account. Sign in with your password to link
+                Google to it.
+              </p>
+            </div>
+            <form onSubmit={handleCompleteLink} className="flex flex-col gap-4">
+              <div>
+                <Label htmlFor="link-password">Password</Label>
+                <Input
+                  id="link-password"
+                  type="password"
+                  value={linkPassword}
+                  onChange={(e) => setLinkPassword(e.target.value)}
+                  placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+                  required
+                  autoFocus
+                />
+              </div>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              <Button type="submit" size="lg" className="mt-1" disabled={linkSubmitting}>
+                {linkSubmitting ? "Linking…" : "Sign in and link Google"}
+              </Button>
+              <Button type="button" variant="ghost" onClick={dismissGoogleLinkPrompt}>
+                Cancel
+              </Button>
+            </form>
+          </GlassPanel>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-[70vh] items-center justify-center py-16">
@@ -75,6 +158,14 @@ export default function SignupPage() {
               Firebase isn&apos;t configured yet &mdash; add your project&apos;s keys to .env.local.
             </p>
           )}
+
+          <GoogleButton onClick={handleGoogle} disabled={googleSubmitting || !firebaseReady} label="Continue with Google" />
+
+          <div className="flex items-center gap-3 text-xs text-[var(--muted-foreground)]">
+            <div className="h-px flex-1 bg-[var(--glass-border)]" />
+            or
+            <div className="h-px flex-1 bg-[var(--glass-border)]" />
+          </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
@@ -104,16 +195,8 @@ export default function SignupPage() {
                 required
               />
             </div>
-            <div>
-              <Label htmlFor="join-code">Join code</Label>
-              <Input
-                id="join-code"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                placeholder="From a teammate or mentor"
-                required
-              />
-            </div>
+
+            <TeamEnrollmentFields enrollment={enrollment} />
 
             {error && <p className="text-sm text-red-400">{error}</p>}
 
