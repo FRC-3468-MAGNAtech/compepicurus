@@ -9,24 +9,28 @@ export function CheckboxTile({
   label,
   checked,
   onChange,
+  disabled,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <motion.button
       type="button"
       role="checkbox"
       aria-checked={checked}
-      whileTap={{ scale: 0.96 }}
+      disabled={disabled}
+      whileTap={disabled ? undefined : { scale: 0.96 }}
       transition={spring}
-      onClick={() => onChange(!checked)}
+      onClick={() => !disabled && onChange(!checked)}
       className={cn(
         "relative flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-medium transition-colors duration-200",
         checked
           ? "border-transparent text-white"
-          : "glass-card border-[var(--glass-border)] text-[var(--muted-foreground)]"
+          : "glass-card border-[var(--glass-border)] text-[var(--muted-foreground)]",
+        disabled && "opacity-60 cursor-not-allowed"
       )}
       style={
         checked

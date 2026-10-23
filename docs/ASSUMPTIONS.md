@@ -175,6 +175,87 @@ cache layer like Redis/Vercel KV was added) — acceptable for "light"
 caching, since FIRST's own data doesn't change faster than that during a
 live event.
 
+## P2 — Reusable, Schema-Driven Match Scout Form
+
+**P2-1. `calculateScore` keeps `ScoreBreakdown`'s existing `auto` key, not
+`autonomous`.** The prompt's own wording asks for `{ total, autonomous,
+teleop, endgame }`. `ScoreBreakdown = { auto, teleop, endgame, total }` is
+already load-bearing across `lib/analytics/recompute.ts`,
+`lib/analytics/flags.ts`, `lib/analytics/game-schema.ts`'s Analytics
+columns, `components/scout/score-bar.tsx`, CSV export, and every stored
+`ScoutEntry.score` document in Firestore. Renaming the key for a purely
+cosmetic difference would ripple through all of those for no functional
+gain (and would need a data migration for anything already saved), so
+`calculateScore` returns the existing shape; read the prompt's wording as
+descriptive ("an autonomous subtotal, however it's named"), not a literal
+contract.
+
+**P2-2. "Assigned Match" and "Pre-Match" are fixed parts of `<ScoutForm/>`,
+not schema fields.** The prompt's six field types (`toggle`, `counter`,
+`checkbox`, `pick`, `readonly`, `text`) don't have anywhere to hang a
+bracket picker, alliance roster display, or FIRST-API-backed team search —
+and the prompt's own `lockedFields`/`hideMatchPicker` props already treat
+"team number", "match", and "scout name" as named, built-in concepts rather
+than schema-declared fields. `BIOBUZZ_FORM_SCHEMA` therefore only describes
+the scoring sections (Autonomous/Teleop/Endgame/General) plus Comments;
+Assigned Match and Pre-Match are hard-coded sections in the component,
+controlled through their own dedicated props. Scout Name is always
+read-only regardless of `lockedFields` — it's auto-filled from the signed-in
+user by design (P1), never something a scout chooses.
+
+**P2-3. `onSubmit`/`onChange` carry a richer `values` object than a bare
+`FormValues` dict.** The prompt suggests `onSubmit(values, score)`. Since
+`values` must also carry `teamNumber`/`match`/`scoutName` (the parent needs
+them to build a `SaveEntryInput`, and they aren't schema fields per P2-2),
+`ScoutFormValues = { fields: FormValues, teamNumber, match, scoutName }` is
+the actual second-arg-free shape passed as `values`, keeping the prompt's
+two-argument `(values, score)` callback signature rather than flattening
+everything into one dict with awkward reserved keys.
+
+**P2-4. `<ScoutForm/>` never writes to Firestore, in any mode — including
+`event`.** Re-reading "The component never writes to Firestore itself in
+non-`event` modes... In `event` mode the Match Scout Form page keeps its
+current behavior" as "the page's behavior stays the same," not "the
+component special-cases event mode internally": the simpler, more
+consistent design is that `<ScoutForm/>` is Firestore-agnostic in every
+mode, full stop, and `app/(app)/scout/page.tsx`'s own `onSubmit` handler
+(calling `saveEntry()` + `recomputeForEvent()`) is what makes event mode
+"behave identically to today" from the user's perspective. `onSubmit` may
+return a `Promise`; the success animation and field reset only fire once it
+resolves, and a thrown/rejected call leaves the form untouched so the
+parent can show its own error state — a small, non-visible-today
+improvement over the previous page's unhandled-rejection-on-failure
+behavior, not a regression (the old page had no error handling at all).
+
+**P2-5. Only one version per `formId` is supported today.** `FORMS: Record<
+formId, ScoutFormSchema>` stores a single current schema per id rather than
+a version history, since BIOBUZZ v1 is the only schema that has ever
+existed. `getFormSchema(formId)` ignores any specific version request.
+Every saved `ScoutEntry` still stores `formId`/`formVersion` (unchanged from
+P1) so a future schema v2 can be added without breaking old entries' meaning
+— actually looking up a *historical* version for rescoring is left for
+whichever later prompt first needs a second version to exist.
+
+**P2-6. Match Analytics' columns were not derived from the new form
+schema.** The prompt allows skipping this "if cheap." `lib/analytics/
+game-schema.ts`'s `AnalyticsColumn[]` carries metadata a scoring schema has
+no use for (3-tier header `phase`/`category` strings that don't match
+section/group labels 1:1, `sticky`, pixel `width`, non-field meta-columns
+like `match`/`scoutName`/`accuracy`/`scriptStatus`/`actions`) and the
+mapping back from `ScoutFormSchema` would be lossy/approximate rather than
+mechanical. Left fully hand-written and untouched — zero risk to the
+already-working Analytics page, per the prompt's own acceptance criterion
+that it "must keep working."
+
+**P2-7. The Comments field already existed; it was folded into the schema,
+not duplicated.** The prompt's "add one optional Comments text field"
+assumed a prior state without one — this repo already had a Comments
+textarea (bound to `ScoutEntry.comments`, already a Match Analytics column
+and CSV field) from before P1. It's now declared as the schema's one `text`
+field (in BIOBUZZ's `general` section) so the whole form, comments included,
+renders from the schema as the prompt intends, without adding a second,
+redundant comments box.
+
 ## Commands to run locally
 
 ```bash

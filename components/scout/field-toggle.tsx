@@ -10,25 +10,29 @@ export function FieldToggle({
   pointsWhenOn,
   checked,
   onChange,
+  disabled,
 }: {
   label: string;
   pointsWhenOn: number;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <motion.button
       type="button"
       role="switch"
       aria-checked={checked}
-      whileTap={{ scale: 0.97 }}
+      disabled={disabled}
+      whileTap={disabled ? undefined : { scale: 0.97 }}
       transition={springSnappy}
-      onClick={() => onChange(!checked)}
+      onClick={() => !disabled && onChange(!checked)}
       className={cn(
         "flex w-full items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left transition-colors duration-200",
         checked
           ? "border-transparent text-white"
-          : "glass-card border-[var(--glass-border)] text-[var(--foreground)]"
+          : "glass-card border-[var(--glass-border)] text-[var(--foreground)]",
+        disabled && "opacity-60 cursor-not-allowed"
       )}
       style={
         checked

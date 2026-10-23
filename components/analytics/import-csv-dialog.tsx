@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { dedupeAgainstExisting, parseImportCsv, type ImportedRow } from "@/lib/analytics/csv";
 import { formatMatch } from "@/lib/analytics/game-schema";
-import { computeScore, saveEntry, type ScoutEntry } from "@/lib/scout-entries";
+import { saveEntry, type ScoutEntry } from "@/lib/scout-entries";
+import { BIOBUZZ_FORM_SCHEMA, calculateScore, scoutEntryFieldsToValues } from "@/lib/scout-form/schema";
 import type { GameSchema } from "@/lib/analytics/game-schema";
 
 export function ImportCsvDialog({
@@ -76,7 +77,7 @@ export function ImportCsvDialog({
             matchNumber: row.matchNumber,
             teamNumber: row.teamNumber,
             fields: row.fields,
-            score: computeScore(row.fields),
+            score: calculateScore(BIOBUZZ_FORM_SCHEMA, scoutEntryFieldsToValues(row.fields)),
             comments: row.comments,
           })
         )

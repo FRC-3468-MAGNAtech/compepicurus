@@ -3,20 +3,23 @@
 import { Minus, Plus } from "lucide-react";
 import { motion } from "framer-motion";
 import { springSnappy } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 
 export function CounterControl({
   label,
   pointsPer,
   value,
   onChange,
+  disabled,
 }: {
   label: string;
   pointsPer: number;
   value: number;
   onChange: (value: number) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="glass-card flex items-center justify-between gap-3 p-4">
+    <div className={cn("glass-card flex items-center justify-between gap-3 p-4", disabled && "opacity-60")}>
       <div className="min-w-0">
         <div className="text-sm font-semibold">{label}</div>
         <div className="text-xs text-[var(--muted-foreground)]">{pointsPer} pts each</div>
@@ -25,10 +28,11 @@ export function CounterControl({
         <motion.button
           type="button"
           aria-label={`Decrease ${label}`}
-          whileTap={{ scale: 0.88 }}
+          disabled={disabled}
+          whileTap={disabled ? undefined : { scale: 0.88 }}
           transition={springSnappy}
           onClick={() => onChange(Math.max(0, value - 1))}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/8 text-[var(--foreground)] hover:bg-white/14"
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/8 text-[var(--foreground)] hover:bg-white/14 disabled:cursor-not-allowed"
         >
           <Minus className="h-5 w-5" />
         </motion.button>
@@ -47,10 +51,11 @@ export function CounterControl({
         <motion.button
           type="button"
           aria-label={`Increase ${label}`}
-          whileTap={{ scale: 0.88 }}
+          disabled={disabled}
+          whileTap={disabled ? undefined : { scale: 0.88 }}
           transition={springSnappy}
           onClick={() => onChange(value + 1)}
-          className="flex h-12 w-12 items-center justify-center rounded-full text-white"
+          className="flex h-12 w-12 items-center justify-center rounded-full text-white disabled:cursor-not-allowed"
           style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
         >
           <Plus className="h-5 w-5" />

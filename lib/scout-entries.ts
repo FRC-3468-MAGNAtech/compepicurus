@@ -15,6 +15,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import type { MatchType } from "@/lib/ftc/types";
+import { DEFAULT_FORM_ID, FORMS } from "@/lib/scout-form/schema";
 
 export type ScoutEntryFields = {
   autoLeave: boolean;
@@ -54,17 +55,6 @@ export const initialScoutEntryFields: ScoutEntryFields = {
 
 export type ScoreBreakdown = { auto: number; teleop: number; endgame: number; total: number };
 
-export function computeScore(fields: ScoutEntryFields): ScoreBreakdown {
-  const auto = (fields.autoLeave ? 3 : 0) + (fields.autoPark ? 5 : 0) + fields.autoTipHive * 20;
-  const teleop =
-    fields.teleTipHive * 20 +
-    (fields.flowerBottomNectar ? 5 : 0) +
-    fields.flowerPollenNectar * 2 +
-    fields.gardenPollenNectar * 1;
-  const endgame = fields.endgamePark ? 5 : 0;
-  return { auto, teleop, endgame, total: auto + teleop + endgame };
-}
-
 export type AccuracyStatus = "complete" | "needs-robots" | "awaiting-results" | "not-applicable";
 
 export type AccuracyResult = {
@@ -97,8 +87,8 @@ export type AutoFlag = { ruleId: string; dismissed: boolean };
 export type ManualFlag = { id: string; reason: ManualFlagReason; note?: string; addedAt: string };
 
 /** Matches lib/analytics/game-schema.ts's DEFAULT_GAME_ID — the one game/form this season. */
-const FORM_ID = "biobuzz";
-const FORM_VERSION = 1;
+const FORM_ID = DEFAULT_FORM_ID;
+const FORM_VERSION = FORMS[DEFAULT_FORM_ID].version;
 
 export type ScoutEntry = {
   id: string;

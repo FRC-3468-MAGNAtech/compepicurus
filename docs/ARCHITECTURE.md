@@ -19,6 +19,9 @@ re-reading the whole codebase.
   (P2+).
 - **Scout entry**: one submitted match scout form for one robot —
   `scoutEntries/{entryId}`.
+- **Scout form schema**: the versioned, data-driven description of a form's
+  sections/fields and their point values (`lib/scout-form/schema.ts`) that
+  both `<ScoutForm/>`'s UI and `calculateScore()` are generated from (P2).
 
 ## Stack
 
@@ -158,6 +161,55 @@ can, so the FIRST API proxy uses a Firebase session cookie instead:
   inside `login`/`signup`/`firstRunSetup` before those functions return — so
   a caller that redirects immediately after doesn't race the cookie write
   and see a spurious "unauthorized" error on the very next FIRST API call.
+
+### Scout form schema & reusable form (P2)
+
+- `lib/scout-form/schema.ts` — the forms registry. `ScoutFormSchema` is a
+  list of `ScoutFormSection`s (H1 headers — Autonomous/Teleoperated/Endgame/
+  General), each either flat `fields` or named `groups` (H2 sub-headers,
+  e.g. Teleoperated's Hive/Flower/Garden). A `ScoutFormField` has a `type`
+  (`"toggle" | "counter" | "checkbox" | "pick" | "readonly" | "text"`), a
+  `label`, and — for the two scored types only — `points` (toggle: awarded
+  when on; counter: × the tally) and `phase` (`"auto" | "teleop" |
+  "endgame"`, which score subtotal it feeds). `BIOBUZZ_FORM_SCHEMA` is the
+  current (and only) registered form, `FORMS` keyed by `formId` with
+  `DEFAULT_FORM_ID = "biobuzz"`.
+  - `calculateScore(schema, values)` is the single scoring function used
+    everywhere (the live Scout Form, CSV import): sums `points` for every
+    `toggle`/`counter` field into a `ScoreBreakdown` — the pre-existing
+    `{ auto, teleop, endgame, total }` shape (kept as `auto`, not
+    `autonomous`, to avoid a rename rippling through every module and stored
+    Firestore document that already reads `.score.auto` — see
+    `docs/ASSUMPTIONS.md`, P2).
+  - `defaultValuesForSchema`, `valuesToScoutEntryFields`,
+    `scoutEntryFieldsToValues` convert between a schema's generic
+    `FormValues` (`Record<string, boolean | number | string>`) and the
+    strongly-typed `ScoutEntryFields` Firestore stores — safe because
+    BIOBUZZ's field keys are exactly `ScoutEntryFields`'s own property
+    names.
+- `components/scout/scout-form.tsx` — `<ScoutForm/>`, the reusable,
+  schema-driven form component used by the Match Scout Form page today and
+  meant for practice/live/lobby scouting later (P4/P7/P8/P9). Renders a
+  fixed "Assigned Match" section (skippable via `hideMatchPicker`) and a
+  fixed "Pre-Match" section (Scout Name, always read-only; Team Number, a
+  `pick` via `TeamPickerDialog`) ahead of the schema's own sections — those
+  two aren't schema fields themselves, since their UI (bracket picker,
+  alliance rosters, FIRST API-backed team search) doesn't fit the six
+  generic field types. Props: `schema`, `mode` (`'event' | 'practice' |
+  'live' | 'lobby'` — informational today, surfaced as `data-scout-form-mode`
+  for future use), `activeEvent`, `prefill` (`match`/`teamNumber`/
+  `scoutName`/`fields`), `lockedFields` (key names rendered read-only —
+  `"match"`, `"teamNumber"`, or any schema field key), `hideMatchPicker`,
+  `showSubmitButton`, `layout` (`'page' | 'side-panel'`), `onChange`/
+  `onSubmit` (both `(values: ScoutFormValues, score) => void`, where
+  `ScoutFormValues = { fields, teamNumber, match, scoutName }`), plus a ref
+  handle (`validate`, `getValues`, `reset`). The component never writes to
+  Firestore in any mode — event mode (`app/(app)/scout/page.tsx`) supplies
+  an `onSubmit` that calls `saveEntry()` + `recomputeForEvent()`; the
+  success animation and auto-reset only fire once that resolves, so a
+  failed save leaves the form untouched for the parent to handle.
+  `FieldToggle`/`CounterControl`/`CheckboxTile` (all pre-existing) gained a
+  `disabled` prop to support `lockedFields`.
 
 ## Conventions
 
