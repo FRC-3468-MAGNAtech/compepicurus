@@ -90,13 +90,17 @@ export type ManualFlag = { id: string; reason: ManualFlagReason; note?: string; 
 const FORM_ID = DEFAULT_FORM_ID;
 const FORM_VERSION = FORMS[DEFAULT_FORM_ID].version;
 
+/** P3: 'event' (today's Match Scout Form), 'practice' (a solo/lobby session against a library match), 'live' (scouting a real event in real time as a practice session). */
+export type ScoutEntrySource = "event" | "practice" | "live";
+/** Only meaningful for `source: "practice"` — null for 'event'/'live'. See lib/practice-sessions.ts's getCategory(). */
+export type ScoutEntryMode = "trial" | "competitive" | null;
+
 export type ScoutEntry = {
   id: string;
   teamId: string;
   uid: string;
-  /** 'event' today; later prompts add 'practice' | 'live'. */
-  source: "event";
-  mode: null;
+  source: ScoutEntrySource;
+  mode: ScoutEntryMode;
   formId: string;
   formVersion: number;
   scoutName: string;
@@ -113,6 +117,10 @@ export type ScoutEntry = {
   autoFlags: AutoFlag[];
   manualFlags: ManualFlag[];
   accuracy: AccuracyResult | null;
+  /** P3: set for 'practice'/'live' entries — the practiceSessions doc this entry belongs to. */
+  sessionId: string | null;
+  /** P3: set for 'practice' entries scored against an imported libraryMatches doc. */
+  libraryMatchId: string | null;
 };
 
 const COLLECTION = "scoutEntries";
@@ -120,15 +128,19 @@ const COLLECTION = "scoutEntries";
 export type SaveEntryInput = Pick<
   ScoutEntry,
   "scoutName" | "eventCode" | "matchType" | "matchNumber" | "teamNumber" | "fields" | "score" | "comments"
->;
+> &
+  Partial<Pick<ScoutEntry, "source" | "mode" | "sessionId" | "libraryMatchId">>;
 
 export async function saveEntry(teamId: string, uid: string, input: SaveEntryInput): Promise<void> {
+  const { source = "event", mode = null, sessionId = null, libraryMatchId = null, ...rest } = input;
   await addDoc(collection(db, COLLECTION), {
-    ...input,
+    ...rest,
     teamId,
     uid,
-    source: "event",
-    mode: null,
+    source,
+    mode,
+    sessionId,
+    libraryMatchId,
     formId: FORM_ID,
     formVersion: FORM_VERSION,
     submittedAt: new Date().toISOString(),

@@ -24,6 +24,8 @@ function makeEntry(overrides: Partial<ScoutEntry> & Pick<ScoutEntry, "teamNumber
     autoFlags: [],
     manualFlags: [],
     accuracy: null,
+    sessionId: null,
+    libraryMatchId: null,
     ...overrides,
   };
 }

@@ -41,6 +41,8 @@ function makeEntry(overrides: Partial<ScoutEntry> = {}): ScoutEntry {
     autoFlags: [],
     manualFlags: [],
     accuracy: null,
+    sessionId: null,
+    libraryMatchId: null,
     ...overrides,
   };
 }

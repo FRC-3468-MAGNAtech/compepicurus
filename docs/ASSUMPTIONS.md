@@ -374,6 +374,133 @@ excludes them, but checking the provider explicitly (not just
 `!emailVerified`) avoids ever showing it for a provider type where "verify
 your email" wouldn't even make sense.
 
+## P3 — Accuracy Engine, Difficulty Tiers, Match Library & Session Data Model
+
+**P3-1. The shared engine's `computeAllianceAccuracy` returns a 0-100 scale;
+Match Analytics' own wrapper keeps its existing 0-1 scale.** The prompt
+specifies the new module should "return `{ accuracy (0-100), ... }`," but
+`lib/analytics/accuracy.ts`'s `AccuracyResult.value` (0-1, multiplied by 100
+only at display time in `AccuracyCell`/CSV export) is already load-bearing
+across `recompute.ts`, `flags.ts`, the Analytics columns, and every stored
+`ScoutEntry.accuracy` document. Rather than pick one scale and ripple a
+conversion through all of that (same reasoning as P2-1's `auto`/`autonomous`
+naming call), the new engine is simply the one place *implementing* the
+math, each scale's own consumer un/scales it as needed: Match Analytics'
+wrapper divides the engine's `accuracy` by 100 to keep returning what it
+always has, and new P4+ code calling the engine directly gets the 0-100
+scale the prompt actually asked for.
+
+**P3-2. BIOBUZZ's `apiSeason` is 2026.** Derived two ways that agree:
+`lib/ftc/config.ts`'s existing `getDefaultSeason()` (month ≥ September →
+current year) already resolves to 2026 as of this session, and a live FIRST
+API lookup (see P3-7) confirms the real event used for the match library
+(USWABON1) is itself a season-2026 event.
+
+**P3-3. `importLibraryEvent` doubles as "refresh scores," and never
+overwrites `video`/`importedAt` on a re-run.** The prompt lists "import an
+event by code" and "a 'refresh scores' button" as two separate admin
+actions, but they're the identical operation on identical data — re-running
+an import for an already-imported event *is* "re-fetch from the API and
+update what changed." Implemented as one function, used by both UI
+actions. To keep this safe to re-run without destroying admin-entered video
+data: each match doc is read before being written, and `video: null` /
+`importedAt` are only included in the write when the doc doesn't exist yet
+— an existing doc's `video` and `importedAt` are never part of the payload
+on a refresh, so Firestore's `{ merge: true }` leaves them untouched.
+
+**P3-4. `generateSessionId(kind)` is a pure, synchronous string generator;
+a separate `claimSessionId(teamId, uid, kind)` is what actually "guarantees
+uniqueness with a Firestore transaction."** The prompt's literal signature
+(`generateSessionId(kind)`, no team/uid) can't by itself prevent two
+concurrent callers from picking the same free id before either writes
+anything — true uniqueness needs the candidate to be atomically claimed
+(read-doesn't-exist + write, in one transaction), which needs to know
+*whose* session this is for the write to satisfy `firestore.rules`' create
+rule (`uid == request.auth.uid`). Splitting it this way keeps
+`generateSessionId` trivially unit-testable (format/alphabet, no Firestore)
+while `claimSessionId` does the real reservation: it writes a minimal valid
+`practiceSessions` doc (`teamId`, `uid`, `kind`, `status: "in-progress"`,
+`startedAt`) and retries with a fresh candidate on the rare collision — P4
+fills in the rest of the session with further updates once more context
+(library match, alliance, robots) is known.
+
+**P3-5. `getCategory()` takes either a `ScoutEntry`-shaped or a
+`PracticeSession`-shaped input, not two separate functions.** The prompt
+asks for one helper, but the two record types signal "is this a real event"
+differently (`source` vs. `kind`). Implemented as a discriminated union
+(`"source" in input` narrows which check to use) so callers never need to
+pre-convert either shape — `lib/practice-sessions.ts` exports it since both
+entries and sessions ultimately describe the same scouting-category concept.
+
+**P3-6. `libraryMatches` is deliberately not `teamId`-scoped.** The prompt's
+own field list for `libraryMatches/{id}` never includes `teamId` — read as
+intentional, not an oversight, since this is public, real FTC competition
+data (the same regardless of which team is looking at it), unlike every
+other collection in this app's otherwise strict "teamId everywhere"
+convention. Consequence: `firestore.rules` can't scope writes by team for a
+doc with no `teamId` field, so the write rule is just `isAdmin()` — *any*
+team's admin could edit the shared library, not just the importing team's
+own. Accepted as a non-issue while the app is realistically single-team
+(same trade-off class as P1-3's "no real multi-team UI was built either");
+would need revisiting (e.g. a `teamId` after all, with library data
+duplicated per team, or a separate "verified publisher" concept) if this
+ever runs for multiple mutually-distrusting teams.
+
+**P3-7. Resolved "Rookie Rumble" against the real FIRST API before
+importing anything** (per the user's instruction to ask only when truly
+blocked, and the prompt's own "if ambiguous, include candidates"). A live
+lookup across the 2023-2026 seasons found that the current season's
+"Rookie Rumble" (Bothell, WA) **is** event code USWABON1 — the two names in
+the prompt refer to the same event, not two — with a separate, distinct
+2025-season "Rookie Rumble Scrimmage" (USWABOS1, a different real FTC
+game/season) also existing at the same venue. Asked the user directly
+(AskUserQuestion) rather than guessing which was intended; they confirmed
+**USWABON1 only**. `importLibraryEvent("biobuzz", "USWABON1")` is ready to
+run from Admin Panel > Match Library — not run by me, since it writes real
+data to the project's live Firestore database and requires being
+authenticated as an admin in the running app (see P3-10).
+
+**P3-8. `penaltyPoints` comes from `scoreRedFoul`/`scoreBlueFoul`** in the
+raw FIRST API match response — already how `lib/ftc/actions.ts` mapped
+these (to `redPenaltyPoints`/`bluePenaltyPoints`) before this prompt, from
+an earlier phase of this project. Re-verified rather than re-decided: these
+are "points awarded to this alliance for fouls committed by the opponent,"
+matching the prompt's definition exactly, and are already folded into
+`scoreRedFinal`/`scoreBlueFinal` (the official score) the same way the
+accuracy formula expects.
+
+**P3-9. No component-level tests for `MockVideoPlayer`/`VideoPlayer`.**
+This project's testing setup (`vitest.config.ts`, `environment: "node"`)
+has no DOM environment (jsdom) or React Testing Library configured anywhere
+— every previous prompt's tests (P1-P2, P1b) are pure-logic-only, by the
+same "write tests for pure logic" instruction this prompt repeats. Adding
+component-testing infrastructure now would be a meaningfully larger,
+out-of-scope expansion; `lib/practice-sessions.test.ts` and
+`lib/accuracy/engine.test.ts` etc. cover every piece of *logic* these
+features depend on instead. The video players and the Match Library admin
+UI are verified only via `tsc`/`eslint`/`next build` succeeding (same depth
+as every other Firestore-touching feature built in this session, per
+P1-12's emulator unavailability) — not exercised in a real browser.
+
+**P3-10. I did not actually run the match-library import myself.** Doing so
+writes real documents to the project's live Firestore database and
+requires being signed in as an admin in the running app — I have neither a
+way to authenticate as the user's own account nor a reason to reach for
+Firestore Admin SDK credentials to write application data outside the
+app's own code path (which would also skip the real import logic). The
+Admin Panel > Match Library UI is fully built and ready: run `npm run dev`,
+sign in as an admin, enter `USWABON1`, click Import.
+
+**P3-11. The two `practiceSessions` composite indexes in
+`firestore.indexes.json` are a best guess, not derived from an actual
+query.** No P4 UI exists yet to know its exact query shapes. Added the two
+most likely ones given the schema — `teamId`+`status`+`accuracy desc`
+(a completed-sessions leaderboard) and `teamId`+`uid`+`startedAt desc`
+("my sessions") — both equality-then-sort combinations that genuinely need
+a composite index, unlike every P1/P2 query so far (all pure-equality,
+served by Firestore's automatic single-field indexes). P4 may need more
+once its real queries are known.
+
 ## Commands to run locally
 
 ```bash
@@ -411,6 +538,17 @@ npm run dev
 # while logged in — that's lib/server/require-user.ts failing closed because
 # there's no Admin SDK to verify the session cookie against. Expected until
 # those three env vars are set.
+#
+# P3: as an admin, go to Admin Panel > Match Library, enter USWABON1 (BIOBUZZ
+# season), click Import — confirm it reports "Rookie Rumble: imported 24
+# matches, skipped 0" (no playoffs exist for this event) and the table shows
+# each match's score + difficulty pill with no video. Try the "Refresh
+# scores" button and confirm it doesn't duplicate rows. Try the bulk CSV
+# button with a `matchKey,url,startSec,endSec` file (matchKey values look
+# like `USWABON1_Q1`) and confirm the matching rows pick up a video. Flip
+# "Use placeholder video for testing" and confirm MockVideoPlayer's
+# play/pause/timeline work if you wire it into a test page (no scout-facing
+# page renders <VideoPlayer/> yet — that's P4).
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

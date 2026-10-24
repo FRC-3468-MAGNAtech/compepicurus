@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } 
 import { scouts } from "@/lib/mock-data";
 import { usePermissions } from "@/lib/permissions";
 import { fetchTeamCreationEnabled, setTeamCreationEnabled } from "@/lib/team-enrollment";
+import { MatchLibraryPanel } from "@/components/admin/match-library-panel";
 
 const roles = ["scout", "lead", "admin"];
 
@@ -140,6 +141,8 @@ export default function AdminPanelPage() {
           </div>
         </GlassPanel>
       </div>
+
+      <MatchLibraryPanel />
 
       <GlassPanel>
         <h2 className="mb-4 text-base font-semibold">User roles</h2>

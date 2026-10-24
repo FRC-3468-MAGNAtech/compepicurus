@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { springSnappy } from "@/lib/motion";
 import type { AccuracyResult } from "@/lib/scout-entries";
 import { useGlassOverlap } from "@/lib/use-glass-overlap";
+import { getPercentColor } from "@/lib/accuracy/engine";
+import { cn } from "@/lib/utils";
 
 export function AccuracyCell({ accuracy }: { accuracy: AccuracyResult | null }) {
   const [open, setOpen] = useState(false);
@@ -15,6 +17,8 @@ export function AccuracyCell({ accuracy }: { accuracy: AccuracyResult | null }) 
     return <span className="text-[var(--muted-foreground)]">-</span>;
   }
 
+  const percent = Math.round(accuracy.value * 100);
+
   return (
     <span className="relative inline-block">
       <button
@@ -22,9 +26,9 @@ export function AccuracyCell({ accuracy }: { accuracy: AccuracyResult | null }) 
         onClick={() => setOpen((o) => !o)}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
-        className="cursor-help underline decoration-dotted decoration-[var(--muted-foreground)] underline-offset-4"
+        className={cn("cursor-help font-medium underline decoration-dotted underline-offset-4", getPercentColor(percent))}
       >
-        {Math.round(accuracy.value * 100)}%
+        {percent}%
       </button>
       <AnimatePresence>
         {open && (

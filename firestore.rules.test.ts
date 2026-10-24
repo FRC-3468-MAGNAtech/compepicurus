@@ -309,3 +309,131 @@ describe("scoutEntries/{entryId}", () => {
     await assertSucceeds(deleteDoc(doc(db, "scoutEntries", entryId)));
   });
 });
+
+describe("practiceSessions/{sessionId} (P3)", () => {
+  const baseSession = {
+    teamId: TEAM_ID,
+    kind: "solo" as const,
+    seasonId: "biobuzz",
+    mode: "trial" as const,
+    difficulty: null,
+    libraryMatchId: null,
+    eventCode: null,
+    alliance: null,
+    robots: [],
+    status: "in-progress" as const,
+    completedRobots: [],
+    entryIds: [],
+    accuracy: null,
+    scoutedTotal: null,
+    penaltyPoints: null,
+    officialScore: null,
+    platform: "pc" as const,
+    flags: [],
+    excluded: false,
+    lobbyId: null,
+    pairId: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+
+  it("lets a team member claim/create a session as themselves", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "practiceSessions", "PS-ABCDEF"), { ...baseSession, uid: SCOUT_UID }));
+  });
+
+  it("blocks creating a session under someone else's uid", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(db, "practiceSessions", "PS-BADUID"), { ...baseSession, uid: ADMIN_UID }));
+  });
+
+  it("lets any team member read any session (leaderboards)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-READ01"), { ...baseSession, uid: SCOUT_UID });
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(getDoc(doc(db, "practiceSessions", "PS-READ01")));
+  });
+
+  it("lets the owner keep updating their own session while in-progress/paused", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-OWN0001"), { ...baseSession, uid: SCOUT_UID, status: "paused" });
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(updateDoc(doc(db, "practiceSessions", "PS-OWN0001"), { status: "in-progress" }));
+  });
+
+  it("blocks the owner from updating their own session once it's completed — only an admin can", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DONE001"), { ...baseSession, uid: SCOUT_UID, status: "completed" });
+    });
+    const scoutDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(updateDoc(doc(scoutDb, "practiceSessions", "PS-DONE001"), { excluded: true }));
+
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(updateDoc(doc(adminDb, "practiceSessions", "PS-DONE001"), { excluded: true }));
+  });
+
+  it("blocks a teammate (non-admin, non-owner) from updating someone else's session", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-OTHR001"), { ...baseSession, uid: SCOUT_UID });
+    });
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users", "scout-2"), {
+        name: "Scout Two",
+        email: "scout2@example.com",
+        teamId: TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      });
+    });
+    const db = testEnv.authenticatedContext("scout-2").firestore();
+    await assertFails(updateDoc(doc(db, "practiceSessions", "PS-OTHR001"), { status: "completed" }));
+  });
+});
+
+describe("libraryMatches/{matchId} (P3)", () => {
+  const baseMatch = {
+    seasonId: "biobuzz",
+    eventCode: "USWABON1",
+    eventName: "Rookie Rumble",
+    matchType: "Qualification" as const,
+    matchNumber: 1,
+    alliances: {
+      red: { teams: [100, 200], score: 150, penaltyPoints: 0, difficulty: "medium" as const },
+      blue: { teams: [300, 400], score: 50, penaltyPoints: 0, difficulty: "easy" as const },
+    },
+    video: null,
+    importedAt: new Date().toISOString(),
+    scoresUpdatedAt: new Date().toISOString(),
+  };
+
+  it("is readable by any signed-in user, not just the importing admin's team", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "libraryMatches", "USWABON1_Q1"), baseMatch);
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(getDoc(doc(db, "libraryMatches", "USWABON1_Q1")));
+  });
+
+  it("blocks a signed-out read", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "libraryMatches", "USWABON1_Q2"), baseMatch);
+    });
+    const db = testEnv.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, "libraryMatches", "USWABON1_Q2")));
+  });
+
+  it("blocks a non-admin from writing", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(db, "libraryMatches", "USWABON1_Q3"), baseMatch));
+  });
+
+  it("lets an admin write", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "libraryMatches", "USWABON1_Q4"), baseMatch));
+  });
+});

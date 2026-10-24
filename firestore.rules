@@ -93,5 +93,36 @@ service cloud.firestore {
 
       allow update, delete: if sameTeam(resource.data.teamId) && isAdmin();
     }
+
+    // P3: practiceSessions/{sessionId} — the doc id IS the Session ID (see
+    // lib/practice-sessions.ts's claimSessionId). Readable by the whole team
+    // (leaderboards need every member's sessions); a scout can keep
+    // updating their own session only while it's still in-progress/paused —
+    // once completed, further edits are admin-only, same pattern as
+    // scoutEntries.
+    match /practiceSessions/{sessionId} {
+      allow read: if sameTeam(resource.data.teamId);
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && sameTeam(request.resource.data.teamId);
+
+      allow update: if sameTeam(resource.data.teamId) && (
+        (resource.data.uid == request.auth.uid && resource.data.status in ["in-progress", "paused"])
+        || isAdmin()
+      );
+
+      allow delete: if false;
+    }
+
+    // P3: libraryMatches/{matchId} — deliberately NOT teamId-scoped. This is
+    // public, real FTC competition data (the same for every team), not this
+    // team's own scouting data — see docs/ASSUMPTIONS.md for the resulting
+    // trade-off (any team's admin can write any match in the shared
+    // library, acceptable while the app is realistically single-team).
+    match /libraryMatches/{matchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }

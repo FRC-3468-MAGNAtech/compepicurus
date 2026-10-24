@@ -16,6 +16,8 @@ export type TeamDoc = {
   // trip just to show its name/dates — refreshed whenever an admin sets a
   // new one (see setActiveEvent below).
   activeEvent: FtcEvent | null;
+  /** P3: admin-set in Match Library. Optional — absent on teams created before this field existed, treat as `false`. */
+  usePlaceholderVideo?: boolean;
 };
 
 /**
@@ -59,4 +61,9 @@ export async function setActiveEvent(teamId: string, event: FtcEvent | null) {
     activeSeasonId: event?.season ?? null,
     activeEvent: event ?? null,
   });
+}
+
+/** Admin-gated at the call site (Admin Panel > Match Library) via usePermissions(); also enforced in firestore.rules. */
+export async function setUsePlaceholderVideo(teamId: string, value: boolean) {
+  await updateDoc(doc(db, "teams", teamId), { usePlaceholderVideo: value });
 }
