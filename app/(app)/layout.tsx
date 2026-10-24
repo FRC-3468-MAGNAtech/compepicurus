@@ -14,9 +14,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile, loading } = useAuth();
-  // /event is the one page in the app shell wired to real data (the FIRST
-  // API) — every other page here still runs on lib/mock-data.ts.
-  const isPlaceholderPage = !pathname.startsWith("/event");
+  // Pages wired to real data (Firestore/FIRST API) as of P1-P3 — everything
+  // else here still runs on lib/mock-data.ts. Update this list as more
+  // pages stop being placeholders.
+  const REALIZED_PAGES = ["/event", "/scout", "/analytics/match-scout", "/people", "/team-management", "/account"];
+  const isPlaceholderPage = !REALIZED_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   useEffect(() => {
     if (loading) return;

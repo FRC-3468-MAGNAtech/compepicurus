@@ -1,11 +1,21 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { GlassShadeControl } from "@/components/theme/glass-shade-control";
 import { PlaceholderBanner } from "@/components/ui/placeholder-banner";
 
+// Landing/login/signup/finish-setup are all real (Firebase auth, P1/P1b) —
+// only changelog/credits still show placeholder/mock content.
+const PLACEHOLDER_PAGES = ["/changelog", "/credits"];
+
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isPlaceholderPage = PLACEHOLDER_PAGES.includes(pathname);
+
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col px-4 lg:px-8">
       <header className="glass-panel sticky top-4 z-30 mt-4 flex items-center justify-between px-4 py-3 sm:px-6">
@@ -35,9 +45,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
       </header>
 
       <main className="flex-1">
-        <div className="flex justify-center pt-4">
-          <PlaceholderBanner />
-        </div>
+        {isPlaceholderPage && (
+          <div className="flex justify-center pt-4">
+            <PlaceholderBanner />
+          </div>
+        )}
         {children}
       </main>
 
