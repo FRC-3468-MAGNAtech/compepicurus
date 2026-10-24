@@ -40,6 +40,7 @@ export const YouTubePlayer = forwardRef<VideoPlayerHandle, YouTubePlayerProps>(f
           start: Math.floor(video.startSec),
           end: Math.ceil(video.endSec),
           controls: lockPause ? 0 : 1,
+          disablekb: lockPause ? 1 : 0,
           rel: 0,
         },
         events: {

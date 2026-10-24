@@ -1,6 +1,19 @@
 "use client";
 
-import { doc, getDoc, onSnapshot, runTransaction, serverTimestamp, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  query,
+  runTransaction,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { Difficulty } from "@/lib/difficulty";
@@ -20,6 +33,7 @@ export type SessionFlag = {
 
 export type PracticeSession = {
   /** The doc id IS the Session ID (see generateSessionId/claimSessionId below). */
+  id: string;
   teamId: string;
   uid: string;
   scoutName: string;
@@ -99,13 +113,17 @@ export async function claimSessionId(teamId: string, uid: string, kind: SessionK
   throw new Error("Couldn't generate a unique session id — try again.");
 }
 
+function toSession(id: string, data: Record<string, unknown>): PracticeSession {
+  return { id, ...data } as PracticeSession;
+}
+
 export async function updatePracticeSession(sessionId: string, patch: Partial<PracticeSession>): Promise<void> {
   await updateDoc(doc(db, COLLECTION, sessionId), patch);
 }
 
 export async function getPracticeSession(sessionId: string): Promise<PracticeSession | null> {
   const snap = await getDoc(doc(db, COLLECTION, sessionId));
-  return snap.exists() ? (snap.data() as PracticeSession) : null;
+  return snap.exists() ? toSession(snap.id, snap.data()) : null;
 }
 
 /** Realtime subscription to one session — for the in-progress scouting screen (P4) or a shared lobby view. */
@@ -120,14 +138,128 @@ export function usePracticeSession(sessionId: string | null) {
       setLoaded(true);
       return;
     }
-    const unsubscribe = onSnapshot(doc(db, COLLECTION, sessionId), (snap) => {
-      setSession(snap.exists() ? (snap.data() as PracticeSession) : null);
-      setLoaded(true);
-    });
+    const unsubscribe = onSnapshot(
+      doc(db, COLLECTION, sessionId),
+      (snap) => {
+        setSession(snap.exists() ? toSession(snap.id, snap.data()) : null);
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("practiceSessions/{sessionId} subscription failed:", err);
+        setSession(null);
+        setLoaded(true);
+      }
+    );
     return unsubscribe;
   }, [sessionId]);
 
   return { session, loaded };
+}
+
+/**
+ * Realtime subscription to every `solo` session for the team — what
+ * Practice Scouting's Match Select (P4) uses to compute each (match,
+ * alliance) row's Fresh/Opened/Scouted status team-wide. Simpler and more
+ * robust than querying per `libraryMatchId` (which would hit Firestore's
+ * 30-value `in`-query cap for a large library): one subscription, status
+ * computed client-side.
+ */
+export function useTeamPracticeSessions(teamId: string | null) {
+  const [sessions, setSessions] = useState<PracticeSession[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSessions([]);
+      setLoaded(true);
+      return;
+    }
+    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId), where("kind", "==", "solo"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setSessions(snap.docs.map((d) => toSession(d.id, d.data())));
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("team practiceSessions subscription failed:", err);
+        setSessions([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId]);
+
+  return { sessions, loaded };
+}
+
+/** At most one paused session per user (spec) — realtime, so the Resume banner updates if it's resolved from another tab. */
+export function useOwnPausedSession(teamId: string | null, uid: string | null) {
+  const [session, setSession] = useState<PracticeSession | null>(null);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !uid || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSession(null);
+      setLoaded(true);
+      return;
+    }
+    const q = query(
+      collection(db, COLLECTION),
+      where("teamId", "==", teamId),
+      where("uid", "==", uid),
+      where("status", "==", "paused")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const first = snap.docs[0];
+        setSession(first ? toSession(first.id, first.data()) : null);
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("own paused practiceSessions subscription failed:", err);
+        setSession(null);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId, uid]);
+
+  return { session, loaded };
+}
+
+/** One-shot check for the "Repeat Attempt" flag — has this uid already completed this exact alliance+match before? */
+export async function hasCompletedAttemptBefore(
+  teamId: string,
+  uid: string,
+  libraryMatchId: string,
+  alliance: AllianceColor
+): Promise<boolean> {
+  const q = query(
+    collection(db, COLLECTION),
+    where("teamId", "==", teamId),
+    where("uid", "==", uid),
+    where("libraryMatchId", "==", libraryMatchId),
+    where("alliance", "==", alliance),
+    where("status", "==", "completed"),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  return !snap.empty;
+}
+
+/**
+ * Deletes a session the caller owns while it's still in-progress or
+ * paused — backs "Change Match," "Cancel"/"End Session" (discard without
+ * saving), and the Resume banner's "Discard" button. Never allowed once
+ * completed (see firestore.rules) — P4 extends P3's `allow delete: if
+ * false` for exactly this, see docs/ASSUMPTIONS.md.
+ */
+export async function deletePracticeSession(sessionId: string): Promise<void> {
+  await deleteDoc(doc(db, COLLECTION, sessionId));
 }
 
 export type ScoutingCategory = "trial" | "competitive" | "real-event";

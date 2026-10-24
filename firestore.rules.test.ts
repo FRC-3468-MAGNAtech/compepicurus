@@ -393,6 +393,35 @@ describe("practiceSessions/{sessionId} (P3)", () => {
     const db = testEnv.authenticatedContext("scout-2").firestore();
     await assertFails(updateDoc(doc(db, "practiceSessions", "PS-OTHR001"), { status: "completed" }));
   });
+
+  it("P4: lets the owner delete their own in-progress or paused session", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0001"), { ...baseSession, uid: SCOUT_UID, status: "in-progress" });
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0002"), { ...baseSession, uid: SCOUT_UID, status: "paused" });
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(deleteDoc(doc(db, "practiceSessions", "PS-DEL0001")));
+    await assertSucceeds(deleteDoc(doc(db, "practiceSessions", "PS-DEL0002")));
+  });
+
+  it("P4: blocks deleting a completed session, even by its owner", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0003"), { ...baseSession, uid: SCOUT_UID, status: "completed" });
+    });
+    const ownerDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(deleteDoc(doc(ownerDb, "practiceSessions", "PS-DEL0003")));
+
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(adminDb, "practiceSessions", "PS-DEL0003")));
+  });
+
+  it("P4: blocks a teammate from deleting someone else's in-progress session", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0004"), { ...baseSession, uid: SCOUT_UID, status: "in-progress" });
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(db, "practiceSessions", "PS-DEL0004")));
+  });
 });
 
 describe("libraryMatches/{matchId} (P3)", () => {

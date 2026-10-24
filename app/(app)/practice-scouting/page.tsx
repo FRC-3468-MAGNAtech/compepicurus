@@ -1,95 +1,224 @@
 "use client";
 
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { FlaskConical, RotateCcw, Send } from "lucide-react";
-import { GlassPanel } from "@/components/ui/glass-panel";
-import { Badge } from "@/components/ui/badge";
-import { Input, Label } from "@/components/ui/input";
+import { useMemo, useState } from "react";
+import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { springSnappy } from "@/lib/motion";
+import { ChipSummary } from "@/components/practice/chip-summary";
+import { ResumeBanner } from "@/components/practice/resume-banner";
+import { SeasonSelect } from "@/components/practice/season-select";
+import { ModeSelect } from "@/components/practice/mode-select";
+import { DifficultySelect } from "@/components/practice/difficulty-select";
+import { MatchSelect } from "@/components/practice/match-select";
+import { SessionScreen } from "@/components/practice/session-screen";
+import { ResultsScreen } from "@/components/practice/results-screen";
+import { useAuth } from "@/lib/auth";
+import { useTeamDoc } from "@/lib/team";
+import { detectPlatform } from "@/lib/platform";
+import { getSeason } from "@/lib/seasons";
+import { useLibraryMatchesBySeason } from "@/lib/match-library";
+import type { Difficulty } from "@/lib/difficulty";
+import type { MatchRow } from "@/lib/practice-match-rows";
+import {
+  claimSessionId,
+  updatePracticeSession,
+  useOwnPausedSession,
+  usePracticeSession,
+  type PracticeSession,
+  type SessionMode,
+} from "@/lib/practice-sessions";
+
+type Step = "season" | "mode" | "difficulty" | "match-select" | "session" | "results";
 
 export default function PracticeScoutingPage() {
-  const [autoScored, setAutoScored] = useState(0);
-  const [teleopScored, setTeleopScored] = useState(0);
-  const [logged, setLogged] = useState(false);
+  const { user, profile, loading } = useAuth();
+  const teamId = profile?.teamId ?? null;
+  const { team } = useTeamDoc(teamId);
+  const usePlaceholder = team?.usePlaceholderVideo ?? false;
 
-  const reset = () => {
-    setAutoScored(0);
-    setTeleopScored(0);
-    setLogged(false);
+  const { session: pausedSession, loaded: pausedLoaded } = useOwnPausedSession(teamId, user?.uid ?? null);
+
+  const [step, setStep] = useState<Step>("season");
+  const [seasonId, setSeasonId] = useState<string | null>(null);
+  const [mode, setMode] = useState<SessionMode>(null);
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { session: activeSession } = usePracticeSession(activeSessionId);
+  const { matches: activeSeasonMatches } = useLibraryMatchesBySeason(activeSession?.seasonId ?? null);
+  const activeLibraryMatch = useMemo(
+    () => activeSeasonMatches.find((m) => m.id === activeSession?.libraryMatchId) ?? null,
+    [activeSeasonMatches, activeSession]
+  );
+
+  const handleResume = (session: PracticeSession) => {
+    setSeasonId(session.seasonId);
+    setMode(session.mode);
+    setDifficulty(session.difficulty);
+    setActiveSessionId(session.id);
+    setStep("session");
   };
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLogged(true);
+  const claimAndStart = async (row: MatchRow) => {
+    if (claiming || !user || !teamId || !profile || !seasonId || !mode || !difficulty) return;
+    setClaiming(true);
+    setError(null);
+    try {
+      const sessionId = await claimSessionId(teamId, user.uid, "solo");
+      await updatePracticeSession(sessionId, {
+        scoutName: profile.name,
+        seasonId,
+        mode,
+        difficulty,
+        libraryMatchId: row.libraryMatchId,
+        eventCode: row.eventCode,
+        alliance: row.alliance,
+        robots: row.teams,
+        completedRobots: [],
+        entryIds: [],
+        accuracy: null,
+        scoutedTotal: null,
+        penaltyPoints: null,
+        officialScore: null,
+        platform: detectPlatform(),
+        flags: [],
+        excluded: false,
+        lobbyId: null,
+        pairId: null,
+        finishedAt: null,
+      });
+      setActiveSessionId(sessionId);
+      setStep("session");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't start that session.");
+    } finally {
+      setClaiming(false);
+    }
   };
+
+  const handleExitToMatchSelect = () => {
+    setActiveSessionId(null);
+    setStep("match-select");
+  };
+
+  const handlePaused = () => {
+    setActiveSessionId(null);
+    setStep("season");
+  };
+
+  const handleScoutAnother = () => {
+    setActiveSessionId(null);
+    setStep("match-select");
+  };
+
+  const handleBackToLanding = () => {
+    setActiveSessionId(null);
+    setSeasonId(null);
+    setMode(null);
+    setDifficulty(null);
+    setStep("season");
+  };
+
+  if (loading || !pausedLoaded) {
+    return <div className="glass-card h-64 animate-pulse" />;
+  }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
-      <GlassPanel strong className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: "rgba(var(--glow), 0.16)" }}>
-          <FlaskConical className="h-5 w-5" style={{ color: "var(--color-primary)" }} />
-        </span>
-        <div>
-          <h1 className="text-lg font-semibold">Practice Scouting</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            A sandbox copy of the scout form &mdash; nothing here touches real match data.
-          </p>
-        </div>
-        <Badge variant="warning" className="ml-auto">Sandbox</Badge>
-      </GlassPanel>
-
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <GlassPanel className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="flex flex-col gap-4 pb-4">
+      {step === "season" && (
+        <>
           <div>
-            <Label htmlFor="practice-auto">Auto pieces</Label>
-            <Input
-              id="practice-auto"
-              type="number"
-              min={0}
-              value={autoScored}
-              onChange={(e) => setAutoScored(Number(e.target.value))}
-            />
+            <h1 className="text-2xl font-semibold tracking-tight">Practice Scouting</h1>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Scout recorded matches solo, on your own time &mdash; Trial to practice, Competitive for the real pressure.
+            </p>
           </div>
-          <div>
-            <Label htmlFor="practice-teleop">Teleop pieces</Label>
-            <Input
-              id="practice-teleop"
-              type="number"
-              min={0}
-              value={teleopScored}
-              onChange={(e) => setTeleopScored(Number(e.target.value))}
+          {pausedSession ? (
+            <>
+              <ResumeBanner session={pausedSession} onResume={() => handleResume(pausedSession)} onDiscarded={() => {}} />
+              <p className="text-sm text-[var(--muted-foreground)]">
+                Finish or discard your paused session before starting a new one.
+              </p>
+            </>
+          ) : (
+            <SeasonSelect
+              onSelect={(id) => {
+                setSeasonId(id);
+                setStep("mode");
+              }}
             />
+          )}
+        </>
+      )}
+
+      {step === "mode" && seasonId && (
+        <>
+          <div className="flex items-center justify-between">
+            <Button variant="ghost" className="gap-1.5" onClick={() => setStep("season")}>
+              <ChevronLeft className="h-4 w-4" /> Back
+            </Button>
+            <ChipSummary seasonName={getSeason(seasonId).name} />
           </div>
-        </GlassPanel>
+          <ModeSelect
+            onSelect={(m) => {
+              setMode(m);
+              setStep("difficulty");
+            }}
+          />
+        </>
+      )}
 
-        <div className="flex gap-3">
-          <Button type="submit" className="gap-2">
-            <Send className="h-4 w-4" /> Log practice run
-          </Button>
-          <Button type="button" variant="glass" onClick={reset} className="gap-2">
-            <RotateCcw className="h-4 w-4" /> Reset
-          </Button>
-        </div>
-      </form>
+      {step === "difficulty" && seasonId && mode && (
+        <>
+          <div className="flex items-center justify-between">
+            <Button variant="ghost" className="gap-1.5" onClick={() => setStep("mode")}>
+              <ChevronLeft className="h-4 w-4" /> Back
+            </Button>
+            <ChipSummary seasonName={getSeason(seasonId).name} mode={mode} />
+          </div>
+          <DifficultySelect
+            onSelect={(d) => {
+              setDifficulty(d);
+              setStep("match-select");
+            }}
+          />
+        </>
+      )}
 
-      <AnimatePresence>
-        {logged && (
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.96 }}
-            transition={springSnappy}
-          >
-            <GlassPanel className="text-sm text-[var(--muted-foreground)]">
-              Practice run logged: <span className="text-[var(--foreground)] font-medium">{autoScored} auto</span> +{" "}
-              <span className="text-[var(--foreground)] font-medium">{teleopScored} teleop</span> pieces. Discarded on
-              refresh &mdash; this is a sandbox.
-            </GlassPanel>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {step === "match-select" && seasonId && difficulty && (
+        <>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <MatchSelect seasonId={seasonId} difficulty={difficulty} onBack={() => setStep("difficulty")} onStart={claimAndStart} />
+          {claiming && <p className="text-sm text-[var(--muted-foreground)]">Starting session&hellip;</p>}
+        </>
+      )}
+
+      {step === "session" &&
+        (activeSession && activeLibraryMatch ? (
+          <SessionScreen
+            session={activeSession}
+            libraryMatch={activeLibraryMatch}
+            usePlaceholder={usePlaceholder}
+            onExitToMatchSelect={handleExitToMatchSelect}
+            onPaused={handlePaused}
+            onCompleted={() => setStep("results")}
+          />
+        ) : (
+          <div className="glass-card h-64 animate-pulse" />
+        ))}
+
+      {step === "results" &&
+        (activeSession && activeLibraryMatch ? (
+          <ResultsScreen
+            session={activeSession}
+            libraryMatch={activeLibraryMatch}
+            onScoutAnother={handleScoutAnother}
+            onBackToPracticeScouting={handleBackToLanding}
+          />
+        ) : (
+          <div className="glass-card h-64 animate-pulse" />
+        ))}
     </div>
   );
 }

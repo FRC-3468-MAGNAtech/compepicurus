@@ -44,10 +44,18 @@ export function useTeamDoc(teamId: string | null) {
       setLoaded(true);
       return;
     }
-    const unsubscribe = onSnapshot(doc(db, "teams", teamId), (snap) => {
-      setTeam(snap.exists() ? (snap.data() as TeamDoc) : null);
-      setLoaded(true);
-    });
+    const unsubscribe = onSnapshot(
+      doc(db, "teams", teamId),
+      (snap) => {
+        setTeam(snap.exists() ? (snap.data() as TeamDoc) : null);
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("teams/{teamId} subscription failed:", err);
+        setTeam(null);
+        setLoaded(true);
+      }
+    );
     return unsubscribe;
   }, [teamId]);
 

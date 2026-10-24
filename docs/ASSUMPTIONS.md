@@ -501,6 +501,124 @@ a composite index, unlike every P1/P2 query so far (all pure-equality,
 served by Firestore's automatic single-field indexes). P4 may need more
 once its real queries are known.
 
+## Bugfix (2026-10-23): every page hung on its loading spinner after sign-in
+
+**Root cause:** `lib/auth.tsx`'s realtime subscription to the signed-in
+user's own `users/{uid}` doc had no error callback on its `onSnapshot`:
+
+```ts
+onSnapshot(doc(db, "users", user.uid), (snap) => { ...; setProfileLoaded(true); });
+```
+
+`firestore.rules`' read rule for that collection is
+`isSignedIn() && sameTeam(resource.data.teamId)`, and `sameTeam()` reads
+`resource.data.teamId`. When the document **doesn't exist yet** (first
+sign-in before `/api/team/create` or `/api/team/join` has run, or a signup
+that never finished — exactly the case `app/(app)/layout.tsx` already has a
+`/finish-setup` redirect for), `resource` is `null` in the rule evaluation,
+so `resource.data.teamId` throws and the read is denied. With no error
+handler, `onSnapshot`'s success callback simply never fires, so
+`profileLoaded` never flips to `true`, `loading` never resolves, and
+`app/(app)/layout.tsx`'s `if (loading || !user || !profile)` guard (the
+small pulsing-circle spinner) never clears *and* never reaches its own
+`router.replace("/finish-setup")` — the app hangs forever on every route
+under `(app)`, exactly as reported. This had been masked until now because,
+per this session's earlier env-var mixup, sign-in itself couldn't
+previously reach a real Firestore read at all; fixing the `NEXT_PUBLIC_
+FIREBASE_*` keys is what first let a real user actually hit this path.
+
+**Fix:** added an error callback to every `onSnapshot` call across the app
+(`lib/auth.tsx`, `lib/team.ts`, `lib/team-members.ts`, `lib/match-library.ts`
+(both hooks), `lib/practice-sessions.ts` (all three hooks),
+`lib/scout-entries.ts`'s `subscribeEntries`) — none of them had one; this
+was a systemic gap, not unique to the profile listener, and the same
+silent-hang failure mode (a `get()` on a not-yet-existing or no-longer-
+accessible doc) could otherwise recur anywhere a hook keys off a doc whose
+existence/access isn't guaranteed. Each now logs the error and resolves its
+`loaded` state to `true` with an empty/`null` value, same as the "not
+found" branch — for `lib/auth.tsx` specifically, that means `profile: null`
+still correctly drives the existing `/finish-setup` redirect instead of
+leaving the user stuck.
+
+## P4 — Practice Scouting: Solo (Trial & Competitive)
+
+**P4-1. Each robot's scout entry is only written to Firestore when the user
+chooses Continue, Pause, or Finish Session — never at mere form
+validation.** `SessionScreen` validates and scores the form into local React
+state (`pendingRobot`) the moment "Next Robot"/"Finish Session" is clicked,
+but `saveEntry()` is only actually called inside `handleContinue`,
+`handlePause`, and the finish branch of `handleNextOrFinish`. This is what
+makes "Cancel"/"End Session" (which the prompt says always discard, with no
+exception) correct even when robot 1's form was already fully filled out and
+validated before the scout changed their mind in the Break Menu.
+
+**P4-2. `firestore.rules`' `practiceSessions` delete rule is extended from
+P3's blanket `allow delete: if false` to let the session's own owner delete
+it while `status` is `"in-progress"` or `"paused"`.** `claimSessionId`
+reserves a session doc the instant a match is picked, before any entries
+exist — without a delete path, every "Change Match," "Cancel," "End
+Session," and "Discard paused session" action (all of which the prompt
+specifies save nothing) would leave that stub session behind forever,
+permanently showing the match as "Opened" to the whole team. Completed
+sessions remain permanently non-deletable by anyone, admin included — only
+P3's existing deny stands for those.
+
+**P4-3. Fixed a latent cross-contamination bug in `lib/scout-entries.ts`
+before any practice entries could ever trigger it.** `getEntriesForEvent`
+and `subscribeEntries` (both written in P1, used by Match Analytics) only
+filtered by `teamId` + `eventCode`, with no `source` filter. Once this
+prompt lets `source: "practice"` entries exist whose `eventCode` could
+coincidentally match a real active event's code (library matches are
+imported from real FIRST events), they would have silently appeared in
+Match Analytics alongside real scouting data. Both queries now also filter
+`where("source", "==", "event")`.
+
+**P4-4. Match Select's Fresh / Opened / Scouted status is computed
+team-wide, not just from the viewer's own sessions.** `buildMatchRows`
+looks at every `solo` session referencing a given (library match, alliance)
+regardless of `uid`; `byYou` separately reflects whether the session that
+actually decided the status (the completed one, or an open one if none is
+completed) belongs to the viewer. This matches the prompt's own "Scouted ·
+by you" wording, which only makes sense if "Scouted" itself is a team-wide
+fact and "by you" is a qualifier on top of it.
+
+**P4-5. Only one paused solo session is allowed live at a time, enforced
+with a blocking banner, not a modal.** `useOwnPausedSession` returns "at
+most one" by construction (`limit`-free query, first doc wins) — so the
+Practice Scouting landing screen replaces the Season Select grid entirely
+with `ResumeBanner` whenever a paused session exists, rather than letting
+the scout abandon it by starting a second one. This is enforced only at the
+landing screen (not race-proof against two browser tabs pausing two
+different sessions simultaneously) — the same class of accepted limitation
+as P1's "last admin can't demote themselves" UI-only guard, not a security
+boundary.
+
+**P4-6. Orphaned `"in-progress"` sessions (crash or tab-close mid-robot-1,
+never reaching `"paused"`) are not cleaned up by this prompt.** No
+auto-expiry job or admin "force-delete" UI exists. Such a session simply
+sits as "Opened" in Match Select — scoutable to completion by anyone on the
+team, or left stale — until `firestore.rules`' new owner-only delete (P4-2)
+is exercised by that same user resuming... except an `"in-progress"`
+(non-paused) session has no "resume" entry point, only `"paused"` does.
+Accepted as an out-of-scope v1 gap, consistent with how no prior prompt in
+this project built background cleanup jobs either; worth revisiting with a
+"resume any of your own open sessions" list if this proves common in
+practice.
+
+**P4-7. `PracticeSession.platform` is captured once, at session start, via
+the same `detectPlatform()` user-agent check `lib/auth.tsx` already used
+for its Google-redirect-fallback logic** (now lifted into `lib/platform.ts`
+so both can share it) — never re-evaluated mid-session, since a scout
+switching devices mid-match isn't a case worth handling.
+
+**P4-8. `ScoutForm` in practice mode locks `teamNumber` (prefilled from the
+session's assigned robot for that turn) and renders with `hideMatchPicker`
+and `showSubmitButton={false}`.** `SessionScreen` drives validation
+(`handle.validate()`), scoring (`calculateScore`), and save timing (P4-1)
+itself via the form's ref handle — exactly the controlled, non-owning
+pattern P2 built `ScoutForm` to support for exactly this kind of
+non-"event" mode.
+
 ## Commands to run locally
 
 ```bash
@@ -549,6 +667,22 @@ npm run dev
 # "Use placeholder video for testing" and confirm MockVideoPlayer's
 # play/pause/timeline work if you wire it into a test page (no scout-facing
 # page renders <VideoPlayer/> yet — that's P4).
+
+# P4: go to Practice Scouting -> pick BIOBUZZ -> Trial -> Easy (or whatever
+# difficulty USWABON1's imported matches landed in) -> pick a match (video or
+# placeholder) -> Start -> scout Team A -> Next Robot -> Break Menu: try
+# "Continue to Team B" (saves Team A's entry, resets the video, moves to
+# Team B) -> finish Team B -> Results screen shows accuracy/comparison vs.
+# the real official score. Re-open the same match in Match Select and
+# confirm it now shows "Scouted · by you". Start a second session, get past
+# robot 1, and in the Break Menu choose "Pause Session" — confirm you land
+# back on the Practice Scouting landing screen with a "Paused session"
+# banner blocking a new Season Select, "Resume" picks back up at robot 2,
+# "Discard" deletes it and the banner clears. Start a third session and use
+# "Cancel"/"Change Match"/the Break Menu's "End Session" — confirm each
+# discards with nothing saved and the match goes back to (or stays) "Fresh"
+# in Match Select. Switch to Competitive mode and confirm the video has no
+# visible pause/seek controls and ignores spacebar/arrow keys.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

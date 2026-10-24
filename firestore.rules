@@ -112,7 +112,18 @@ service cloud.firestore {
         || isAdmin()
       );
 
-      allow delete: if false;
+      // P4: the owner can delete their own session while it's still
+      // in-progress or paused — "Change Match," "Cancel"/"End Session," and
+      // the Resume banner's "Discard" all explicitly save nothing, and
+      // claimSessionId() already wrote a stub doc the moment a match was
+      // picked, so without this those abandoned attempts would linger
+      // forever and wrongly show up as "Opened" in Match Select. Once
+      // completed, a session is never deletable by anyone (extends P3's
+      // blanket `allow delete: if false` rather than replacing it — see
+      // docs/ASSUMPTIONS.md, P4).
+      allow delete: if sameTeam(resource.data.teamId)
+        && resource.data.uid == request.auth.uid
+        && resource.data.status in ["in-progress", "paused"];
     }
 
     // P3: libraryMatches/{matchId} — deliberately NOT teamId-scoped. This is

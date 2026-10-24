@@ -161,30 +161,63 @@ export async function getEntries(teamId: string): Promise<ScoutEntry[]> {
   return snap.docs.map((d) => toEntry(d.id, d.data()));
 }
 
+/**
+ * "event"-sourced entries for one real event only. Explicitly filters
+ * `source == "event"` (not just `eventCode`) — P4 introduces `"practice"`
+ * entries that can carry the *same* `eventCode` as a real event (a library
+ * match imported from an event the team later also scouts live), and
+ * without this filter those would silently mix into Match Analytics. See
+ * docs/ASSUMPTIONS.md (P4).
+ */
 export async function getEntriesForEvent(teamId: string, eventCode: string): Promise<ScoutEntry[]> {
   const snap = await getDocs(
-    query(collection(db, COLLECTION), where("teamId", "==", teamId), where("eventCode", "==", eventCode))
+    query(
+      collection(db, COLLECTION),
+      where("teamId", "==", teamId),
+      where("eventCode", "==", eventCode),
+      where("source", "==", "event")
+    )
   );
   return snap.docs.map((d) => toEntry(d.id, d.data()));
 }
 
 /**
- * Realtime subscription for one event's entries. `pendingWrites` counts how
- * many of the returned docs are local writes not yet acknowledged by the
- * server (Firestore tracks this per-document already — no custom bookkeeping
- * needed), which is what drives the "N pending sync" indicator.
+ * Realtime subscription for one event's "event"-sourced entries only (see
+ * getEntriesForEvent's doc comment on the `source` filter). `pendingWrites`
+ * counts how many of the returned docs are local writes not yet
+ * acknowledged by the server (Firestore tracks this per-document already —
+ * no custom bookkeeping needed), which is what drives the "N pending sync"
+ * indicator.
  */
 export function subscribeEntries(
   teamId: string,
   eventCode: string,
   callback: (entries: ScoutEntry[], pendingWrites: number) => void
 ): Unsubscribe {
-  const q = query(collection(db, COLLECTION), where("teamId", "==", teamId), where("eventCode", "==", eventCode));
-  return onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
-    const entries = snap.docs.map((d) => toEntry(d.id, d.data()));
-    const pendingWrites = snap.docs.filter((d) => d.metadata.hasPendingWrites).length;
-    callback(entries, pendingWrites);
-  });
+  const q = query(
+    collection(db, COLLECTION),
+    where("teamId", "==", teamId),
+    where("eventCode", "==", eventCode),
+    where("source", "==", "event")
+  );
+  return onSnapshot(
+    q,
+    { includeMetadataChanges: true },
+    (snap) => {
+      const entries = snap.docs.map((d) => toEntry(d.id, d.data()));
+      const pendingWrites = snap.docs.filter((d) => d.metadata.hasPendingWrites).length;
+      callback(entries, pendingWrites);
+    },
+    (err) => console.error("scoutEntries subscription failed:", err)
+  );
+}
+
+/** P4: every entry saved so far for one practice/live session — used by Results to assemble both robots' entries regardless of whether one was saved earlier (paused, then resumed) or both were saved just now. */
+export async function getEntriesForSession(teamId: string, sessionId: string): Promise<ScoutEntry[]> {
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where("teamId", "==", teamId), where("sessionId", "==", sessionId))
+  );
+  return snap.docs.map((d) => toEntry(d.id, d.data()));
 }
 
 export async function updateEntry(id: string, patch: Partial<ScoutEntry>): Promise<void> {

@@ -130,14 +130,61 @@ export function useLibraryMatches(eventCode: string | null) {
       return;
     }
     const q = query(collection(db, COLLECTION), where("eventCode", "==", eventCode));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const next = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch);
-      next.sort((a, b) => (a.matchType === b.matchType ? a.matchNumber - b.matchNumber : a.matchType.localeCompare(b.matchType)));
-      setMatches(next);
-      setLoaded(true);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const next = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch);
+        next.sort((a, b) => (a.matchType === b.matchType ? a.matchNumber - b.matchNumber : a.matchType.localeCompare(b.matchType)));
+        setMatches(next);
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("libraryMatches (by event) subscription failed:", err);
+        setMatches([]);
+        setLoaded(true);
+      }
+    );
     return unsubscribe;
   }, [eventCode]);
+
+  return { matches, loaded };
+}
+
+/**
+ * Realtime subscription to every library match in a season, across every
+ * imported event — what Practice Scouting's Match Select (P4) shows, since
+ * that flow has no event-select step of its own (just Season > Mode >
+ * Difficulty > Match). Separate from `useLibraryMatches` (one event, for
+ * the Admin Panel's per-event table) since the query key differs.
+ */
+export function useLibraryMatchesBySeason(seasonId: string | null) {
+  const [matches, setMatches] = useState<LibraryMatch[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!seasonId || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMatches([]);
+      setLoaded(true);
+      return;
+    }
+    const q = query(collection(db, COLLECTION), where("seasonId", "==", seasonId));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const next = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch);
+        next.sort((a, b) => (a.matchType === b.matchType ? a.matchNumber - b.matchNumber : a.matchType.localeCompare(b.matchType)));
+        setMatches(next);
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("libraryMatches (by season) subscription failed:", err);
+        setMatches([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [seasonId]);
 
   return { matches, loaded };
 }

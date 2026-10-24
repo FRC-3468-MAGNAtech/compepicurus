@@ -32,23 +32,31 @@ export function useTeamMembers(teamId: string | null) {
       return;
     }
     const q = query(collection(db, "users"), where("teamId", "==", teamId));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      setMembers(
-        snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            uid: d.id,
-            name: data.name,
-            email: data.email,
-            primaryRole: data.primaryRole,
-            secondaryRoles: data.secondaryRoles ?? [],
-            isAdmin: !!data.isAdmin,
-            isOwner: !!data.isOwner,
-          };
-        })
-      );
-      setLoaded(true);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setMembers(
+          snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              uid: d.id,
+              name: data.name,
+              email: data.email,
+              primaryRole: data.primaryRole,
+              secondaryRoles: data.secondaryRoles ?? [],
+              isAdmin: !!data.isAdmin,
+              isOwner: !!data.isOwner,
+            };
+          })
+        );
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("team members subscription failed:", err);
+        setMembers([]);
+        setLoaded(true);
+      }
+    );
     return unsubscribe;
   }, [teamId]);
 

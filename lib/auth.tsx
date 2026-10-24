@@ -180,10 +180,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // new subscription spins up.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setProfileLoaded(false);
-    const unsubscribe = onSnapshot(doc(db, "users", user.uid), (snap) => {
-      setProfile(snap.exists() ? (snap.data() as UserDoc) : null);
-      setProfileLoaded(true);
-    });
+    const unsubscribe = onSnapshot(
+      doc(db, "users", user.uid),
+      (snap) => {
+        setProfile(snap.exists() ? (snap.data() as UserDoc) : null);
+        setProfileLoaded(true);
+      },
+      (err) => {
+        // firestore.rules' `users/{uid}` read checks `resource.data.teamId`,
+        // which throws (denying the read) when the doc doesn't exist yet —
+        // exactly the "signed in but never finished team setup" case this
+        // provider already has a `profile: null` path for. Without this
+        // handler, onSnapshot's success callback simply never fires and
+        // `profileLoaded` is stuck `false` forever, hanging every page on
+        // its loading spinner — this treats that denial the same as "no
+        // profile doc" so app/(app)/layout.tsx's redirect to /finish-setup
+        // can actually run.
+        console.error("users/{uid} subscription failed:", err);
+        setProfile(null);
+        setProfileLoaded(true);
+      }
+    );
     return unsubscribe;
   }, [user]);
 
