@@ -14,8 +14,27 @@ function getServiceAccount() {
   // Vercel's env var UI (and most dashboards) can't store a literal newline
   // in a single-line value, so the private key is pasted with escaped `\n`
   // sequences and un-escaped here. See docs/DEPLOYMENT.md.
-  const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (!projectId || !clientEmail || !privateKey) return null;
+  let privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!projectId || !clientEmail || !privateKey) {
+    console.error(
+      "FIREBASE_ADMIN_* missing:",
+      JSON.stringify({ projectId: !!projectId, clientEmail: !!clientEmail, privateKey: !!privateKey })
+    );
+    return null;
+  }
+  // A value pasted straight from the downloaded JSON file (quotes included)
+  // or wrapped in quotes by a dashboard's env var UI leaves literal `"` at
+  // each end, which breaks PEM parsing below in a way that's easy to miss
+  // by eye — strip it defensively and log when this was needed.
+  if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+    console.error("FIREBASE_ADMIN_PRIVATE_KEY was wrapped in literal quotes — stripping them.");
+    privateKey = privateKey.slice(1, -1);
+  }
+  if (!privateKey.includes("BEGIN PRIVATE KEY")) {
+    console.error(
+      `FIREBASE_ADMIN_PRIVATE_KEY doesn't look like a PEM key after un-escaping (length ${privateKey.length}, no "BEGIN PRIVATE KEY" marker) — check it was pasted with literal \\n sequences, not real line breaks, and without surrounding quotes. See docs/DEPLOYMENT.md.`
+    );
+  }
   return { projectId, clientEmail, privateKey };
 }
 
@@ -31,8 +50,18 @@ function getAdminApp(): App | null {
   if (app) return app;
   const serviceAccount = getServiceAccount();
   if (!serviceAccount) return null;
-  app = getApps().length ? getApp() : initializeApp({ credential: cert(serviceAccount) });
-  return app;
+  try {
+    app = getApps().length ? getApp() : initializeApp({ credential: cert(serviceAccount) });
+    return app;
+  } catch (err) {
+    // Without this, a malformed key throws here uncaught — every caller
+    // (API routes that call getAdminFirestore()/getAdminAuth() with no
+    // try/catch of their own) would 500 instead of failing closed the same
+    // way "env vars missing" already does. Logged so the actual cause shows
+    // up in Vercel's Function Logs instead of just "team creation disabled."
+    console.error("Firebase Admin SDK failed to initialize:", err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /** Null when FIREBASE_ADMIN_* env vars aren't configured — callers (lib/server/require-user.ts) treat that as "nobody can be verified yet," not a crash. */
