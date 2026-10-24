@@ -113,7 +113,7 @@ export function MatchPickerDialog({
               <Label htmlFor="manual-match-type">Match type</Label>
               <Select value={manualType} onValueChange={(v) => setManualType(v as MatchType)}>
                 <SelectTrigger id="manual-match-type">
-                  <SelectValue />
+                  <SelectValue>{TABS.find((t) => t.value === manualType)?.label}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {TABS.map((t) => (

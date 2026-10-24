@@ -21,7 +21,7 @@ export default function MatchBreakdownPage() {
         </div>
         <Select value={matchId} onValueChange={setMatchId}>
           <SelectTrigger className="w-full sm:w-48">
-            <SelectValue />
+            <SelectValue>Qualification {match.matchNumber}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {matches.map((m) => (

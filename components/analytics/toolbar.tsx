@@ -56,7 +56,7 @@ export function AnalyticsToolbar({
 
       <Select value={gameId} onValueChange={onGameChange}>
         <SelectTrigger className="w-40">
-          <SelectValue />
+          <SelectValue>{GAMES[gameId]?.name}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {Object.values(GAMES).map((g) => (

@@ -27,7 +27,9 @@ export default function TeamBreakdownPage() {
         </div>
         <Select value={teamNumber} onValueChange={setTeamNumber}>
           <SelectTrigger className="w-full sm:w-56">
-            <SelectValue />
+            <SelectValue>
+              {team.teamNumber} &mdash; {team.teamName}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {teamStats.map((t) => (

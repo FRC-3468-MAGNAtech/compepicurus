@@ -60,7 +60,7 @@ export function MemberRow({
         {rowEditable ? (
           <Select value={member.primaryRole} onValueChange={(v) => onPrimaryRoleChange?.(v as RoleId)}>
             <SelectTrigger className="h-8 w-[160px] px-3 text-xs">
-              <SelectValue />
+              <SelectValue>{primaryRole.label}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {ROLES.map((r) => (

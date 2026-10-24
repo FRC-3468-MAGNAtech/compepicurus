@@ -88,7 +88,7 @@ export function ConfigModal({
               <div className="min-w-[180px] flex-1">
                 <Select value={reason} onValueChange={(v) => setReason(v as ManualFlagReason)}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue>{reason}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {MANUAL_FLAG_REASONS.map((r) => (

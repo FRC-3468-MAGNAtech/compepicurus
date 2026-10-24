@@ -80,7 +80,9 @@ export default function EventSelectionPage() {
         />
         <Select value={String(season)} onValueChange={(v) => setSeason(Number(v))}>
           <SelectTrigger className="sm:w-36">
-            <SelectValue />
+            <SelectValue>
+              {season}&ndash;{season + 1}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {seasons.map((s) => (

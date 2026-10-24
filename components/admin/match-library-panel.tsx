@@ -89,7 +89,7 @@ export function MatchLibraryPanel() {
           <Label htmlFor="library-season">Season</Label>
           <Select value={seasonId} onValueChange={setSeasonId}>
             <SelectTrigger id="library-season" className="w-40">
-              <SelectValue />
+              <SelectValue>{SEASONS.find((s) => s.id === seasonId)?.name}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {SEASONS.map((s) => (
