@@ -131,12 +131,34 @@ export function TeamEnrollmentScreen({
   /** Called after a successful join/create (profile now exists — the caller decides where to go, e.g. router.push("/dashboard")). */
   onComplete: () => void;
 }) {
-  const { logout } = useAuth();
+  const { logout, profile } = useAuth();
   const enrollment = useTeamEnrollment();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdJoinCode, setCreatedJoinCode] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  // Set once join/create has actually succeeded server-side — but the
+  // caller's own `profile` (from useAuth's realtime users/{uid} listener)
+  // can take a moment to catch up with the doc that write just created.
+  // Navigating on success immediately (the old behavior) raced that: if
+  // /dashboard's route guard ran before the listener's next snapshot
+  // arrived, it would still see `profile: null` and bounce straight back
+  // to /finish-setup, only "fixed" by a manual refresh re-subscribing late
+  // enough to see the real doc. Waiting for `profile` here closes that gap.
+  const [enrolled, setEnrolled] = useState(false);
+
+  useEffect(() => {
+    if (!enrolled) return;
+    if (profile) {
+      onComplete();
+      return;
+    }
+    // Fail-safe: proceed anyway if the listener hasn't caught up after a
+    // few seconds — no worse than the old always-immediate behavior, and
+    // /dashboard's own guard still handles a genuinely missing profile.
+    const timeout = setTimeout(onComplete, 5000);
+    return () => clearTimeout(timeout);
+  }, [enrolled, profile, onComplete]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -155,12 +177,12 @@ export function TeamEnrollmentScreen({
       const result = await enrollment.enroll();
       if (result.joinCode) {
         setCreatedJoinCode(result.joinCode);
+        setSubmitting(false);
       } else {
-        onComplete();
+        setEnrolled(true); // stays "submitting" until the effect above navigates
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
       setSubmitting(false);
     }
   };
@@ -177,8 +199,8 @@ export function TeamEnrollmentScreen({
               </p>
             </div>
             <div className="glass-card rounded-xl px-6 py-4 font-mono text-3xl font-bold tracking-[0.3em]">{createdJoinCode}</div>
-            <Button size="lg" onClick={onComplete}>
-              Continue to dashboard
+            <Button size="lg" onClick={() => setEnrolled(true)} disabled={enrolled}>
+              {enrolled ? "Setting up…" : "Continue to dashboard"}
             </Button>
           </GlassPanel>
         </motion.div>

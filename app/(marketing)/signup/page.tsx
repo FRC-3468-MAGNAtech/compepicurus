@@ -49,14 +49,34 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [linkPassword, setLinkPassword] = useState("");
   const [linkSubmitting, setLinkSubmitting] = useState(false);
+  // Set once enroll() has actually succeeded server-side, so the effect
+  // below can wait for useAuth's own `profile` listener to catch up before
+  // navigating — see the matching comment in TeamEnrollmentScreen. Without
+  // this, navigating right after enroll() resolves raced the listener: if
+  // `profile` was still the pre-enrollment `null` snapshot on the next
+  // render, the `user && !profile` branch below would render the
+  // enrollment screen all over again instead of reaching /dashboard.
+  const [enrolled, setEnrolled] = useState(false);
 
   useEffect(() => {
     if (!loading && user && profile) router.replace("/dashboard");
   }, [loading, user, profile, router]);
 
+  useEffect(() => {
+    if (!enrolled) return;
+    if (profile) {
+      router.push("/dashboard");
+      return;
+    }
+    // Fail-safe: proceed anyway if the listener hasn't caught up after a
+    // few seconds, same reasoning as TeamEnrollmentScreen's own effect.
+    const timeout = setTimeout(() => router.push("/dashboard"), 5000);
+    return () => clearTimeout(timeout);
+  }, [enrolled, profile, router]);
+
   // Google created the account but there's no profile yet — hand off to the
   // same join/create screen Finish Setup uses, instead of duplicating it.
-  if (!loading && user && !profile) {
+  if (!loading && user && !profile && !enrolled) {
     return <TeamEnrollmentScreen greeting={user.displayName ? `Hi, ${user.displayName}` : undefined} onComplete={() => router.push("/dashboard")} />;
   }
 
@@ -67,10 +87,9 @@ export default function SignupPage() {
     try {
       await signup(name, email, password);
       await enrollment.enroll(name);
-      router.push("/dashboard");
+      setEnrolled(true); // stays "submitting" (see below) until the effect above navigates
     } catch (err) {
       setError(authErrorMessage(err));
-    } finally {
       setSubmitting(false);
     }
   };

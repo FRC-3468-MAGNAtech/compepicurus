@@ -3,7 +3,7 @@
 import { createContext, useContext, useRef, useState } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useGlassOverlap } from "@/lib/use-glass-overlap";
@@ -77,34 +77,37 @@ export function SelectContent({
   // lib/use-glass-overlap.ts.
   const overGlass = useGlassOverlap(contentRef, open);
 
+  // `forceMount` + always rendering (no `{open && ...}` gate) keeps every
+  // <SelectItem/> permanently in the tree, closed or not. That's required,
+  // not just a convenience: Radix's <SelectValue/> only knows a value's
+  // label once the matching <SelectItem/>'s <SelectItemText/> has mounted
+  // at least once, so unmounting Content whenever closed (the previous
+  // AnimatePresence-gated version) meant the trigger showed blank text
+  // until the dropdown had been opened once in that render. Visibility is
+  // driven entirely by the `animate` prop now instead of mount/unmount.
   return (
     <SelectPrimitive.Portal>
-      <AnimatePresence>
-        {open && (
-          <SelectPrimitive.Content
-            position="popper"
-            sideOffset={8}
-            forceMount
-            className={cn(
-              "glass-overlay z-50 overflow-hidden rounded-2xl p-1 shadow-2xl",
-              className
-            )}
-            {...props}
-            asChild
-          >
-            <motion.div
-              ref={contentRef}
-              initial={{ opacity: 0, scale: 0.96, y: -4 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: -4 }}
-              transition={spring}
-              style={overGlass ? undefined : ({ "--glass-shade": 1 } as React.CSSProperties)}
-            >
-              <SelectPrimitive.Viewport>{children}</SelectPrimitive.Viewport>
-            </motion.div>
-          </SelectPrimitive.Content>
-        )}
-      </AnimatePresence>
+      <SelectPrimitive.Content
+        position="popper"
+        sideOffset={8}
+        forceMount
+        className={cn("glass-overlay z-50 overflow-hidden rounded-2xl p-1 shadow-2xl", className)}
+        {...props}
+        asChild
+      >
+        <motion.div
+          ref={contentRef}
+          initial={false}
+          animate={open ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.96, y: -4 }}
+          transition={spring}
+          style={{
+            pointerEvents: open ? "auto" : "none",
+            ...(overGlass ? undefined : ({ "--glass-shade": 1 } as React.CSSProperties)),
+          }}
+        >
+          <SelectPrimitive.Viewport>{children}</SelectPrimitive.Viewport>
+        </motion.div>
+      </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   );
 }

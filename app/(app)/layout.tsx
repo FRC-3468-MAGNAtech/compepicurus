@@ -17,7 +17,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   // Pages wired to real data (Firestore/FIRST API) as of P1-P3 — everything
   // else here still runs on lib/mock-data.ts. Update this list as more
   // pages stop being placeholders.
-  const REALIZED_PAGES = ["/event", "/scout", "/analytics/match-scout", "/people", "/team-management", "/account"];
+  const REALIZED_PAGES = ["/event", "/scout", "/analytics/match-scout", "/people", "/team-management", "/account", "/admin"];
   const isPlaceholderPage = !REALIZED_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   useEffect(() => {
