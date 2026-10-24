@@ -189,6 +189,43 @@ export function useLibraryMatchesBySeason(seasonId: string | null) {
   return { matches, loaded };
 }
 
+/**
+ * P5: every library match, regardless of season/event — Scout Accuracy and
+ * My Scouting label a practice session's match ("Q12", teams, etc.) from
+ * its `libraryMatchId`, and a scout's sessions can span more than one
+ * season/event, so no single-season/event query fits. The library is small
+ * (one imported event's worth of matches today), so one unfiltered
+ * subscription is simplest.
+ */
+export function useAllLibraryMatches() {
+  const [matches, setMatches] = useState<LibraryMatch[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMatches([]);
+      setLoaded(true);
+      return;
+    }
+    const unsubscribe = onSnapshot(
+      collection(db, COLLECTION),
+      (snap) => {
+        setMatches(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch));
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("libraryMatches (all) subscription failed:", err);
+        setMatches([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, []);
+
+  return { matches, loaded };
+}
+
 export async function setLibraryMatchVideo(id: string, video: LibraryVideo | null): Promise<void> {
   await updateDoc(doc(db, COLLECTION, id), { video });
 }

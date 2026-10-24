@@ -12,6 +12,7 @@ import {
   Settings,
   Heart,
   CalendarCheck,
+  UserCircle,
 } from "lucide-react";
 
 export type NavItem = {
@@ -28,6 +29,7 @@ export const mainNav: NavItem[] = [
   { href: "/analytics", label: "Analytics", icon: BarChart3, matchPrefix: true },
   { href: "/practice-scouting", label: "Practice Scouting", icon: FlaskConical },
   { href: "/scout-accuracy", label: "Scout Accuracy", icon: Target },
+  { href: "/my-scouting", label: "My Scouting", icon: UserCircle },
   { href: "/people", label: "People", icon: Users },
   { href: "/team-management", label: "Team Management", icon: UsersRound },
 ];

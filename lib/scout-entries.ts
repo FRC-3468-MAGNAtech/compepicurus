@@ -13,7 +13,8 @@ import {
   where,
   type Unsubscribe,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase/client";
+import { useEffect, useState } from "react";
+import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { MatchType } from "@/lib/ftc/types";
 import { DEFAULT_FORM_ID, FORMS } from "@/lib/scout-form/schema";
 
@@ -218,6 +219,43 @@ export async function getEntriesForSession(teamId: string, sessionId: string): P
     query(collection(db, COLLECTION), where("teamId", "==", teamId), where("sessionId", "==", sessionId))
   );
   return snap.docs.map((d) => toEntry(d.id, d.data()));
+}
+
+/**
+ * P5: every entry for the whole team, every source/mode — what Scout
+ * Accuracy/My Scouting's stats engine needs (it covers all three
+ * categories at once), unlike `subscribeEntries`'s one-event/"event"-only
+ * scope. Team size is small, so one unfiltered-by-category subscription is
+ * simpler than three separate ones.
+ */
+export function useTeamScoutEntries(teamId: string | null) {
+  const [entries, setEntries] = useState<ScoutEntry[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEntries([]);
+      setLoaded(true);
+      return;
+    }
+    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setEntries(snap.docs.map((d) => toEntry(d.id, d.data())));
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("team scoutEntries subscription failed:", err);
+        setEntries([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId]);
+
+  return { entries, loaded };
 }
 
 export async function updateEntry(id: string, patch: Partial<ScoutEntry>): Promise<void> {

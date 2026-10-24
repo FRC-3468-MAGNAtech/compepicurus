@@ -47,6 +47,8 @@ export type AccuracyStatusInfo = {
   textClassName: string;
   /** For a pill/badge — same bg/15 + text + border/30 convention as lib/roles.ts. */
   badgeClassName: string;
+  /** P5: the paragraph + suggested next step shown under a scout's status in View Details. */
+  guidance: string;
 };
 
 // Fixed, non-theme-derived colors (same reasoning as lib/roles.ts: these are
@@ -61,6 +63,7 @@ const ACCURACY_STATUS_TIERS: Array<{ max: number; info: AccuracyStatusInfo }> = 
       label: "Mentor Intervention",
       textClassName: "text-red-400",
       badgeClassName: "bg-red-500/15 text-red-300 border border-red-400/30",
+      guidance: "This scout's data is consistently far from the official score. Pair this scout with a mentor and review their last sessions together.",
     },
   },
   {
@@ -70,6 +73,7 @@ const ACCURACY_STATUS_TIERS: Array<{ max: number; info: AccuracyStatusInfo }> = 
       label: "Student Intervention",
       textClassName: "text-orange-400",
       badgeClassName: "bg-orange-500/15 text-orange-300 border border-orange-400/30",
+      guidance: "There's a real but inconsistent gap from the official score. Have another experienced scout sit with them for their next few sessions.",
     },
   },
   {
@@ -79,6 +83,7 @@ const ACCURACY_STATUS_TIERS: Array<{ max: number; info: AccuracyStatusInfo }> = 
       label: "Good",
       textClassName: "text-cyan-400",
       badgeClassName: "bg-cyan-500/15 text-cyan-300 border border-cyan-400/30",
+      guidance: "Solid, reliable scouting. Keep it up with regular practice, and keep an eye out for any single sessions that dip low.",
     },
   },
   {
@@ -88,6 +93,7 @@ const ACCURACY_STATUS_TIERS: Array<{ max: number; info: AccuracyStatusInfo }> = 
       label: "Excellent",
       textClassName: "text-lime-400",
       badgeClassName: "bg-lime-500/15 text-lime-300 border border-lime-400/30",
+      guidance: "Outstanding accuracy. A great scout to pair with others who need support, or to double-check close calls.",
     },
   },
 ];

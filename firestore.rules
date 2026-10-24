@@ -117,13 +117,23 @@ service cloud.firestore {
       // the Resume banner's "Discard" all explicitly save nothing, and
       // claimSessionId() already wrote a stub doc the moment a match was
       // picked, so without this those abandoned attempts would linger
-      // forever and wrongly show up as "Opened" in Match Select. Once
-      // completed, a session is never deletable by anyone (extends P3's
-      // blanket `allow delete: if false` rather than replacing it — see
-      // docs/ASSUMPTIONS.md, P4).
-      allow delete: if sameTeam(resource.data.teamId)
-        && resource.data.uid == request.auth.uid
-        && resource.data.status in ["in-progress", "paused"];
+      // forever and wrongly show up as "Opened" in Match Select.
+      //
+      // P5: admins can ALSO delete a *completed* session — this is what
+      // Scout Accuracy's "Hard Reset Scout Data" needs (it deletes every
+      // completed session, and their scoutEntries, for one scout+category).
+      // This supersedes P4's "once completed, never deletable by anyone,
+      // admin included" note — seeing a real, specified need for exactly
+      // that capability is reason enough to extend it. Deliberately scoped
+      // to `status == "completed"` only, not a blanket `isAdmin()`: an
+      // in-progress/paused session still can't be deleted by anyone but its
+      // own owner (an admin yanking a session out from under someone
+      // actively scouting it was never asked for, and P4's own test for
+      // that stays intact below).
+      allow delete: if sameTeam(resource.data.teamId) && (
+        (resource.data.uid == request.auth.uid && resource.data.status in ["in-progress", "paused"])
+        || (isAdmin() && resource.data.status == "completed")
+      );
     }
 
     // P3: libraryMatches/{matchId} — deliberately NOT teamId-scoped. This is
@@ -134,6 +144,28 @@ service cloud.firestore {
     match /libraryMatches/{matchId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+    }
+
+    // P5: eventAttendance/{id} — owned by the Assignments page (P6), which
+    // doesn't exist yet, so there's no writer at all today; denying writes
+    // outright (rather than, say, isAdmin()) avoids guessing at a schema
+    // P6 hasn't defined. Scout Accuracy's Event filter only reads this.
+    match /eventAttendance/{id} {
+      allow read: if sameTeam(resource.data.teamId);
+      allow write: if false;
+    }
+
+    // P5: auditLog/{id} — one entry per admin-only scout-data action (Hard
+    // Reset, Dismiss Flag, Exclude/Include). Write-once: never updated or
+    // deleted by anyone, including admins, so it stays a trustworthy
+    // record. Not read by any P5 page — P9's Admin tools will.
+    match /auditLog/{id} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn()
+        && isAdmin()
+        && request.resource.data.uid == request.auth.uid
+        && sameTeam(request.resource.data.teamId);
+      allow update, delete: if false;
     }
   }
 }

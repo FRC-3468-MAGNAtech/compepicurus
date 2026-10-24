@@ -180,6 +180,45 @@ id, not stored as its own field.
 | `startedAt` | `string` (ISO) |
 | `finishedAt` | `string \| null` (ISO) |
 
+`allow delete` (`firestore.rules`) lets the session's own owner delete it
+while `in-progress`/`paused` (P4), and — P5 — lets an **admin** delete it
+once `completed`, scoped to exactly that status: Scout Accuracy's "Hard
+Reset Scout Data" needs this, but an admin still can't delete someone
+else's in-progress/paused session (that stays owner-only, unchanged from
+P4). See docs/ASSUMPTIONS.md (P5) for why this is scoped this narrowly
+instead of a blanket `isAdmin()`.
+
+### `eventAttendance/{id}` (P5; no writer until P6)
+
+Owned by the Assignments page (P6), which doesn't exist yet — this
+collection has no writer at all today. `lib/event-attendance.ts`'s
+`useEventAttendance(teamId)` reads it for Scout Accuracy's Event filter;
+with zero documents it naturally (no special-casing needed) returns an
+empty list, so the filter exists in the UI but currently matches nobody.
+
+| Field | Type |
+|---|---|
+| `teamId`, `uid`, `eventCode` | `string` |
+
+`firestore.rules`: readable by the same team, every write denied outright
+(including to admins) — P6 will add the real writer and, if needed, its
+own write rule.
+
+### `auditLog/{id}` (P5)
+
+One entry per admin-only scout-data action (Hard Reset, Dismiss Flag,
+Exclude/Include — see `lib/scout-stats/actions.ts`). Write-once: nobody,
+including admins, can update or delete an entry, so it stays a trustworthy
+record. Not read by any page yet — P9's Admin tools will.
+
+| Field | Type |
+|---|---|
+| `teamId`, `uid` (the actor), `actorName` | `string` |
+| `action` | `"hard-reset-scout-data" \| "dismiss-flag" \| "exclude-session" \| "include-session"` |
+| `target` | `Record<string, unknown>` — action-specific context (e.g. `{ targetUid, targetName, category }` for a reset) |
+| `before`, `after` | `unknown` — whatever state changed |
+| `createdAt` | `Timestamp` |
+
 ## Shared modules
 
 - `lib/firebase/client.ts` — initializes the Firebase app once, exports
@@ -520,6 +559,104 @@ tooling it'll be built on.
   trigger). `getEntriesForSession(teamId, sessionId)` (P4) is what
   `SessionScreen`/`ResultsScreen` read back the two just-saved robot
   entries from, once both exist, to compute alliance accuracy.
+- `lib/scout-entries.ts`'s `useTeamScoutEntries(teamId)` (P5) — realtime,
+  every entry for the team regardless of source/mode, unlike
+  `subscribeEntries`'s one-event/"event"-only scope. What the Scout Stats
+  engine (below) reads; team size is small enough that one unfiltered
+  subscription is simpler than one per category.
+- `lib/match-library.ts`'s `useAllLibraryMatches()` (P5) — realtime, every
+  library match regardless of season/event, for labeling a practice
+  session's match ("Q12") when a scout's sessions can span more than one
+  season/event.
+- `lib/accuracy/engine.ts`'s `AccuracyStatusInfo` gained a `guidance` field
+  (P5) — the paragraph + suggested next step ("Pair this scout with a
+  mentor...") shown under a scout's status in Scout Accuracy's View
+  Details, kept on the one shared status-tier config rather than
+  duplicated wherever status is shown.
+
+### Scout Accuracy, My Scouting & the stats engine (P5)
+
+One computation module backs both pages, so neither duplicates the other's
+math — see the Acceptance Checklist's own "don't duplicate logic" ask.
+
+- `lib/scout-stats/types.ts` — the shared shapes: `ScoutCategory`
+  (`"trial" | "competitive" | "real-event"`), `RankingBasisId`
+  (`"preserve" | "role" | "event" | "both"` — see below),
+  `RealEventCalculationScope`, `ScoutLeaderboardRow`, `ScoutCategoryDetail`
+  (View Details' full data), `ScoutStatsSummary`.
+- `lib/scout-stats/real-event-accuracy.ts` — the one tunable, pure,
+  unit-tested file the prompt asks for the Real Event math to live in.
+  `REAL_EVENT_ACCURACY_CONFIG` holds the named constants (`PLAIN_PRIOR_K:
+  2`, `MODE_PRIOR_K: 4`, `FALLBACK_PRIOR: 0.75`). `computeTeamAveragePrior`
+  is the plain mean of every real-event observation (0-1) across the team.
+  `computeRealEventEstimates(observations, variant, teamAveragePrior,
+  modePriors)` runs the two-pass algorithm: pass 1 computes every scout's
+  *unweighted* prior-blended estimate (ignoring partners — used only to
+  judge partner quality); pass 2 re-weights each observation by
+  `0.5 + 0.5 * partnerPass1Estimate` and blends with the prior (team
+  average for the plain variant; the scout's own practice-mode average,
+  `modePriors`, with `K=4`, for the Trial/Competitive variants — falling
+  back to the team average when a scout has no practice data in that
+  mode). A scout with zero observations gets `null` ("?"), never the bare
+  prior.
+- `lib/scout-stats/engine.ts` — the data-assembly + per-category math,
+  pure given already-fetched Firestore data (fully unit-tested without an
+  emulator). `buildRealEventObservations(entries, eventCode)` turns
+  `scoutEntries` into `RealEventObservation[]` **without any FIRST API
+  roster lookup**: two entries in the same match that share the exact same
+  `accuracy.value` are alliance partners *by construction*
+  (`lib/analytics/recompute.ts` computes and stores one alliance-level
+  value per match, written onto every entry for that match) — see
+  docs/ASSUMPTIONS.md (P5) for why this was chosen over re-fetching
+  official rosters. `computePracticeAverageAccuracy(sessions, uid, mode)`
+  is a scout's own Trial/Competitive average (0-100) — both a leaderboard
+  number and the Real Event mode-variant's prior. `computeScoutStats(input)`
+  is the one entry point: given `members`/`sessions`/`entries`/
+  `libraryMatchesById`/`attendance` plus the current `category`/
+  `roleFilter`/`eventFilter`/`rankingBasis`/`realEventScope`, it returns
+  `{ rows, summary, detailsByUid }`. Ranking basis is the one subtlety:
+  role/event filters always control which rows are *visible*, but
+  `rankingBasis` separately controls which *population* the rank number is
+  computed over (`"preserve"` ranks the whole team so a visible scout keeps
+  their true team-wide rank even when the table is narrowed; `"role"`/
+  `"event"`/`"both"` re-rank within just that filtered subset) — accuracy
+  values themselves never change, only which rank number a scout shows.
+- `lib/scout-stats/use-scout-stats.ts` — the realtime wiring:
+  `useScoutStatsSources(teamId)` combines `useTeamMembers`,
+  `useTeamPracticeSessions`, `useTeamScoutEntries`, `useAllLibraryMatches`,
+  `useEventAttendance` into one `loaded` flag + the inputs
+  `computeScoutStats` needs; `useRealEventOptions(entries)` is the Real
+  Event Calculation dropdown's per-event options (distinct event codes
+  from the team's own `scoutEntries`, most-recently-scouted first — see
+  docs/ASSUMPTIONS.md, P5, for why this reads entries instead of the P6
+  Assignments page); `useScoutStats(options)` memoizes
+  `computeScoutStats` against a live `useScoutStatsSources` subscription.
+- `lib/scout-stats/actions.ts` — the three admin-gated mutations, each
+  logging to `auditLog`: `dismissSessionFlag` (matches by the flag's
+  `type`, not array index, since the caller only ever sees the *active*
+  subset), `setSessionExcluded` (Exclude/Include), and
+  `hardResetScoutData` (deletes every completed session, and each
+  session's own `scoutEntries` via its `entryIds`, for one scout+practice
+  category — Real Event data is never bulk-deletable this way, since it's
+  the team's own match records, not personal practice history).
+- `lib/audit-log.ts` / `lib/event-attendance.ts` — the two new
+  collections' thin Firestore wrappers (see their collection docs above).
+- `components/scout-stats/` — `CategoryTabs`, `SummaryStats`, `FiltersBar`
+  (role-filter chips, event-filter chips, the ranking-basis `<Select/>`,
+  and — only when `category === "real-event"` — the Calculation
+  `<Select/>`), `LeaderboardTable` (client-side re-sortable by any column;
+  the *rows themselves*, including rank, come pre-computed from the
+  engine), `ScoutDetailsDialog` (View Details — practice sessions'
+  Dismiss/Exclude/Hard Reset only render when `canManage` is true; Real
+  Event's own recent entries are always read-only, linking to Match
+  Analytics instead), `MyScoutingCard`, `PlatformBadge`.
+- `app/(app)/scout-accuracy/page.tsx` (rewritten) and
+  `app/(app)/my-scouting/page.tsx` (new) — both call `useScoutStats`/
+  `computeScoutStats` directly; My Scouting computes all three categories
+  at once (one `useScoutStatsSources` call, three pure `computeScoutStats`
+  calls) for its three cards, sharing the same filter/ranking-basis/
+  Calculation state so a card's rank matches what Scout Accuracy would
+  show under the same settings.
 
 ## Conventions
 

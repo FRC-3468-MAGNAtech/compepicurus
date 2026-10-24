@@ -619,6 +619,120 @@ itself via the form's ref handle — exactly the controlled, non-owning
 pattern P2 built `ScoutForm` to support for exactly this kind of
 non-"event" mode.
 
+## P5 — Scout Accuracy Page & My Scouting Page
+
+**P5-1. A real-event alliance partner is resolved from a shared
+`accuracy.value`, never a live FIRST API roster lookup.** The spec's
+partner-weighting step needs to know, for a scout's own entry, who scouted
+the *other* robot on that alliance — normally that means re-fetching the
+match's official roster (red/blue teams), the same way
+`lib/analytics/recompute.ts` already does once per event. But that
+recompute step already writes the *identical* alliance-level
+`accuracy.value` onto every entry for a match (it's computed once from the
+alliance, not per-robot), so two non-excluded, `status: "complete"` entries
+in the same match with the same `accuracy.value` (within a tiny epsilon)
+are alliance partners by construction. Resolving partners this way means
+the whole Real Event calculation is pure, synchronous, and testable from
+`scoutEntries` alone — no new Server Action calls, no rate-limit exposure,
+no re-deriving data `recompute.ts` already derived once.
+
+**P5-2. Pass 1 (the unweighted estimate used only to judge a partner's
+quality) always uses the plain prior/K=2, regardless of which final
+variant (plain/Trial/Competitive) is being computed for the scout being
+viewed.** The spec says to run pass 1 before weighting but doesn't say
+which prior that pass itself should use; using one fixed, variant
+-independent baseline for "how good is this partner" is simpler and more
+consistent than recomputing pass 1 per-variant, and matches pass 1's own
+purpose (a provisional baseline, not a final number anyone sees).
+
+**P5-3. Excluding a session/entry only removes it from the accuracy
+average (and therefore rank) — it still counts toward "sessions
+completed"/"forms completed," "total entries," and "last scouted."** The
+control is literally named "Exclude Score **From Percentage Average**,"
+and these other numbers describe raw activity/engagement, not quality — a
+scout excluding a fluke bad session shouldn't also make them look less
+active than they were.
+
+**P5-4. All four summary stats (scout-to-member ratio, average accuracy,
+sessions/forms completed, total entries) are scoped to the
+currently-**visible** (role/event-filtered) scouts, not the whole team.**
+The prompt explicitly says this for "Average accuracy ... of the scouts
+currently shown"; the other three aren't explicit either way, but scoping
+all four consistently to "what's on screen right now" is simpler to reason
+about and implement than mixing full-team and filtered scopes across one
+summary row.
+
+**P5-5. Ranking basis and the role/event filters are two independent
+concerns, not one.** The filters always control which rows are *visible*
+in the table; `rankingBasis` separately controls which *population* the
+rank *number* is computed against — "Preserve original ranks" (default)
+ranks the whole team so a visible scout keeps their true team-wide rank
+even when the table is narrowed down to a handful of people, while "Role
+Leaderboard"/"Event Leaderboard"/"both" re-rank within just that filtered
+subset. Accuracy values never change either way — only the rank number
+does. This reading is what makes "Preserve original ranks (default: ranks
+computed across everyone)" make sense as a *distinct* option from the
+other three, rather than being redundant with the filters themselves.
+
+**P5-6. Hard Reset, Dismiss Flag, and Exclude/Include only exist for Trial
+and Competitive — Real Event's View Details has no management controls at
+all**, per the prompt's own "Dismiss/Exclude for real entries stay in
+Match Analytics' Config modal." A bulk delete of a scout's *real* entries
+would also corrupt the team's own match records (those feed Match
+Analytics for everyone, not just this one scout's personal stats), so
+Hard Reset deletes completed `practiceSessions` (and their `scoutEntries`,
+via each session's `entryIds`) only.
+
+**P5-7. `firestore.rules`' `practiceSessions` delete rule is extended
+again, narrowly: an admin may now delete a session with `status ==
+"completed"` specifically — not a blanket `isAdmin()`.** P4 documented
+"once completed, never deletable by anyone, admin included"; Hard Reset
+needs exactly the capability that note ruled out, so this prompt
+supersedes it — but only for the completed case. An admin still can't
+delete someone else's in-progress/paused session (that remains owner-only,
+unchanged from P4) — yanking a session out from under someone actively
+scouting it was never asked for by any prompt. This also required updating
+an existing P4 rules test that asserted an admin deleting a completed
+session fails; it's now split into one test confirming the (unprivileged)
+owner still can't, and a new P5 test confirming the admin now can.
+
+**P5-8. The Event filter's chip *options* come from distinct event codes
+in `scoutEntries`, not from `eventAttendance`.** `eventAttendance` (owned
+by P6, which doesn't exist yet) governs *who's attending* a given event —
+with zero documents today, filtering by any event currently matches
+nobody, exactly as the prompt anticipates ("treat a missing collection as
+empty"). But the event codes to filter *by* are a separate concern the
+prompt doesn't explicitly source — using the team's own real-event history
+means the control has something meaningful to show today instead of being
+permanently empty, with the actual filtering staying a documented no-op
+until P6 ships real attendance data.
+
+**P5-9. "My Scouting" is a new route, `/my-scouting`, with its own nav
+entry** — not folded into the existing (still fully placeholder) Dashboard
+page, which stays out of this prompt's scope. "My Scouting" needed its own
+acceptance criteria (three cards, a recent-sessions list, a Start Practice
+Scouting button) substantial enough to warrant a dedicated page rather than
+a Dashboard section.
+
+**P5-10. My Scouting's "Recent sessions list" combines Trial and
+Competitive sessions into one chronological list** (not two, not
+per-category) — the prompt describes a single list, and Real Event entries
+are already covered read-only elsewhere (the Real Event card itself, plus
+Match Analytics), so including them a third time here would be redundant.
+
+**P5-11. `dismissSessionFlag` matches a session's flag by its `type`, not
+an array index.** The UI only ever shows the *active* (non-dismissed)
+subset of `session.flags`, whose indices don't line up with the full
+stored array being written back — matching by `type` (assumed unique per
+session, since each names a distinct rule/condition) avoids dismissing the
+wrong flag.
+
+**P5-12. The status elaboration text ("Pair this scout with a mentor...")
+lives on `lib/accuracy/engine.ts`'s shared `AccuracyStatusInfo` as a new
+`guidance` field**, not as page-local copy in Scout Accuracy — it's
+canonically tied to the same 4 status tiers that already live there, and
+any future page showing a scout's status gets the same wording for free.
+
 ## Commands to run locally
 
 ```bash
@@ -683,6 +797,26 @@ npm run dev
 # discards with nothing saved and the match goes back to (or stays) "Fresh"
 # in Match Select. Switch to Competitive mode and confirm the video has no
 # visible pause/seek controls and ignores spacebar/arrow keys.
+
+# P5: after a few completed practice sessions and at least one scored real
+# event, go to Scout Accuracy -> Trial Mode -> confirm the leaderboard,
+# summary stats, and your own row's rank. Toggle a role filter on -> confirm
+# the table narrows and "Ranking basis" offers "Role Leaderboard"; switch to
+# it and confirm ranks recompute to just the filtered scouts, then switch
+# back to "Preserve original ranks" and confirm a visible scout's rank
+# matches what it showed with no filter at all. Open View Details on a
+# scout with a flagged session -> confirm Dismiss Flag / Exclude both work
+# (admin only — confirm a non-admin signed-in user doesn't see Scout
+# Accuracy's management controls at all, including on /my-scouting) and
+# that an excluded session shows struck-through but stays counted in
+# "Sessions completed." Try "Hard Reset Scout Data" on a test scout's Trial
+# data -> confirm their completed Trial sessions (and entries) are gone and
+# their Trial leaderboard row flips to "?". Switch to Real Event -> change
+# the Calculation dropdown across All Events / {Event} / (Trial) / (
+# Competitive) variants -> confirm numbers change plausibly and a scout with
+# no real entries shows "?". Go to My Scouting -> confirm your own three
+# cards' accuracy/rank match what Scout Accuracy shows under the same
+# filters, and that no admin controls render anywhere on the page.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

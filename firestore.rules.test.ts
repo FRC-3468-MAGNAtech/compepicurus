@@ -404,15 +404,30 @@ describe("practiceSessions/{sessionId} (P3)", () => {
     await assertSucceeds(deleteDoc(doc(db, "practiceSessions", "PS-DEL0002")));
   });
 
-  it("P4: blocks deleting a completed session, even by its owner", async () => {
+  it("blocks its own owner (non-admin) from deleting a completed session", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0003"), { ...baseSession, uid: SCOUT_UID, status: "completed" });
     });
     const ownerDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
     await assertFails(deleteDoc(doc(ownerDb, "practiceSessions", "PS-DEL0003")));
+  });
 
+  it("P5: lets an admin delete a completed session (Hard Reset Scout Data)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0005"), { ...baseSession, uid: SCOUT_UID, status: "completed" });
+    });
     const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
-    await assertFails(deleteDoc(doc(adminDb, "practiceSessions", "PS-DEL0003")));
+    await assertSucceeds(deleteDoc(doc(adminDb, "practiceSessions", "PS-DEL0005")));
+  });
+
+  it("P5: still blocks an admin from deleting someone else's in-progress/paused session", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0006"), { ...baseSession, uid: SCOUT_UID, status: "in-progress" });
+      await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-DEL0007"), { ...baseSession, uid: SCOUT_UID, status: "paused" });
+    });
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(adminDb, "practiceSessions", "PS-DEL0006")));
+    await assertFails(deleteDoc(doc(adminDb, "practiceSessions", "PS-DEL0007")));
   });
 
   it("P4: blocks a teammate from deleting someone else's in-progress session", async () => {
@@ -464,5 +479,86 @@ describe("libraryMatches/{matchId} (P3)", () => {
   it("lets an admin write", async () => {
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
     await assertSucceeds(setDoc(doc(db, "libraryMatches", "USWABON1_Q4"), baseMatch));
+  });
+});
+
+describe("eventAttendance/{id} (P5)", () => {
+  it("lets a team member read", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "eventAttendance", "a1"), { teamId: TEAM_ID, uid: SCOUT_UID, eventCode: "USWABON1" });
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(getDoc(doc(db, "eventAttendance", "a1")));
+  });
+
+  it("blocks a cross-team read", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "eventAttendance", "a2"), { teamId: TEAM_ID, uid: SCOUT_UID, eventCode: "USWABON1" });
+      await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), {
+        name: "Outsider",
+        email: "outsider@example.com",
+        teamId: OTHER_TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      });
+    });
+    const db = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+    await assertFails(getDoc(doc(db, "eventAttendance", "a2")));
+  });
+
+  it("blocks every write, including an admin's — P6 hasn't defined this collection's writer yet", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(setDoc(doc(db, "eventAttendance", "a3"), { teamId: TEAM_ID, uid: SCOUT_UID, eventCode: "USWABON1" }));
+  });
+});
+
+describe("auditLog/{id} (P5)", () => {
+  const entry = {
+    teamId: TEAM_ID,
+    uid: ADMIN_UID,
+    actorName: "Admin Person",
+    action: "hard-reset-scout-data",
+    target: { targetUid: SCOUT_UID },
+    before: {},
+    after: {},
+    createdAt: new Date(),
+  };
+
+  it("lets an admin create an entry as themselves", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(addDoc(collection(db, "auditLog"), entry));
+  });
+
+  it("blocks a non-admin from creating an entry", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(addDoc(collection(db, "auditLog"), { ...entry, uid: SCOUT_UID }));
+  });
+
+  it("blocks creating an entry under someone else's uid", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(addDoc(collection(db, "auditLog"), { ...entry, uid: SCOUT_UID }));
+  });
+
+  it("lets an admin read, blocks a non-admin from reading", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "auditLog", "log1"), entry);
+    });
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(getDoc(doc(adminDb, "auditLog", "log1")));
+
+    const scoutDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(getDoc(doc(scoutDb, "auditLog", "log1")));
+  });
+
+  it("blocks update and delete entirely, even by an admin", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "auditLog", "log2"), entry);
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "auditLog", "log2"), { actorName: "Changed" }));
+    await assertFails(deleteDoc(doc(db, "auditLog", "log2")));
   });
 });
