@@ -8,6 +8,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cardEntranceVariants } from "@/lib/motion";
+import { useAuth } from "@/lib/auth";
 import { createTeam, fetchTeamCreationEnabled, joinTeam } from "@/lib/team-enrollment";
 
 export type EnrollmentMode = "join" | "create";
@@ -130,10 +131,21 @@ export function TeamEnrollmentScreen({
   /** Called after a successful join/create (profile now exists — the caller decides where to go, e.g. router.push("/dashboard")). */
   onComplete: () => void;
 }) {
+  const { logout } = useAuth();
   const enrollment = useTeamEnrollment();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdJoinCode, setCreatedJoinCode] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -198,6 +210,18 @@ export function TeamEnrollmentScreen({
               {submitting ? "Working…" : enrollment.mode === "create" && enrollment.teamCreationEnabled ? "Create team" : "Join team"}
             </Button>
           </form>
+
+          <p className="text-center text-sm text-[var(--muted-foreground)]">
+            Wrong account?{" "}
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="font-medium text-[var(--foreground)] underline underline-offset-4 disabled:opacity-60"
+            >
+              {loggingOut ? "Logging out…" : "Log out"}
+            </button>
+          </p>
         </GlassPanel>
       </motion.div>
     </div>
