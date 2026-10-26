@@ -1,29 +1,43 @@
 "use client";
 
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
 /**
- * P5: who's attending which event — owned by the Assignments page (P6),
- * which doesn't exist yet. This collection has no writer at all right now;
- * `useEventAttendance` simply returns an empty list until P6 ships, which a
- * plain Firestore query already does naturally (zero matching documents is
- * zero matching documents — no "collection doesn't exist" special case
- * needed). Scout Accuracy's Event filter reads this to know who's
- * attending a given event; see docs/ASSUMPTIONS.md (P5) for why the
- * filter's own event *options* come from `scoutEntries` instead.
+ * Who's attending which event, one doc per (team, event) — owned by the
+ * Assignments page (P6). P5 guessed a different (one-doc-per-uid) shape
+ * for this collection before P6's own spec existed; this is the real
+ * shape, per P6's explicit "Saved to eventAttendance/{teamId}_{eventCode}
+ * (list of uids)" — see docs/ASSUMPTIONS.md (P6) for the reconciliation.
  */
 export type EventAttendance = {
+  /** `${teamId}_${eventCode}`. */
   id: string;
   teamId: string;
-  uid: string;
   eventCode: string;
+  uids: string[];
+  updatedAt: unknown;
 };
 
 const COLLECTION = "eventAttendance";
 
-export function useEventAttendance(teamId: string | null) {
+function docId(teamId: string, eventCode: string): string {
+  return `${teamId}_${eventCode}`;
+}
+
+/** Admin-gated at the call site (Assignments page) via usePermissions(); also enforced in firestore.rules. */
+export async function setEventAttendance(teamId: string, eventCode: string, uids: string[]): Promise<void> {
+  await setDoc(doc(db, COLLECTION, docId(teamId, eventCode)), {
+    teamId,
+    eventCode,
+    uids,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Realtime, every event this team has attendance recorded for — what Scout Accuracy's Event filter and the stats engine read. */
+export function useTeamEventAttendance(teamId: string | null) {
   const [attendance, setAttendance] = useState<EventAttendance[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
 
@@ -49,6 +63,36 @@ export function useEventAttendance(teamId: string | null) {
     );
     return unsubscribe;
   }, [teamId]);
+
+  return { attendance, loaded };
+}
+
+/** Realtime, one event's attendance doc — what the Assignments page's own attendance checklist reads/edits. */
+export function useEventAttendance(teamId: string | null, eventCode: string | null) {
+  const [attendance, setAttendance] = useState<EventAttendance | null>(null);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !eventCode || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAttendance(null);
+      setLoaded(true);
+      return;
+    }
+    const unsubscribe = onSnapshot(
+      doc(db, COLLECTION, docId(teamId, eventCode)),
+      (snap) => {
+        setAttendance(snap.exists() ? ({ id: snap.id, ...snap.data() } as EventAttendance) : null);
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("eventAttendance (single) subscription failed:", err);
+        setAttendance(null);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId, eventCode]);
 
   return { attendance, loaded };
 }

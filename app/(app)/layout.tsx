@@ -28,6 +28,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     "/practice-scouting",
     "/scout-accuracy",
     "/my-scouting",
+    "/assignments",
   ];
   const isPlaceholderPage = !REALIZED_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 

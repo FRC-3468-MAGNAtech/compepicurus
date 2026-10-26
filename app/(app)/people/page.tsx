@@ -6,13 +6,18 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { CalendarCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useActiveEvent } from "@/lib/active-event";
+import { useEventAttendance } from "@/lib/event-attendance";
 import { useTeamMembers } from "@/lib/team-members";
 import { getRole, ROLES } from "@/lib/roles";
 
 export default function PeoplePage() {
   const { profile } = useAuth();
   const { members, loaded } = useTeamMembers(profile?.teamId ?? null);
+  const { activeEvent } = useActiveEvent();
+  const { attendance } = useEventAttendance(profile?.teamId ?? null, activeEvent?.code ?? null);
   const [query, setQuery] = useState("");
   const filtered = useMemo(
     () => members.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())),
@@ -68,6 +73,11 @@ export default function PeoplePage() {
                   {p.isAdmin && !p.isOwner && (
                     <Badge variant="glass" className="text-[10px]">
                       Admin
+                    </Badge>
+                  )}
+                  {attendance?.uids.includes(p.uid) && (
+                    <Badge variant="success" className="gap-1 text-[10px]">
+                      <CalendarCheck className="h-3 w-3" /> Attending
                     </Badge>
                   )}
                 </div>

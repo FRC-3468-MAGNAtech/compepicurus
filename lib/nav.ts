@@ -13,6 +13,7 @@ import {
   Heart,
   CalendarCheck,
   UserCircle,
+  CalendarRange,
 } from "lucide-react";
 
 export type NavItem = {
@@ -24,6 +25,7 @@ export type NavItem = {
 
 export const mainNav: NavItem[] = [
   { href: "/event", label: "Active Event", icon: CalendarCheck },
+  { href: "/assignments", label: "Assignments", icon: CalendarRange },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/scout", label: "Match Scout Form", icon: ClipboardList },
   { href: "/analytics", label: "Analytics", icon: BarChart3, matchPrefix: true },

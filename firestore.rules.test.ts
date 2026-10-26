@@ -482,18 +482,26 @@ describe("libraryMatches/{matchId} (P3)", () => {
   });
 });
 
-describe("eventAttendance/{id} (P5)", () => {
+describe("eventAttendance/{teamId}_{eventCode} (P6)", () => {
   it("lets a team member read", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), "eventAttendance", "a1"), { teamId: TEAM_ID, uid: SCOUT_UID, eventCode: "USWABON1" });
+      await setDoc(doc(ctx.firestore(), "eventAttendance", `${TEAM_ID}_USWABON1`), {
+        teamId: TEAM_ID,
+        eventCode: "USWABON1",
+        uids: [SCOUT_UID],
+      });
     });
     const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
-    await assertSucceeds(getDoc(doc(db, "eventAttendance", "a1")));
+    await assertSucceeds(getDoc(doc(db, "eventAttendance", `${TEAM_ID}_USWABON1`)));
   });
 
   it("blocks a cross-team read", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), "eventAttendance", "a2"), { teamId: TEAM_ID, uid: SCOUT_UID, eventCode: "USWABON1" });
+      await setDoc(doc(ctx.firestore(), "eventAttendance", `${TEAM_ID}_USWABON2`), {
+        teamId: TEAM_ID,
+        eventCode: "USWABON2",
+        uids: [SCOUT_UID],
+      });
       await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), {
         name: "Outsider",
         email: "outsider@example.com",
@@ -506,12 +514,33 @@ describe("eventAttendance/{id} (P5)", () => {
       });
     });
     const db = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
-    await assertFails(getDoc(doc(db, "eventAttendance", "a2")));
+    await assertFails(getDoc(doc(db, "eventAttendance", `${TEAM_ID}_USWABON2`)));
   });
 
-  it("blocks every write, including an admin's — P6 hasn't defined this collection's writer yet", async () => {
+  it("lets an admin create/update the attendance list", async () => {
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
-    await assertFails(setDoc(doc(db, "eventAttendance", "a3"), { teamId: TEAM_ID, uid: SCOUT_UID, eventCode: "USWABON1" }));
+    await assertSucceeds(
+      setDoc(doc(db, "eventAttendance", `${TEAM_ID}_USWABON3`), { teamId: TEAM_ID, eventCode: "USWABON3", uids: [SCOUT_UID, ADMIN_UID] })
+    );
+  });
+
+  it("blocks a non-admin from writing", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(
+      setDoc(doc(db, "eventAttendance", `${TEAM_ID}_USWABON4`), { teamId: TEAM_ID, eventCode: "USWABON4", uids: [SCOUT_UID] })
+    );
+  });
+
+  it("blocks deleting", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "eventAttendance", `${TEAM_ID}_USWABON5`), {
+        teamId: TEAM_ID,
+        eventCode: "USWABON5",
+        uids: [],
+      });
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(db, "eventAttendance", `${TEAM_ID}_USWABON5`)));
   });
 });
 
@@ -560,5 +589,43 @@ describe("auditLog/{id} (P5)", () => {
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
     await assertFails(updateDoc(doc(db, "auditLog", "log2"), { actorName: "Changed" }));
     await assertFails(deleteDoc(doc(db, "auditLog", "log2")));
+  });
+});
+
+describe("assignments/{teamId}_{eventCode} (P6)", () => {
+  const version = {
+    generatedBy: ADMIN_UID,
+    generatedAt: new Date().toISOString(),
+    settings: { matchSource: "event", seasonId: null, difficulty: null, rangesText: "", categories: ["Qualification"], pattern: "rotate-each-match", intervalSize: null, scoutUids: [SCOUT_UID], prioritizedTeams: [], seed: 1 },
+    slots: [],
+    counts: {},
+    fair: true,
+    warning: null,
+  };
+
+  it("lets an admin create a schedule", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "assignments", `${TEAM_ID}_USWABON1`), { teamId: TEAM_ID, eventCode: "USWABON1", current: version, previous: null }));
+  });
+
+  it("blocks a non-admin from creating a schedule", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(db, "assignments", `${TEAM_ID}_USWABON2`), { teamId: TEAM_ID, eventCode: "USWABON2", current: version, previous: null }));
+  });
+
+  it("lets any team member (not just admins) read the published schedule", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "assignments", `${TEAM_ID}_USWABON3`), { teamId: TEAM_ID, eventCode: "USWABON3", current: version, previous: null });
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(getDoc(doc(db, "assignments", `${TEAM_ID}_USWABON3`)));
+  });
+
+  it("blocks deleting", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "assignments", `${TEAM_ID}_USWABON4`), { teamId: TEAM_ID, eventCode: "USWABON4", current: version, previous: null });
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(db, "assignments", `${TEAM_ID}_USWABON4`)));
   });
 });

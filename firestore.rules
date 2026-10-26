@@ -146,13 +146,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // P5: eventAttendance/{id} — owned by the Assignments page (P6), which
-    // doesn't exist yet, so there's no writer at all today; denying writes
-    // outright (rather than, say, isAdmin()) avoids guessing at a schema
-    // P6 hasn't defined. Scout Accuracy's Event filter only reads this.
+    // P6: eventAttendance/{teamId}_{eventCode} — one doc per (team, event),
+    // `uids` the list of attending members. Admin-only write (the
+    // Assignments page's attendance checklist); every team member can read
+    // it (it drives the Scout Accuracy Event filter and People's
+    // "Attending" badge). P5 guessed a different, read-only, one-doc-per-uid
+    // shape for this collection before P6 existed — see docs/ASSUMPTIONS.md
+    // (P6) for the reconciliation.
     match /eventAttendance/{id} {
       allow read: if sameTeam(resource.data.teamId);
-      allow write: if false;
+      allow create, update: if isAdmin() && sameTeam(request.resource.data.teamId);
+      allow delete: if false;
     }
 
     // P5: auditLog/{id} — one entry per admin-only scout-data action (Hard
@@ -166,6 +170,20 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && sameTeam(request.resource.data.teamId);
       allow update, delete: if false;
+    }
+
+    // P6: assignments/{teamId}_{eventCode} — the published scouting
+    // schedule, `current` + one level of `previous` for undo (see
+    // lib/assignments.ts). Admin-only write (generating/publishing/manual
+    // cell swaps all go through `publishAssignments`/`swapAssignmentSlot`,
+    // both plain `setDoc`/`updateDoc` calls gated by this rule, not an API
+    // route — same pattern as every other admin-only collection here).
+    // Every team member can read their own team's schedule (Match Scout
+    // Form and My Scouting both need to read it, not just admins).
+    match /assignments/{id} {
+      allow read: if sameTeam(resource.data.teamId);
+      allow create, update: if isAdmin() && sameTeam(request.resource.data.teamId);
+      allow delete: if false;
     }
   }
 }

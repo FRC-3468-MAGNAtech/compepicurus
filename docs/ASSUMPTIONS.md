@@ -733,6 +733,121 @@ lives on `lib/accuracy/engine.ts`'s shared `AccuracyStatusInfo` as a new
 canonically tied to the same 4 status tiers that already live there, and
 any future page showing a scout's status gets the same wording for free.
 
+## P6 — Assignments Page (Attendance & Scouting Schedule)
+
+**P6-1. "Prioritize teams" excludes every other slot outright — it doesn't
+just fill prioritized slots first and then keep trying the rest.** The
+prompt's own framing ("used when there are very few scouts... and not
+every team can be scouted: prioritized teams' robots get assigned first,
+remaining robots **may stay unassigned**, and breaks are still spread
+fairly") only makes sense as a deliberate reduction in scope: with 4-6
+scouts, covering *every* robot in *every* match leaves nobody a break.
+Making every non-prioritized slot `scoutUid: null` unconditionally (not
+"fill it if there's capacity left") is what actually frees up the slack
+needed for breaks, and makes the behavior simple to reason about and test
+— "fill opportunistically" would have made the fairness outcome depend on
+scout-count/match-count interactions in a way the prompt doesn't specify.
+
+**P6-2. Custom Interval and Constant Same Order both build their batches
+from one sliding cyclic window (`cyclicWindow`), not a fixed, disjoint
+group partition.** An earlier version partitioned scouts into `ceil(n/4)`
+groups up front (e.g. 7 scouts → groups of 4 and 3) and either cycled
+through them per-match (Constant Same Order) or re-picked a fresh group of
+4 by least-assigned-count per interval (Custom Interval). Both failed the
+"counts differ by at most 1" fairness target for scout counts that aren't
+clean multiples of 4: uneven group sizes needed per-match floater top-ups
+(pulling extra, unevenly-distributed assignments into whichever scouts
+covered the gap), and greedy per-interval re-picking let one scout's
+"share" overshoot by a whole batch's worth before the next correction. A
+window of `min(4, n)` scouts sliding by its own size through one
+seeded-shuffled cyclic order fixes this: it's always exactly 4 wide (when
+`n >= 4`, so no floaters are ever needed), and by simple circular symmetry
+every scout appears in exactly the same number of windows over one full
+cycle (`n / gcd(windowSize, n)` picks) — and provably within 1 of that at
+any partial point. For Constant Same Order (one pick *per match*) this
+achieves exact ±1 total-count fairness, matching the prompt's target
+exactly. For Custom Interval, a whole batch is committed for every match
+in an `x`-match interval at once, so each "pick" moves a scout's count by
+`x`, not 1 — the achievable fairness bound is therefore `x` (the interval
+size), not 1, which is a property of what "swap the whole batch every `x`
+matches" *means*, not a flaw in the window itself. The prompt's own text
+anticipates exactly this ("works best in multiples of 4... if perfect
+fairness is impossible, show the exact counts and warn"), so this is
+surfaced via `fair`/`warning`, not treated as a bug — `lib/scheduler/
+scheduler.test.ts`'s fairness sweep (1-14 scouts, all three patterns)
+asserts exact ±1 for Rotate Each Match and Constant Same Order, and
+±`intervalSize` for Custom Interval.
+
+**P6-3. "Keep the previous version for undo" is implemented as exactly one
+level of undo** (`AssignmentsDoc.previous`), not a full version history —
+`publishAssignments` demotes whatever was `current` into `previous` (one
+slot, overwritten each publish) and `undoAssignments` swaps them back,
+clearing `previous`. The prompt's own wording ("the previous version," not
+"every previous version") reads as deliberately scoped to this; P9's
+Admin tools or a future prompt can layer a real history on top if ever
+needed, without changing this shape.
+
+**P6-4. Reconciling `eventAttendance` with P5's earlier guess.** P5 built
+this collection speculatively (P6 didn't exist yet) as one doc per
+(team, uid, eventCode), read-only, denied all writes. P6's own spec is
+explicit and different: one doc per (team, event), `{ uids: string[] }`,
+admin-writable. This prompt replaces that shape entirely —
+`lib/event-attendance.ts` was rewritten (`useTeamEventAttendance`/
+`useEventAttendance`/`setEventAttendance`), `firestore.rules`' rule
+updated to admin-write, and `firestore.rules.test.ts`'s matching tests
+rewritten for the new shape. The only *other* code that depended on the
+old shape was `lib/scout-stats/engine.ts`'s one-line Event-filter check
+(`attendance.some(a => a.uid === member.uid && ...)` →
+`attendance.some(a => a.uids.includes(member.uid) && ...)`) — isolating
+that dependency to one function is exactly why P5 bothered to type
+`attendance: EventAttendance[]` as a named, imported type in the first
+place rather than inlining its shape.
+
+**P6-5. "Live" match source reuses "Event schedule"'s data (the FIRST API)
+outright — there's no separate data source for it.** No scout-facing way
+to run a live-scouting session exists yet (see docs/ARCHITECTURE.md's
+vocabulary note — `kind: "live"` practice sessions are still P7+), so
+"Live" as a *match source* for generating a schedule has nothing to
+meaningfully differ from "Event schedule" against today's data model; both
+read the same `getMatchesForEvent` results. The tab exists in the UI (per
+the prompt's three-way match-source list) so the setting is recorded
+(`AssignmentSettings.matchSource`) and ready to diverge later once a real
+live-scouting data source exists.
+
+**P6-6. The Match Scout Form's "next assignment" is determined by the
+*absence of a matching `scoutEntry`*, not by the official match's `played`
+status.** The prompt asks to "show the signed-in scout's next assigned
+match and robot ... with a one-tap 'Load this assignment.'" A library- or
+live-sourced assignment may have no "played" concept at all, but every
+assignment source produces entries the same way once scouted — so "next"
+is simply the earliest (by match type/number) of the scout's own assigned
+slots that they haven't already submitted a real-event entry for. This
+also means the banner naturally advances the instant a submission saves
+(the realtime `scoutEntries` listener picks it up), with no separate
+"mark assignment complete" step needed. Loading an assignment builds a
+synthetic `FtcMatch` (no roster/score data) exactly the way the Match
+Picker dialog's own manual-entry mode already does, reusing that same
+"downstream code already treats an unmatched match as having no official
+data" tolerance.
+
+**P6-7. "Dashboard/My Scouting: show 'My upcoming assignments'" is built
+on My Scouting only, not Dashboard.** Dashboard remains entirely
+placeholder content on `lib/mock-data.ts` (explicitly out of scope since
+P1, reaffirmed every prompt since), so adding a real, Firestore-backed
+section to it would be the first crack in that placeholder — not something
+this prompt should decide unilaterally when My Scouting (built in P5,
+already a real per-scout dashboard) is the natural, in-scope home for
+exactly this kind of "your own upcoming activity" content.
+
+**P6-8. Assignments are written with plain, rules-gated client calls
+(`setDoc`/`updateDoc`), not a new API route.** Every other admin-managed,
+non-Admin-SDK-requiring collection in this app (`practiceSessions`
+updates, `scoutEntries` admin edits, `eventAttendance`) follows this same
+pattern — an API route is reserved for things Firestore rules genuinely
+can't express (team creation's cross-collection atomicity, verified-email
+-gated claims). Generating and publishing a schedule needs neither: it's a
+single team-scoped, admin-only write.
+
 ## Commands to run locally
 
 ```bash
@@ -817,6 +932,26 @@ npm run dev
 # no real entries shows "?". Go to My Scouting -> confirm your own three
 # cards' accuracy/rank match what Scout Accuracy shows under the same
 # filters, and that no admin controls render anywhere on the page.
+
+# P6: as an admin, go to Assignments -> pick the active event -> Attendance:
+# select a handful of members, Save attendance -> confirm People now shows
+# "Attending" on exactly those members. Schedule -> Randomize -> leave
+# ranges blank, pick Qualification, try each rotation pattern, pick 5-6
+# attending scouts -> Generate -> confirm the preview grid shows 4 scouts
+# per match and per-scout totals differing by at most 1 (or a warning if
+# not, for Custom Interval with an odd scout count) -> Save/Publish ->
+# confirm "Undo to previous version" appears after publishing a second
+# schedule, and restores the first. Click a cell to swap in a different
+# scout -> confirm a warning appears if it double-books someone in that
+# match or unbalances counts, but the swap still applies. Try "Prioritize
+# teams" with only 4-5 scouts selected -> confirm only the prioritized
+# teams' cells have names, every other cell is empty. Sign in as a
+# non-admin -> confirm Assignments shows only a read-only "your
+# assignments" list. Go to Match Scout Form as a scout with an assignment
+# for the active event -> confirm the "Next assignment" banner shows and
+# "Load this assignment" fills in the match/team -> submit -> confirm the
+# banner advances to the next unscouted assignment. Go to My Scouting ->
+# confirm "My upcoming assignments" lists the same scout's remaining slots.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

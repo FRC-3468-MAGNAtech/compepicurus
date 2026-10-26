@@ -163,7 +163,7 @@ function memberMatchesRoles(member: TeamMember, roleFilter: RoleId[]): boolean {
 
 function memberMatchesEvents(member: TeamMember, eventFilter: string[], attendance: EventAttendance[]): boolean {
   if (eventFilter.length === 0) return true;
-  return attendance.some((a) => a.uid === member.uid && eventFilter.includes(a.eventCode));
+  return attendance.some((a) => eventFilter.includes(a.eventCode) && a.uids.includes(member.uid));
 }
 
 export type ScoutStatsInput = {

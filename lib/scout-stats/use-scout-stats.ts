@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useEventAttendance } from "@/lib/event-attendance";
+import { useTeamEventAttendance } from "@/lib/event-attendance";
 import { useAllLibraryMatches } from "@/lib/match-library";
 import { useTeamPracticeSessions } from "@/lib/practice-sessions";
 import type { RoleId } from "@/lib/roles";
@@ -16,7 +16,7 @@ export function useScoutStatsSources(teamId: string | null) {
   const { sessions, loaded: sessionsLoaded } = useTeamPracticeSessions(teamId);
   const { entries, loaded: entriesLoaded } = useTeamScoutEntries(teamId);
   const { matches, loaded: matchesLoaded } = useAllLibraryMatches();
-  const { attendance, loaded: attendanceLoaded } = useEventAttendance(teamId);
+  const { attendance, loaded: attendanceLoaded } = useTeamEventAttendance(teamId);
 
   const libraryMatchesById = useMemo(() => new Map(matches.map((m) => [m.id, m])), [matches]);
   const loaded = membersLoaded && sessionsLoaded && entriesLoaded && matchesLoaded && attendanceLoaded;

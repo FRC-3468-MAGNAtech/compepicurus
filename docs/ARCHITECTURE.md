@@ -188,21 +188,62 @@ else's in-progress/paused session (that stays owner-only, unchanged from
 P4). See docs/ASSUMPTIONS.md (P5) for why this is scoped this narrowly
 instead of a blanket `isAdmin()`.
 
-### `eventAttendance/{id}` (P5; no writer until P6)
+### `eventAttendance/{teamId}_{eventCode}` (P5 shape guess; real shape and writer added P6)
 
-Owned by the Assignments page (P6), which doesn't exist yet — this
-collection has no writer at all today. `lib/event-attendance.ts`'s
-`useEventAttendance(teamId)` reads it for Scout Accuracy's Event filter;
-with zero documents it naturally (no special-casing needed) returns an
-empty list, so the filter exists in the UI but currently matches nobody.
+Owned by the Assignments page (P6): one doc per (team, event), `uids` the
+list of attending members, edited via its attendance checklist
+(`lib/event-attendance.ts`'s `setEventAttendance`). P5 guessed a different
+(read-only, one-doc-per-uid) shape for this collection before P6's own spec
+existed — see docs/ASSUMPTIONS.md (P6) for the reconciliation, including
+why `lib/scout-stats/engine.ts`'s Event filter check only needed a
+one-line change despite the shape change.
 
 | Field | Type |
 |---|---|
-| `teamId`, `uid`, `eventCode` | `string` |
+| `teamId`, `eventCode` | `string` |
+| `uids` | `string[]` |
+| `updatedAt` | `Timestamp` |
 
-`firestore.rules`: readable by the same team, every write denied outright
-(including to admins) — P6 will add the real writer and, if needed, its
-own write rule.
+`firestore.rules`: readable by the same team (drives Scout Accuracy's Event
+filter and People's "Attending" badge); only admins can create/update;
+delete denied outright (no "un-publish attendance" concept).
+`lib/event-attendance.ts` exports both `useTeamEventAttendance(teamId)`
+(every event's attendance — what the stats engine and Scout Accuracy read)
+and `useEventAttendance(teamId, eventCode)` (one event's doc — what the
+Assignments page's own checklist reads/edits).
+
+### `assignments/{teamId}_{eventCode}` (P6)
+
+The published scouting schedule for one event — who watches which robot in
+which match. `current` is live; `previous` holds exactly one prior
+version for undo (not a full history — see P6-3). Written only via
+`lib/assignments.ts`'s `publishAssignments`/`undoAssignments`/
+`swapAssignmentSlot`, all plain client `setDoc`/`updateDoc` calls gated by
+`firestore.rules` (admin-only write, same pattern as every other
+admin-managed collection here — no API route needed, since nothing here
+needs the Admin SDK's bypass-the-rules capability).
+
+| Field | Type |
+|---|---|
+| `teamId`, `eventCode` | `string` |
+| `current` | `AssignmentVersion \| null` |
+| `previous` | `AssignmentVersion \| null` |
+
+`AssignmentVersion`: `{ generatedBy: string (uid), generatedAt: string
+(ISO), settings: AssignmentSettings, slots: ScheduleSlot[], counts:
+Record<uid, number>, fair: boolean, warning: string | null }`.
+`ScheduleSlot`: `{ matchType, matchNumber, slot: "red1"|"red2"|"blue1"|
+"blue2", teamNumber, scoutUid: string | null }` — one per robot per match,
+`scoutUid: null` meaning deliberately unassigned (see the Prioritize-teams
+note under `lib/scheduler/` below). `AssignmentSettings` records exactly
+what was used to generate `slots` (match source, ranges/categories,
+rotation pattern, the scout pool, prioritized teams, the RNG seed) so a
+published schedule's provenance is always inspectable.
+
+`firestore.rules`: readable by any team member (Match Scout Form and My
+Scouting both read their own slots out of someone else's published
+schedule); only admins can create/update; delete denied outright (undo
+goes through `previous`, not deletion).
 
 ### `auditLog/{id}` (P5)
 
@@ -657,6 +698,91 @@ math — see the Acceptance Checklist's own "don't duplicate logic" ask.
   calls) for its three cards, sharing the same filter/ranking-basis/
   Calculation state so a card's rank matches what Scout Accuracy would
   show under the same settings.
+
+### The scheduler & Assignments (P6)
+
+- `lib/scheduler/types.ts` — `MatchInput` (one match's teams, generic
+  across sources — a `null` alliance means "excluded for this source," not
+  "unknown"), `SlotId`/`SLOT_IDS` (`red1`/`red2`/`blue1`/`blue2`, in that
+  fixed display order), `RotationPattern`, `ScheduleSettings`,
+  `ScheduleSlot`, `ScheduleResult` (`{ slots, counts, fair, warning }`).
+- `lib/scheduler/rng.ts` — `mulberry32(seed)` (a tiny seeded PRNG) and
+  `seededShuffle(items, rng)`, so the whole scheduler is deterministic
+  given a seed; `randomSeed()` is what the UI's Randomize/Re-roll buttons
+  call to get a fresh one.
+- `lib/scheduler/ranges.ts` — `parseMatchRanges("P12-14, Q17-18")` (chip
+  text → `MatchRange[]`, reporting unrecognized chips as errors instead of
+  dropping them), `filterMatchesByRanges`/`filterMatchesByCategories`
+  (warns about range bounds with no corresponding match, e.g. `Q20` when
+  only 16 quals exist).
+- `lib/scheduler/sources.ts` — `ftcMatchesToInputs(matches)` (Event
+  schedule/Live — skips matches without exactly 2 teams per alliance, same
+  convention as `lib/match-library.ts`'s import) and
+  `libraryMatchesToInputs(matches, difficulty)` (Practice library — only
+  the alliance(s) matching the chosen difficulty get slots at all).
+- `lib/scheduler/scheduler.ts` — `generateSchedule(matches, settings)`, the
+  one pure, unit-tested entry point. Builds each match's batch of
+  candidate scouts per `pattern`:
+  - **Rotate Each Match**: a fresh greedy pick every match (fewest
+    assignments so far, soft-avoiding anyone in *both* of the last 2
+    matches — i.e. about to hit their 3rd in a row).
+  - **Custom Interval**/**Constant Same Order**: both built from
+    `cyclicWindow(order, pickIndex, size)` — `size` consecutive scouts
+    from one seeded-shuffled cyclic order, sliding by `size` each pick
+    (one pick per match for Constant Same Order, one pick per `x`-match
+    interval for Custom Interval). This replaced an earlier
+    fixed-disjoint-group-partition design — see P6-2 for why a sliding
+    window is what actually achieves the fairness target.
+  - Whichever batch is chosen, `assignMatch` fills that match's slots from
+    it, "floating" in whoever has the fewest assignments overall if the
+    batch runs short, and never double-books the same scout across two
+    slots in the same match (a human can't watch two robots at once — a
+    pool smaller than 4 leaves some slots `null` rather than reusing
+    someone).
+  - **Prioritized teams**, when set, aren't merely filled *first* — every
+    *other* slot is skipped outright, never attempted (see P6-1).
+  - `fair` is `max(counts) - min(counts) <= 1`; `warning` explains it when
+    not. Exact ±1 is always achievable for Rotate Each Match and Constant
+    Same Order; Custom Interval's achievable bound is the interval size
+    (see P6-2) — the prompt's own "show counts and warn" escape hatch
+    exists for exactly this case.
+- `lib/assignments.ts` — `AssignmentMatchSource`, `AssignmentSettings`,
+  `AssignmentVersion`, `AssignmentsDoc` (mirrors the Firestore shape
+  above). `useAssignments(teamId, eventCode)` (realtime),
+  `publishAssignments` (writes `current`, demotes the old `current` to
+  `previous`), `undoAssignments` (swaps them back, one level only),
+  `swapAssignmentSlot` (one manual cell edit — read-modify-write on the
+  whole `slots` array, since Firestore has no indexed-array-element
+  update), and the pure `evaluateSlotSwap(version, ...)` (the
+  double-booking/fairness warnings a manual swap shows *before* writing —
+  it warns, per the prompt, rather than blocking the edit).
+- `components/assignments/` — `MemberMultiSelect` (checkbox roster +
+  select-all/none + role quick-select; shared by Attendance and the
+  Randomize modal's Scouts picker), `RandomizeModal` (ranges/categories,
+  pattern + interval, scouts, prioritized teams → calls `generateSchedule`
+  and hands the result back as an unpublished draft), `ScheduleGrid`
+  (matches × 4 slot columns, per-scout totals; click-to-swap only when
+  given an `onSwap` — omitted for the read-only view non-admins/a draft
+  before publish get).
+- `app/(app)/assignments/page.tsx` — the orchestrator: event selector
+  (defaults to the team's active event — see `useActiveEvent()`),
+  attendance (admin-only edit, `setEventAttendance`), match source tabs
+  (Event schedule/Practice library/Live — see P6-5 for why Live reuses
+  Event schedule's data), the Randomize → draft preview → Save/Publish
+  flow, and Undo (shown whenever `previous` exists). Non-admins see a
+  read-only "your assignments" list instead of any of the above.
+- **Integrations**: `app/(app)/scout/page.tsx` reads the signed-in scout's
+  `assignments` slots for the active event, finds the first one (in
+  match-type/number order, via `lib/analytics/game-schema.ts`'s
+  `matchSortValue`) without a matching submitted `scoutEntry` yet, and
+  shows it as a "Next assignment" banner with a **Load this assignment**
+  button that fills `ScoutForm`'s `prefill.match`/`prefill.teamNumber` (a
+  synthetic `FtcMatch`, same convention as the Match Picker's own manual
+  -entry mode — see P6-6). `app/(app)/my-scouting/page.tsx` shows "My
+  upcoming assignments" for the active event (Dashboard itself stays
+  untouched placeholder content — see P6-7).
+  `app/(app)/people/page.tsx` shows an "Attending" badge per member, from
+  the active event's `eventAttendance` doc.
 
 ## Conventions
 
