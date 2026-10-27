@@ -14,11 +14,13 @@ import { ResultsScreen } from "@/components/practice/results-screen";
 import { LiveFlow, type ResumePendingRobot } from "@/components/practice/live/live-flow";
 import { PresencePanel } from "@/components/practice/live/presence-panel";
 import { PendingRobotsList } from "@/components/practice/live/pending-robots-list";
+import { LobbyFlow } from "@/components/practice/lobby/lobby-flow";
 import { useAuth } from "@/lib/auth";
 import { useTeamDoc } from "@/lib/team";
 import { detectPlatform } from "@/lib/platform";
 import { getSeason } from "@/lib/seasons";
 import { useLibraryMatchesBySeason } from "@/lib/match-library";
+import { useMyActiveLobbyId } from "@/lib/lobby";
 import type { Difficulty } from "@/lib/difficulty";
 import type { MatchRow } from "@/lib/practice-match-rows";
 import {
@@ -32,8 +34,15 @@ import {
 } from "@/lib/practice-sessions";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 
-type Step = "season" | "mode" | "difficulty" | "match-select" | "session" | "results" | "live";
+type Step = "season" | "mode" | "difficulty" | "match-select" | "session" | "results" | "live" | "lobby";
+
+/** Accepts the join code with or without its "LB-" prefix, case-insensitively. */
+function normalizeLobbyCode(raw: string): string {
+  const trimmed = raw.trim().toUpperCase();
+  return trimmed.startsWith("LB-") ? trimmed : `LB-${trimmed}`;
+}
 
 export default function PracticeScoutingPage() {
   const { user, profile, loading } = useAuth();
@@ -57,6 +66,10 @@ export default function PracticeScoutingPage() {
   const [error, setError] = useState<string | null>(null);
   const [liveResumeTarget, setLiveResumeTarget] = useState<ResumePendingRobot | undefined>(undefined);
   const [liveViewResultsId, setLiveViewResultsId] = useState<string | undefined>(undefined);
+  const [lobbyId, setLobbyId] = useState<string | undefined>(undefined);
+  const [joinCode, setJoinCode] = useState("");
+
+  const { lobbyId: myActiveLobbyId } = useMyActiveLobbyId(user?.uid ?? null);
 
   const { session: activeSession } = usePracticeSession(activeSessionId);
   const { matches: activeSeasonMatches } = useLibraryMatchesBySeason(activeSession?.seasonId ?? null);
@@ -160,6 +173,38 @@ export default function PracticeScoutingPage() {
               setStep("live");
             }}
           />
+          {myActiveLobbyId && (
+            <GlassPanel className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm">You&apos;re still in a Live Practice Lobby.</span>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setLobbyId(myActiveLobbyId);
+                  setStep("lobby");
+                }}
+              >
+                Rejoin
+              </Button>
+            </GlassPanel>
+          )}
+          <GlassPanel className="flex flex-wrap items-center gap-3">
+            <Input
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
+              placeholder="Join code (e.g. LB-7K3PQR)"
+              className="max-w-xs"
+            />
+            <Button
+              variant="glass"
+              onClick={() => {
+                if (!joinCode.trim()) return;
+                setLobbyId(normalizeLobbyCode(joinCode));
+                setStep("lobby");
+              }}
+            >
+              Join Lobby
+            </Button>
+          </GlassPanel>
           {myRecentLiveSessions.length > 0 && (
             <GlassPanel className="flex flex-col gap-3">
               <h2 className="text-base font-semibold">Recent live matches</h2>
@@ -243,6 +288,10 @@ export default function PracticeScoutingPage() {
               setLiveViewResultsId(undefined);
               setStep("live");
             }}
+            onSelectLobby={() => {
+              setLobbyId(undefined);
+              setStep("lobby");
+            }}
           />
         </>
       )}
@@ -256,6 +305,19 @@ export default function PracticeScoutingPage() {
           }}
           resumePendingRobot={liveResumeTarget}
           viewResultsSessionId={liveViewResultsId}
+        />
+      )}
+
+      {step === "lobby" && (
+        <LobbyFlow
+          seasonId={seasonId}
+          mode={mode}
+          lobbyId={lobbyId}
+          onExit={() => {
+            setLobbyId(undefined);
+            setJoinCode("");
+            setStep("season");
+          }}
         />
       )}
 

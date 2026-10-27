@@ -217,5 +217,36 @@ service cloud.firestore {
       allow read: if sameTeam(resource.data.teamId) && resource.data.uid == request.auth.uid;
       allow write: if false;
     }
+
+    // P8: lobbies/{lobbyId} — the doc id IS the shareable join code (see
+    // lib/lobby.ts's claimLobbyId). Readable by the whole team (so "Join
+    // with code" can look a lobby up before the joiner has a player doc of
+    // their own yet); only the host can change the lobby doc itself
+    // (settings, match selection, pairing, status, their own heartbeat) —
+    // per the prompt's own spec. Per-pair accuracy is instead written by
+    // app/api/lobby/resolve-results (Admin SDK, bypasses these rules
+    // entirely) since a pair's two sessions belong to two different
+    // players and neither rule below lets one teammate write another's
+    // session — see docs/ASSUMPTIONS.md (P8).
+    match /lobbies/{lobbyId} {
+      allow read: if sameTeam(resource.data.teamId);
+      allow create: if isSignedIn()
+        && request.resource.data.hostUid == request.auth.uid
+        && sameTeam(request.resource.data.teamId);
+      allow update: if sameTeam(resource.data.teamId) && resource.data.hostUid == request.auth.uid;
+      allow delete: if false;
+
+      // Presence/roster only — robot/alliance/pairId live on the lobby
+      // doc's own `pairing` array (host-written), not here, precisely
+      // because a player may only write their own player doc.
+      match /players/{uid} {
+        allow read: if sameTeam(resource.data.teamId);
+        allow create, update: if isSignedIn()
+          && request.auth.uid == uid
+          && request.resource.data.uid == uid
+          && sameTeam(request.resource.data.teamId);
+        allow delete: if isSignedIn() && request.auth.uid == uid;
+      }
+    }
   }
 }

@@ -22,6 +22,11 @@
       "collectionGroup": "scouts",
       "queryScope": "COLLECTION_GROUP",
       "fields": [{ "fieldPath": "teamId", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "players",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [{ "fieldPath": "uid", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []

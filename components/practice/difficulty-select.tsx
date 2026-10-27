@@ -7,7 +7,15 @@ import { DIFFICULTY_CLASSNAMES, DIFFICULTY_LABELS, type Difficulty } from "@/lib
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 
-export function DifficultySelect({ onSelect, onSelectLive }: { onSelect: (difficulty: Difficulty) => void; onSelectLive: () => void }) {
+export function DifficultySelect({
+  onSelect,
+  onSelectLive,
+  onSelectLobby,
+}: {
+  onSelect: (difficulty: Difficulty) => void;
+  onSelectLive: () => void;
+  onSelectLobby: () => void;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <h2 className="text-lg font-bold">Choose a difficulty</h2>
@@ -31,12 +39,10 @@ export function DifficultySelect({ onSelect, onSelectLive }: { onSelect: (diffic
           <div className="text-base font-semibold">Live</div>
           <p className="text-xs text-[var(--muted-foreground)]">Scout a real, livestreamed FTC match.</p>
         </GlassPanel>
-        <GlassPanel className="flex flex-col items-center gap-2 py-8 text-center opacity-60">
-          <Users className="h-6 w-6 text-[var(--muted-foreground)]" />
+        <GlassPanel interactive onClick={onSelectLobby} className="flex flex-col items-center gap-2 py-8 text-center">
+          <Users className="h-6 w-6 text-[var(--color-primary)]" />
           <div className="text-base font-semibold">Live Practice Lobby</div>
-          <Badge variant="outline" className="text-[10px]">
-            Coming soon
-          </Badge>
+          <p className="text-xs text-[var(--muted-foreground)]">Host or join a Kahoot-style group scouting round.</p>
         </GlassPanel>
       </div>
     </div>

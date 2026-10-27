@@ -961,6 +961,137 @@ documented, standard integration surface for each:
   Firestore state and the existing pure-logic unit tests for every
   decision point (`lib/live/*.test.ts`, `lib/practice-sessions.test.ts`).
 
+## P8 — Live Practice Lobby (Kahoot-Style)
+
+**P8-1. The lobby document's own Firestore id doubles as the shareable join
+code — there's no separate `code` field.** `lib/lobby.ts`'s `claimLobbyId`
+reserves an `LB-XXXXXX` id exactly like a Session ID
+(`claimUniqueDocId`, extracted from `lib/practice-sessions.ts`'s
+`claimSessionId` for exactly this reuse). "Join with code" is then a
+direct `getDoc(doc(db, "lobbies", code))` by that id — simpler than a
+`where("code","==", code)` query, and "unique among open lobbies" is
+already guaranteed by the same claim-transaction every Session ID uses.
+
+**P8-2. A round's full pairing lives on the lobby doc's own `pairing`
+array, not on each player's `players/{uid}` subdoc, even though the
+prompt's own schema sketch lists `pairId`/`robot` under the `players`
+subcollection.** `firestore.rules` says "only the host can change the
+lobby doc's state and settings; players write only their own player doc" —
+taken literally, the host can never write into a player's own subdoc (and
+a player can't write anyone else's), so there's nowhere for the host's
+Start-time pairing computation to land except the lobby doc itself, which
+only the host may write. Every reader (the waiting room, the session
+screen, the results screen) already reads the full lobby doc anyway, so
+this costs nothing functionally — a player's own robot/alliance is just
+`lobby.pairing.find(p => p.playerUids.includes(uid))` instead of a field
+read off their own subdoc.
+
+**P8-3. A pair's final accuracy/flags are written by
+`app/api/lobby/resolve-results` (Admin SDK), never by either player's own
+client.** A pair's two sessions belong to two *different* players, and
+`firestore.rules`' existing `practiceSessions` update rule (unchanged
+since P3/P4) only ever lets a session's **own** `uid` update it while
+`status` is `"in-progress"`/`"paused"` — never a teammate, not even the
+host, and never once it's `"completed"`. This is the same structural
+problem P7's live-mode scoring solved with an Admin-SDK resolver
+(`lib/live/resolve-pending.ts`); `lib/lobby/resolve-results.ts` mirrors
+that pattern. The one real difference: a library match's official score is
+*already known* (it's pre-imported), so there's nothing to wait on — this
+resolves once, synchronously, when the round ends, rather than needing a
+`CRON_SECRET` sweep or a repeating client poll like P7's live mode does.
+
+**P8-4. "Finished Early" never fires for lobby-mode sessions (
+`videoProgressAtFinish` is always passed as `null` to
+`evaluatePracticeSessionFlags`).** Solo mode has exactly one shared video
+whose progress is unambiguous; lobby mode's video is per-player when
+`hostIsDisplayer` is off, and nonexistent for everyone except the host
+when it's on — there's no single signal that means the same thing for
+every player the way it does in solo mode. Rather than invent a
+per-player approximation the prompt never asked for, this flag is simply
+scoped out for lobby mode, the same kind of deliberate trim P7 made for
+live mode's own flag set (see P7-5).
+
+**P8-5. Lobby entries are saved with `source: "practice"` (not a new
+`"lobby"` `ScoutEntrySource` value).** `getCategory()` already resolves a
+`"practice"`-sourced entry's category from its `mode` field exactly the
+way the prompt wants lobby entries categorized ("the lobby's mode as its
+category") — adding a fourth source value would mean updating every place
+that currently branches on `source`, including Match Analytics' real
+-event filtering, for no behavioral gain. `practiceSessions.kind: "lobby"`
+is what actually distinguishes a lobby session from a solo one wherever
+that distinction matters (e.g. `lobbyId`/`pairId` being non-null).
+
+**P8-6. Lobby sessions don't count toward Scout Accuracy's or My
+Scouting's Trial/Competitive leaderboards.** `lib/scout-stats/engine.ts`'s
+practice-mode calculations explicitly filter to `kind === "solo"` (a P5
+decision, predating lobby mode's existence); this prompt's own acceptance
+checklist never asks for lobby rounds to feed those leaderboards, so
+widening that filter would be a cross-cutting change to P5's established
+statistics semantics that nobody asked for. A completed lobby session is
+still saved in full (with its own `accuracy`, same shape as a solo
+session) — it's just not included in those two pages' numbers today. A
+reasonable, easy follow-up (`kind === "solo" || kind === "lobby"`) if
+that's ever wanted.
+
+**P8-7. "Pick Match"'s sort order invents a 4th tier for combinations the
+prompt's own 3-tier spec never names.** The spec's ordering for a target
+difficulty only ever lists combinations that include the target itself
+(e.g. for Easy: easy+easy, easy+medium, easy+hard) — a match where
+*neither* alliance matches the target (e.g. targeting Easy when a match is
+medium+hard) isn't covered. `lib/lobby/match-select.ts` sorts those last,
+after all three named tiers, rather than leaving their relative order
+undefined.
+
+**P8-8. A disconnected host (>5 min) or an idle expired lobby is a
+client-derived display state only — nothing ever actually writes
+`status: "closed"` for either case.** Same reasoning as P7-3's stale
+presence docs: this project has no Cloud Functions (Firebase stays on
+Spark-plan-compatible Auth + Firestore + Route Handlers only), so there's
+no scheduled job that could sweep and close abandoned lobbies, and only
+the host may write the lobby doc's `status` — so even a *teammate*
+noticing the host is gone can't legally close it for them. Readers derive
+"this lobby looks abandoned" from `hostLastSeen`/`LOBBY_CONFIG.HOST_STALE_MS`
+and `LOBBY_CONFIG.LOBBY_EXPIRE_MS` themselves; stale lobby/player docs are
+never actively deleted (same accepted trade-off as P7-3).
+
+**P8-9. "Play Again" needs a new `resetPlayerSubmitted` function because
+the host can't reset a player's own `submitted` flag.** Each player's
+`players/{uid}.submitted` flips to `true` at their own submit and must go
+back to `false` before the next round, but per P8-2's rule, only that
+player may write their own doc. `LobbyWaitingRoom` has every player reset
+their own flag themselves the moment they're back in the waiting room
+(covers both the very first round, where it's already `false`, and every
+"Play Again" after) — this is a mechanism the prompt doesn't describe at
+all; without it, a player who already submitted last round would make the
+*next* round's "everyone submitted" check pass instantly, auto-resolving
+before anyone scouts anything.
+
+**P8-10. "Best-effort synchronized start" is one shared `startsAt`
+timestamp plus a client-side countdown — not true playback-position
+sync.** The host's Start writes `startsAt` a few seconds in the future
+(`LOBBY_CONFIG.COUNTDOWN_SEC`); every player's own client counts down to
+that same moment and then shows its own independent `<VideoPlayer/>`
+instance. This gets everyone's video starting within normal network-jitter
+range of each other, which is what "best effort" means here — there's no
+cross-client playback-position reconciliation (and, unlike P7's live
+mode, there's no live-position-to-capture problem at all: a library
+match's video has a fixed, already-known `startSec`/`endSec`).
+
+**P8-11. What's unverifiable in this sandbox.** No second browser/account
+and no Firebase emulator (no JVM/Firebase CLI — the standing limitation
+since P1) means none of the following were exercised against real
+multi-client state, only built to the documented rules/schema and covered
+by the pure-logic unit tests where the logic is pure:
+- The actual multi-browser experience of hosting, joining, starting, and
+  scoring a round end-to-end.
+- `firestore.rules.test.ts`'s new `lobbies`/`players` describe blocks,
+  including the 4-player scenario test the prompt asks for — written, not
+  run; see "Commands to run locally" below.
+- "Play Again"'s actual re-roll and the full reset-and-restart cycle.
+- Reconnect-after-refresh via `useMyActiveLobbyId`'s collection-group
+  query, which needs the new `players` index in
+  `firestore.indexes.json` deployed to actually serve results.
+
 ## Commands to run locally
 
 ```bash
@@ -1097,6 +1228,28 @@ npm run dev
 # breakdown. Re-run the same poll call -> confirm nothing changes (no
 # duplicate notification docs, no re-computation) — this is the
 # idempotency check from P7-6.
+
+# P8: on Practice Scouting, pick a season and mode, then click Live
+# Practice Lobby -> Host a Lobby -> confirm the join code appears and a
+# random match gets picked automatically (or try Pick Match, pick a target
+# difficulty, and confirm the list is sorted both-matching-target first).
+# From 3 other signed-in accounts, go to Practice Scouting's landing page
+# and enter that join code under "Join Lobby" -> confirm all 4 show up in
+# the host's player list in realtime. Toggle "I'm the video displayer" and
+# "I'll scout too" -> confirm Start stays disabled with an odd/too-small
+# player count and enables at 4+. Click Start -> confirm every player sees
+# a countdown, then their own Team X reveal, the shared video (or just the
+# form, if video-displayer is on and you're not the host), and a sticky
+# Submit. Submit from 3 of the 4 -> confirm the 4th's submit auto-triggers
+# results (or use the host's "End Scouting" to force it without everyone
+# finishing) -> confirm the winning pair is highlighted, the rest are
+# ranked, any non-finishing pair shows "Did not finish," and "View
+# breakdown" shows each robot's own score vs. the official one. As host,
+# click "Play Again" -> confirm it returns to the waiting room with a new
+# match and the same players, and Start works again without stale
+# "already submitted" state. Refresh one player's tab mid-round -> confirm
+# they land back in the same spot (their own session, not a fresh one).
+# Close the lobby -> confirm everyone sees "This lobby has been closed."
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

@@ -100,35 +100,53 @@ export function generateSessionId(kind: SessionKind): string {
 }
 
 /**
- * Generates a Session ID and atomically reserves it as a (minimal, valid)
- * `practiceSessions/{id}` doc, retrying with a fresh candidate on the rare
- * collision — this is what actually "guarantees uniqueness with a Firestore
- * transaction," since a bare generateSessionId() call alone can't stop two
- * concurrent callers from both picking the same free id before either
- * writes anything. The caller (P4) follows up with further writes to fill
- * in the rest of the session once more context is known (library match,
- * alliance, robots, ...).
+ * Generates a `${prefix}XXXXXX` candidate id and atomically reserves it as
+ * a doc in `collectionName`, retrying with a fresh candidate on the rare
+ * collision — a bare random-string pick alone can't stop two concurrent
+ * callers from both choosing the same free id before either writes
+ * anything. Shared by `claimSessionId` (practiceSessions) and `lib/lobby.ts`'s
+ * `claimLobbyId` (lobbies, P8) — same scheme, two collections.
  */
-export async function claimSessionId(teamId: string, uid: string, kind: SessionKind, maxAttempts = 5): Promise<string> {
+export async function claimUniqueDocId(
+  collectionName: string,
+  prefix: string,
+  initialData: Record<string, unknown>,
+  maxAttempts = 5
+): Promise<string> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const candidate = generateSessionId(kind);
-    const ref = doc(db, COLLECTION, candidate);
+    const candidate = `${prefix}${randomSuffix()}`;
+    const ref = doc(db, collectionName, candidate);
     const claimed = await runTransaction(db, async (txn) => {
       const snap = await txn.get(ref);
       if (snap.exists()) return false;
-      txn.set(ref, {
-        teamId,
-        uid,
-        kind,
-        status: "in-progress" satisfies SessionStatus,
-        startedAt: new Date().toISOString(),
-        createdAt: serverTimestamp(),
-      });
+      txn.set(ref, initialData);
       return true;
     });
     if (claimed) return candidate;
   }
-  throw new Error("Couldn't generate a unique session id — try again.");
+  throw new Error(`Couldn't generate a unique id in ${collectionName} — try again.`);
+}
+
+/**
+ * Generates a Session ID and atomically reserves it as a (minimal, valid)
+ * `practiceSessions/{id}` doc (see `claimUniqueDocId` above). The caller
+ * (P4) follows up with further writes to fill in the rest of the session
+ * once more context is known (library match, alliance, robots, ...).
+ */
+export async function claimSessionId(teamId: string, uid: string, kind: SessionKind, maxAttempts = 5): Promise<string> {
+  return claimUniqueDocId(
+    COLLECTION,
+    SESSION_ID_PREFIXES[kind],
+    {
+      teamId,
+      uid,
+      kind,
+      status: "in-progress" satisfies SessionStatus,
+      startedAt: new Date().toISOString(),
+      createdAt: serverTimestamp(),
+    },
+    maxAttempts
+  );
 }
 
 function toSession(id: string, data: Record<string, unknown>): PracticeSession {

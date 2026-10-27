@@ -705,3 +705,290 @@ describe("notifications/{id} (P7)", () => {
     await assertFails(setDoc(doc(db, "notifications", "LV-OTHER01"), notification));
   });
 });
+
+describe("lobbies/{lobbyId} (P8)", () => {
+  const baseLobby = {
+    teamId: TEAM_ID,
+    hostUid: SCOUT_UID,
+    hostName: "Scout Person",
+    seasonId: "biobuzz",
+    mode: "trial",
+    status: "waiting",
+    libraryMatchId: null,
+    settings: { hostScouts: true, hostIsDisplayer: false },
+    pairing: null,
+    startsAt: null,
+    hostLastSeen: new Date(),
+    createdAt: new Date(),
+    resolvedAt: null,
+  };
+
+  it("lets anyone create a lobby as its own host", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "lobbies", "LB-ABCDEF"), baseLobby));
+  });
+
+  it("blocks creating a lobby with someone else as hostUid", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(db, "lobbies", "LB-BADHOST"), { ...baseLobby, hostUid: ADMIN_UID }));
+  });
+
+  it("lets a teammate read a lobby (so Join with code can look it up), blocks a cross-team read", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-READ01"), baseLobby);
+      await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), {
+        name: "Outsider",
+        email: "outsider@example.com",
+        teamId: OTHER_TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      });
+    });
+    const teammateDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(getDoc(doc(teammateDb, "lobbies", "LB-READ01")));
+
+    const outsiderDb = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+    await assertFails(getDoc(doc(outsiderDb, "lobbies", "LB-READ01")));
+  });
+
+  it("lets the host update the lobby doc (settings/match/pairing/status)", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-HOST001"), baseLobby);
+    });
+    const hostDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(updateDoc(doc(hostDb, "lobbies", "LB-HOST001"), { status: "scouting" }));
+  });
+
+  it("blocks a non-host teammate from updating the lobby doc", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-HOST002"), baseLobby);
+    });
+    const otherDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(otherDb, "lobbies", "LB-HOST002"), { status: "closed" }));
+  });
+
+  it("blocks deleting a lobby outright", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-DEL0001"), baseLobby);
+    });
+    const hostDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(deleteDoc(doc(hostDb, "lobbies", "LB-DEL0001")));
+  });
+});
+
+describe("lobbies/{lobbyId}/players/{uid} (P8)", () => {
+  it("lets a player create/update their own player doc", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(
+      setDoc(doc(db, "lobbies", "LB-PLAYER1", "players", SCOUT_UID), {
+        uid: SCOUT_UID,
+        teamId: TEAM_ID,
+        name: "Scout Person",
+        joinedAt: new Date(),
+        lastSeen: new Date(),
+        submitted: false,
+      })
+    );
+  });
+
+  it("blocks creating a player doc under someone else's uid", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(
+      setDoc(doc(db, "lobbies", "LB-PLAYER2", "players", ADMIN_UID), {
+        uid: ADMIN_UID,
+        teamId: TEAM_ID,
+        name: "Admin Person",
+        joinedAt: new Date(),
+        lastSeen: new Date(),
+        submitted: false,
+      })
+    );
+  });
+
+  it("lets a teammate read the player list, blocks a cross-team read", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-PLAYER3", "players", SCOUT_UID), {
+        uid: SCOUT_UID,
+        teamId: TEAM_ID,
+        name: "Scout Person",
+        joinedAt: new Date(),
+        lastSeen: new Date(),
+        submitted: false,
+      });
+      await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), {
+        name: "Outsider",
+        email: "outsider@example.com",
+        teamId: OTHER_TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      });
+    });
+    const teammateDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(getDoc(doc(teammateDb, "lobbies", "LB-PLAYER3", "players", SCOUT_UID)));
+
+    const outsiderDb = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+    await assertFails(getDoc(doc(outsiderDb, "lobbies", "LB-PLAYER3", "players", SCOUT_UID)));
+  });
+
+  it("lets a player delete (leave) their own player doc, blocks deleting someone else's", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-PLAYER4", "players", SCOUT_UID), {
+        uid: SCOUT_UID,
+        teamId: TEAM_ID,
+        name: "Scout Person",
+        joinedAt: new Date(),
+        lastSeen: new Date(),
+        submitted: false,
+      });
+    });
+    const otherDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(otherDb, "lobbies", "LB-PLAYER4", "players", SCOUT_UID)));
+
+    const ownDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(deleteDoc(doc(ownDb, "lobbies", "LB-PLAYER4", "players", SCOUT_UID)));
+  });
+
+  it("4-player scenario: two players join, host starts (writes pairing to the lobby doc), both players create their own sessions, and a non-host teammate can read the whole room", async () => {
+    const PLAYER3_UID = "player-3";
+    const PLAYER4_UID = "player-4";
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "lobbies", "LB-ROOM001"), {
+        teamId: TEAM_ID,
+        hostUid: SCOUT_UID,
+        hostName: "Scout Person",
+        seasonId: "biobuzz",
+        mode: "trial",
+        status: "waiting",
+        libraryMatchId: null,
+        settings: { hostScouts: false, hostIsDisplayer: false },
+        pairing: null,
+        startsAt: null,
+        hostLastSeen: new Date(),
+        createdAt: new Date(),
+        resolvedAt: null,
+      });
+      for (const uid of [PLAYER3_UID, PLAYER4_UID]) {
+        await setDoc(doc(ctx.firestore(), "users", uid), {
+          name: uid,
+          email: `${uid}@example.com`,
+          teamId: TEAM_ID,
+          primaryRole: "match-scout",
+          secondaryRoles: [],
+          isAdmin: false,
+          isOwner: false,
+          themeId: "team",
+        });
+      }
+    });
+
+    // Four players join (ADMIN_UID, SCOUT_UID as host-but-not-scouting here
+    // is fine since hostScouts is false — PLAYER3/PLAYER4 plus ADMIN_UID
+    // are the three scouting players for this test's purpose; a real round
+    // needs an even 4+, so we seed 4 distinct joins regardless).
+    for (const uid of [ADMIN_UID, OWNER_UID, PLAYER3_UID, PLAYER4_UID]) {
+      const playerDb = testEnv.authenticatedContext(uid).firestore();
+      await assertSucceeds(
+        setDoc(doc(playerDb, "lobbies", "LB-ROOM001", "players", uid), {
+          uid,
+          teamId: TEAM_ID,
+          name: uid,
+          joinedAt: new Date(),
+          lastSeen: new Date(),
+          submitted: false,
+        })
+      );
+    }
+
+    // Host starts: writes the full pairing onto the lobby doc.
+    const hostDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(
+      updateDoc(doc(hostDb, "lobbies", "LB-ROOM001"), {
+        status: "scouting",
+        libraryMatchId: "USWABON1_Q1",
+        startsAt: new Date().toISOString(),
+        pairing: [
+          { pairId: "pair-1", playerUids: [ADMIN_UID, OWNER_UID], alliance: "red", robotForUid: { [ADMIN_UID]: 100, [OWNER_UID]: 200 } },
+          { pairId: "pair-2", playerUids: [PLAYER3_UID, PLAYER4_UID], alliance: "blue", robotForUid: { [PLAYER3_UID]: 300, [PLAYER4_UID]: 400 } },
+        ],
+      })
+    );
+
+    // A non-host teammate (not even a player here) can read the lobby and its players.
+    const observerDb = testEnv.authenticatedContext("observer-1").firestore();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users", "observer-1"), {
+        name: "Observer",
+        email: "observer@example.com",
+        teamId: TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      });
+    });
+    await assertSucceeds(getDoc(doc(observerDb, "lobbies", "LB-ROOM001")));
+    await assertSucceeds(getDoc(doc(observerDb, "lobbies", "LB-ROOM001", "players", PLAYER3_UID)));
+
+    // Each of the two scouting pairs creates its own practiceSessions doc.
+    const baseLobbySession = {
+      teamId: TEAM_ID,
+      kind: "lobby",
+      seasonId: "biobuzz",
+      mode: "trial",
+      difficulty: null,
+      libraryMatchId: "USWABON1_Q1",
+      eventCode: "USWABON1",
+      status: "in-progress",
+      completedRobots: [],
+      entryIds: [],
+      accuracy: null,
+      scoutedTotal: null,
+      penaltyPoints: null,
+      officialScore: null,
+      platform: "pc",
+      flags: [],
+      excluded: false,
+      lobbyId: "LB-ROOM001",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      matchType: null,
+      matchNumber: null,
+      allianceTeams: [100, 200],
+      streamUrl: null,
+      streamStartSec: null,
+      streamEndSec: null,
+    };
+    const player3Db = testEnv.authenticatedContext(PLAYER3_UID).firestore();
+    await assertSucceeds(
+      setDoc(doc(player3Db, "practiceSessions", "LB-SESS001"), {
+        ...baseLobbySession,
+        uid: PLAYER3_UID,
+        scoutName: "player-3",
+        alliance: "blue",
+        robots: [300],
+        pairId: "pair-2",
+        allianceTeams: [300, 400],
+      })
+    );
+
+    // player-3 can't write player-4's session.
+    await assertFails(
+      setDoc(doc(player3Db, "practiceSessions", "LB-SESS002"), {
+        ...baseLobbySession,
+        uid: PLAYER4_UID,
+        scoutName: "player-4",
+        alliance: "blue",
+        robots: [400],
+        pairId: "pair-2",
+        allianceTeams: [300, 400],
+      })
+    );
+  });
+});

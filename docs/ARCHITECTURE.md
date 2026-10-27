@@ -317,6 +317,47 @@ results screen/global watcher as a secondary signal.
 `firestore.rules`: readable only by its own `uid`, scoped to the same
 team; all client writes denied.
 
+### `lobbies/{lobbyId}` and `lobbies/{lobbyId}/players/{uid}` (P8)
+
+A Live Practice Lobby's own doc — one round, hosted by one scout, scouted by
+however many players joined. The doc id **is** the shareable join code
+(`LB-XXXXXX`, same alphabet/format as a Session ID — reserved via
+`lib/lobby.ts`'s `claimLobbyId`, which calls `lib/practice-sessions.ts`'s
+now-generic `claimUniqueDocId`). Per-pair accuracy is written by
+`app/api/lobby/resolve-results` (Admin SDK), not by the client — see
+docs/ASSUMPTIONS.md (P8) for why.
+
+| Field | Type |
+|---|---|
+| `teamId`, `hostUid`, `hostName`, `seasonId` | `string` |
+| `mode` | `"trial" \| "competitive"` |
+| `status` | `"waiting" \| "scouting" \| "results" \| "closed"` |
+| `libraryMatchId` | `string \| null` |
+| `settings` | `{ hostScouts: boolean; hostIsDisplayer: boolean }` |
+| `pairing` | `PairAssignment[] \| null` — set once, at Start |
+| `startsAt` | `string \| null` (ISO) |
+| `hostLastSeen` | `Timestamp` |
+| `resolvedAt` | `Timestamp \| null` |
+
+`PairAssignment`: `{ pairId, playerUids: [uid, uid], alliance, robotForUid:
+Record<uid, teamNumber> }` — the full pairing for the round, computed once
+by `lib/lobby/pairing.ts`'s `assignPairs` and written by the host alongside
+`status: "scouting"`. Deliberately NOT stored per-player on the `players`
+subdoc (even though the prompt's own schema sketch lists `pairId`/`robot`
+there) — see docs/ASSUMPTIONS.md (P8) for why that would conflict with
+"players write only their own player doc."
+
+`players/{uid}`: `{ uid, teamId, name, joinedAt, lastSeen, submitted }` —
+presence/roster only, each player's own doc, written only by themself
+(join, heartbeat, marking their own submission, and resetting `submitted`
+back to `false` on re-entering the waiting room for "Play Again" — see
+docs/ASSUMPTIONS.md, P8).
+
+`firestore.rules`: the lobby doc is readable by the whole team (so "Join
+with code" can look one up before the joiner has a player doc of their
+own) and writable only by its `hostUid`; `players/{uid}` is readable by
+the whole team, writable only by that uid (create/update/delete).
+
 ## Shared modules
 
 - `lib/firebase/client.ts` — initializes the Firebase app once, exports
@@ -931,6 +972,70 @@ math — see the Acceptance Checklist's own "don't duplicate logic" ask.
 - `components/practice/difficulty-select.tsx` — the "Live" tile is now
   live (`onSelectLive`); "Live Practice Lobby" stays a disabled placeholder
   (that's P8).
+
+### Live Practice Lobby (P8)
+
+- `lib/lobby/config.ts` — `LOBBY_CONFIG`: heartbeat/stale timings (player,
+  host), the lobby expiry window, the post-video results grace period, the
+  start countdown length.
+- `lib/lobby/match-select.ts` — `sortMatchesByDifficultyTarget(matches,
+  target)` (the host's "Pick Match" ordering — both alliances matching the
+  target first, then one matching per the spec's own tiebreak order, then
+  — a gap the spec's three tiers don't cover — anything matching neither,
+  last; see docs/ASSUMPTIONS.md, P8), `pickRandomLobbyMatch(matches)` (the
+  default "random match, any difficulty").
+- `lib/lobby/pairing.ts` — `assignPairs(playerUids, allianceTeams, rng)`:
+  seeded-shuffle (reusing `lib/scheduler/rng.ts`'s `mulberry32`/
+  `seededShuffle`), chunk into pairs, alliances alternate red/blue/red/
+  blue... across pairs in shuffled order, and each pair's two team numbers
+  are randomly split between its two players. Pure and unit-tested.
+- `lib/lobby/scoring.ts` — `resolveLobbyPairScoring(match, alliance,
+  entries, mode, priorCompletedAttempt)`: pure, reuses
+  `lib/accuracy/engine.ts`'s `computeAllianceAccuracy` (same 0-100 scale as
+  solo mode, since a library match's official score is always already
+  known — never the richer "awaiting results" case live mode needs) and
+  `evaluatePracticeSessionFlags` (Zero Entries / Unrealistic Entry / Repeat
+  Attempt only — "Finished Early" never applies, see docs/ASSUMPTIONS.md,
+  P8).
+- `lib/lobby/resolve-results.ts` — `resolveLobbyResults(db, lobbyId)`: the
+  Admin-SDK core behind `app/api/lobby/resolve-results`. Groups the
+  lobby's completed sessions by `pairId` (from `lobby.pairing`), resolves
+  each complete pair via `resolveLobbyPairScoring`, and batch-writes both
+  of that pair's sessions — this is Admin-SDK, not a client write, because
+  a pair's two sessions belong to two different players and
+  firestore.rules never lets one teammate write another's session (see
+  docs/ASSUMPTIONS.md, P8). Idempotent via the lobby's own `status`
+  (`"results"`/`"closed"` short-circuits immediately).
+- `lib/lobby.ts` — the client data layer: `LobbyDoc`/`LobbyPlayer` types,
+  `claimLobbyId`, `updateLobby` (host-only writes), `useLobby`/
+  `useLobbyPlayers` (realtime), `joinLobby`/`heartbeatPlayer`/
+  `heartbeatHost`/`markPlayerSubmitted`/`resetPlayerSubmitted`/
+  `leaveLobbyPlayer`, `isPlayerActive`/`isHostActive` (client-derived
+  staleness, same convention as P7's live presence), `useLobbySessions`
+  (every `practiceSessions` doc for one lobby), and `useMyActiveLobbyId`
+  (a `players` collection-group query — needs the composite index in
+  `firestore.indexes.json` — for "you're still in a lobby" reconnect).
+- `app/api/lobby/resolve-results/route.ts` — session-authed (no
+  `CRON_SECRET` route like P7 needs one: a library match's official score
+  is already known, so there's nothing to wait on or sweep for). Called by
+  whichever open client first notices every scouting player has submitted,
+  by the host's "End Scouting," or after the post-video grace period.
+- `components/practice/lobby/` — `LobbyFlow` (the orchestrator: "Host a
+  Lobby" or an already-known `lobbyId`, then renders whichever screen
+  matches `lobby.status`; also runs the one shared heartbeat loop for the
+  whole time a lobby room is open), `LobbyWaitingRoom` (join code, match
+  selection, host settings, player list, Start), `LobbySessionScreen`
+  (countdown, video + `<ScoutForm mode="lobby" layout="side-panel">` for
+  paired players, a spectator view for the host-not-scouting/unpaired
+  case, auto-resolve trigger), `LobbyResultsScreen` (winner spotlight,
+  leaderboard, did-not-finish list, per-pair breakdown dialog, host's Play
+  Again/Close Lobby).
+- `components/practice/difficulty-select.tsx` — the "Live Practice Lobby"
+  tile is now live (`onSelectLobby`).
+- `app/(app)/practice-scouting/page.tsx` — the landing step gained a "Join
+  Lobby" code input and a "You're still in a Live Practice Lobby — Rejoin"
+  banner (from `useMyActiveLobbyId`); the Difficulty screen's Lobby tile
+  routes to a new `"lobby"` step rendering `<LobbyFlow/>`.
 
 ## Conventions
 
