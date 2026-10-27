@@ -11,6 +11,9 @@ import { DifficultySelect } from "@/components/practice/difficulty-select";
 import { MatchSelect } from "@/components/practice/match-select";
 import { SessionScreen } from "@/components/practice/session-screen";
 import { ResultsScreen } from "@/components/practice/results-screen";
+import { LiveFlow, type ResumePendingRobot } from "@/components/practice/live/live-flow";
+import { PresencePanel } from "@/components/practice/live/presence-panel";
+import { PendingRobotsList } from "@/components/practice/live/pending-robots-list";
 import { useAuth } from "@/lib/auth";
 import { useTeamDoc } from "@/lib/team";
 import { detectPlatform } from "@/lib/platform";
@@ -23,11 +26,14 @@ import {
   updatePracticeSession,
   useOwnPausedSession,
   usePracticeSession,
+  useTeamLiveSessions,
   type PracticeSession,
   type SessionMode,
 } from "@/lib/practice-sessions";
+import { GlassPanel } from "@/components/ui/glass-panel";
+import { Badge } from "@/components/ui/badge";
 
-type Step = "season" | "mode" | "difficulty" | "match-select" | "session" | "results";
+type Step = "season" | "mode" | "difficulty" | "match-select" | "session" | "results" | "live";
 
 export default function PracticeScoutingPage() {
   const { user, profile, loading } = useAuth();
@@ -36,6 +42,11 @@ export default function PracticeScoutingPage() {
   const usePlaceholder = team?.usePlaceholderVideo ?? false;
 
   const { session: pausedSession, loaded: pausedLoaded } = useOwnPausedSession(teamId, user?.uid ?? null);
+  const { sessions: liveSessions } = useTeamLiveSessions(teamId);
+  const myRecentLiveSessions = liveSessions
+    .filter((s) => s.uid === user?.uid && s.status === "completed")
+    .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""))
+    .slice(0, 5);
 
   const [step, setStep] = useState<Step>("season");
   const [seasonId, setSeasonId] = useState<string | null>(null);
@@ -44,6 +55,8 @@ export default function PracticeScoutingPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveResumeTarget, setLiveResumeTarget] = useState<ResumePendingRobot | undefined>(undefined);
+  const [liveViewResultsId, setLiveViewResultsId] = useState<string | undefined>(undefined);
 
   const { session: activeSession } = usePracticeSession(activeSessionId);
   const { matches: activeSeasonMatches } = useLibraryMatchesBySeason(activeSession?.seasonId ?? null);
@@ -134,6 +147,49 @@ export default function PracticeScoutingPage() {
               Scout recorded matches solo, on your own time &mdash; Trial to practice, Competitive for the real pressure.
             </p>
           </div>
+          <PresencePanel
+            teamId={teamId}
+            onJoin={(target) => {
+              setLiveResumeTarget(target);
+              setStep("live");
+            }}
+          />
+          <PendingRobotsList
+            onStart={(target) => {
+              setLiveResumeTarget(target);
+              setStep("live");
+            }}
+          />
+          {myRecentLiveSessions.length > 0 && (
+            <GlassPanel className="flex flex-col gap-3">
+              <h2 className="text-base font-semibold">Recent live matches</h2>
+              <div className="flex flex-col gap-2">
+                {myRecentLiveSessions.map((s) => (
+                  <div key={s.id} className="glass-card flex flex-wrap items-center gap-3 p-3">
+                    <Badge variant="glass" className="font-mono">
+                      {s.matchType} {s.matchNumber}
+                    </Badge>
+                    <span className="text-sm text-[var(--muted-foreground)]">Team {s.robots[0]}</span>
+                    <Badge variant={s.accuracy !== null ? "success" : "outline"} className="text-[10px]">
+                      {s.accuracy !== null ? "Scored" : "Waiting for scores"}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="ml-auto"
+                      onClick={() => {
+                        setLiveViewResultsId(s.id);
+                        setLiveResumeTarget(undefined);
+                        setStep("live");
+                      }}
+                    >
+                      View Results
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </GlassPanel>
+          )}
           {pausedSession ? (
             <>
               <ResumeBanner session={pausedSession} onResume={() => handleResume(pausedSession)} onDiscarded={() => {}} />
@@ -182,8 +238,25 @@ export default function PracticeScoutingPage() {
               setDifficulty(d);
               setStep("match-select");
             }}
+            onSelectLive={() => {
+              setLiveResumeTarget(undefined);
+              setLiveViewResultsId(undefined);
+              setStep("live");
+            }}
           />
         </>
+      )}
+
+      {step === "live" && (
+        <LiveFlow
+          onExit={() => {
+            setLiveResumeTarget(undefined);
+            setLiveViewResultsId(undefined);
+            setStep("season");
+          }}
+          resumePendingRobot={liveResumeTarget}
+          viewResultsSessionId={liveViewResultsId}
+        />
       )}
 
       {step === "match-select" && seasonId && difficulty && (

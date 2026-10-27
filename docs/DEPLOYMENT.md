@@ -31,6 +31,7 @@ Variables, for both **Production** and **Preview**. Names must match
 | `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | same |
 | `NEXT_PUBLIC_FIREBASE_APP_ID` | same |
 | `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | same (optional — only if Analytics is enabled) |
+| `NEXT_PUBLIC_FIREBASE_VAPID_KEY` | Firebase Console → Project Settings → Cloud Messaging → Web Push certificates → Generate key pair |
 
 These aren't secret — Firebase's web config is designed to be public; actual
 security comes from `firestore.rules`. They're still kept out of the repo
@@ -46,7 +47,7 @@ Firebase project for testing) can use different values without a commit.
 | `FIREBASE_ADMIN_PROJECT_ID` | Firebase Console → Project Settings → Service Accounts → Generate new private key (downloads a JSON file) → `project_id` field |
 | `FIREBASE_ADMIN_CLIENT_EMAIL` | Same JSON file → `client_email` field |
 | `FIREBASE_ADMIN_PRIVATE_KEY` | Same JSON file → `private_key` field — see the gotcha below |
-| `CRON_SECRET` | Any random string you generate (e.g. `openssl rand -hex 32`). **Reserved for a future scheduled job (P2+) — nothing reads it yet.** Set it now so it's already in place when that lands. |
+| `CRON_SECRET` | Any random string you generate (e.g. `openssl rand -hex 32`). Required by `app/api/cron/poll-live-scores` (P7) — the job's request must send it as `Authorization: Bearer <CRON_SECRET>`. See §8 below for scheduling it. |
 | `OWNER_EMAILS` | Comma-separated emails (e.g. `you@example.com,mentor@example.com`) that should always have owner + admin access, synced on every login by `app/api/auth/sync-roles` — **after** that email verifies. Set it to your own email before you first sign up. |
 | `ADMIN_EMAILS` | Comma-separated emails that should get admin (not owner) the same way. Optional. |
 
@@ -124,3 +125,61 @@ the Firebase CLI (`npm install -g firebase-tools`) — it runs both
 `firestore.rules.test.ts` and `api-routes.emulator.test.ts` (P1b) against
 the Auth + Firestore emulators together; see `docs/ASSUMPTIONS.md` (P1-12,
 P1b-9) for why neither was verified in this session.
+
+## 8. Live scoring — Cloud Messaging & scheduling the poll job (P7)
+
+### 8a. Firebase Cloud Messaging (web push)
+
+1. Firebase Console → Project Settings → Cloud Messaging → **Web Push
+   certificates** → Generate key pair. Put that value in
+   `NEXT_PUBLIC_FIREBASE_VAPID_KEY` (table above).
+2. Nothing else to configure — `lib/notifications.ts`'s
+   `requestAndRegisterPush` registers `app/firebase-messaging-sw.js` (a
+   dynamic Route Handler, not a static file, so it can read your
+   `NEXT_PUBLIC_FIREBASE_*` config at request time) and the Admin SDK side
+   (`lib/firebase/admin.ts`'s `getAdminMessaging()`) needs only the same
+   `FIREBASE_ADMIN_*` credentials already set up in §2.
+3. **iOS caveat**: Safari on iOS only delivers web push to a site that's
+   been added to the Home Screen (installed as a PWA) — a plain browser tab
+   can request permission but will never receive anything. The "Enable
+   notifications" button's copy already explains this
+   (`isLikelyUnsupportedIOSBrowser()`); there's nothing to configure for it,
+   it's a platform limitation.
+4. This was not verified end-to-end against a real device in development
+   (no network access in that environment) — see `docs/ASSUMPTIONS.md`
+   (P7-10). Test it yourself after deploying: Enable notifications on a
+   real phone/desktop browser, then trigger `/api/cron/poll-live-scores`
+   for a session of yours and confirm a notification actually arrives, both
+   with the tab open (foreground) and closed (background, via the service
+   worker).
+
+### 8b. Scheduling `/api/cron/poll-live-scores`
+
+This route needs to run every couple of minutes while a live match might
+be in progress — Vercel's own Cron Jobs run as often as once a day on the
+Hobby plan (the committed `vercel.json` sets that daily run as a fallback
+floor, not the real mechanism), so a short interval needs an **external
+scheduler** calling the route over HTTPS:
+
+- **cron-job.org** (free, simplest): create a job hitting
+  `https://<your-domain>/api/cron/poll-live-scores` every 2–5 minutes, with
+  a custom header `Authorization: Bearer <CRON_SECRET>`.
+- **GitHub Actions** (if you'd rather keep it in-repo): a `schedule:` cron
+  trigger (as frequent as every 5 minutes) running a `curl` step with the
+  same header, using a repo secret for `CRON_SECRET`.
+
+Either way, verify it's wired correctly by checking the route returns
+`{ checked, resolved }` (not 401) and that `CRON_SECRET` in your scheduler
+matches the one in Vercel's env vars exactly.
+
+Vercel's *own* cron invocations (the `vercel.json` entry) automatically
+send `Authorization: Bearer $CRON_SECRET` using the env var already
+configured in your project — no extra setup needed for that fallback call
+specifically, only for the external scheduler's more frequent one.
+
+The client-side fallback (`app/api/live/check-scores`, polled automatically
+by `components/layout/scores-ready-watcher.tsx` whenever a signed-in
+scout's app is open with a pending live session) needs no scheduler setup
+at all — it only helps while someone's actually using the app, which is
+why the cron route above still matters for the "nobody has the app open
+right now" case.

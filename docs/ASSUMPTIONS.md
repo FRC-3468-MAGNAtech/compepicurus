@@ -848,6 +848,119 @@ can't express (team creation's cross-collection atomicity, verified-email
 -gated claims). Generating and publishing a schedule needs neither: it's a
 single team-scoped, admin-only write.
 
+## P7 — Practice Scouting: Live Mode
+
+**P7-1. `streamStartSec`/`streamEndSec` are always written `null` — no
+real capture of where the match started/ended in the stream.** The prompt
+describes embedding the stream and letting the scout mark these, but doing
+that for real needs a player SDK (YouTube IFrame API / Twitch Embed API)
+postMessage integration to read/seek playback position, which can't be
+verified against a real embedded player in this sandbox (no network access
+to actually load one). `lib/practice-sessions.ts`'s schema already reserves
+both fields so this is a pure follow-up, not a redesign, whenever someone
+wants to wire the real player SDK in. `components/practice/live/live-session-screen.tsx`
+has a top-of-file comment calling this out explicitly.
+
+**P7-2. Twitch event-detection is low-confidence by design; only YouTube
+gets a real signal.** YouTube's public oEmbed endpoint returns a video
+title/author with no auth needed, which `matchEventFromText` can actually
+search against event names. Twitch has no equivalent unauthenticated
+metadata endpoint, so `app/api/live/detect-event/route.ts` falls back to
+just the channel name from the URL — often a team/organizer handle, not an
+event name, so it rarely matches confidently. This is why the Link step's
+UI always offers a manual event picker alongside the auto-suggestion
+rather than ever blocking on detection succeeding.
+
+**P7-3. `liveMatches/{matchKey}` parent documents are never written —
+only presence under `liveMatches/{matchKey}/scouts/{uid}`.** Same
+precedent as `libraryMatches`: the collection path exists for namespacing
+subcollections, not because anything needs to query or read a
+match-level doc. A stale presence doc (scout closed the tab) is never
+actively deleted — `isPresenceActive(lastSeen)` just treats anything older
+than `LIVE_CONFIG.PRESENCE_STALE_MS` as gone, client-side, which is cheap
+and sufficient since these docs are tiny, numerous-but-not-huge, and
+nobody's paying for storage pressure here. A cleanup cron was considered
+and skipped as unnecessary complexity for v1.
+
+**P7-4. Join rule for the case where *both* alliances already have exactly
+one robot covered: forced onto the first alliance in iteration order
+(`["red", "blue"]`), i.e. red.** The prompt describes "forced onto the
+same alliance's other robot" assuming the common case of exactly one
+covered robot total. With two different scouts independently starting on
+each alliance at nearly the same moment, there's no stated tiebreak — red
+-first is an arbitrary but stable, documented choice (`lib/live/join-rules.ts`).
+In practice this is a narrow race-condition window (two scouts opening the
+Link step within moments of each other) with a safe failure mode either
+way: nobody scouts the uncovered blue robot *now*, but it still shows up
+for anyone as a "Pending robot" afterward.
+
+**P7-5. Live-mode auto-flag evaluation passes `sameTeamEntries: []` to
+`evaluateAutoFlagRuleIds`, meaning "is this scout's entry for this team
+consistent with another entry for the same team elsewhere" rules never
+fire in live mode.** `FlagContext.sameTeamEntries` exists for the real
+-event and library-based flows where "this team's other recorded entries"
+is already in hand; wiring the equivalent for live mode would mean fetching
+every other live/real-event entry for that exact team across every event,
+which the prompt doesn't ask for and would be its own small feature.
+Documented here as a known scope gap rather than silently dropped — the
+flags that matter most for live mode (Zero Entries, Unrealistic Entry, via
+`evaluatePracticeSessionFlags`) are unaffected.
+
+**P7-6. Idempotency needs no extra "already processed" flag.** A
+completed live session only ever matches `resolvePendingLiveMatches`'s
+query while `accuracy == null`; writing a resolved `accuracy` is itself
+what removes it from future sweeps, so the cron route and the
+client-fallback route can both run (even concurrently) without double
+-scoring a session. Push notifications are separately guarded by checking
+whether `notifications/{sessionId}` already exists before creating it and
+sending — belt-and-suspenders in case two sweeps somehow race on the same
+session between the accuracy write and the notification write.
+
+**P7-7. `/api/live/check-scores`'s rate limiter is an in-memory
+`Map<uid, timestamp>`, not durable across serverless instances or
+deploys.** On Vercel, concurrent requests can land on different function
+instances, each with their own empty map, so the "at most once per ~30s
+per user" limit is best-effort, not a hard guarantee. This is acceptable
+because `resolvePendingLiveMatches` is already idempotent (P7-6) — the
+limiter exists purely to avoid wasteful redundant FIRST API calls, not to
+prevent incorrect behavior, so an occasional double-poll from instance
+churn costs nothing but an extra fetch.
+
+**P7-8. "Join a live scout" and "scout a pending robot you already know
+about" are the same underlying action, unified via one `ResumePendingRobot`
+type.** Both are "claim a new live session for an already-known alliance
+robot, skip the Link/Event/Match steps, go straight to the Robot step's
+confirmation (or straight past it, for Join)." `PresencePanel` and
+`PendingRobotsList` both just produce a `ResumePendingRobot` and hand it to
+`LiveFlow`'s `resumePendingRobot` prop — no separate claim path was built
+for each entry point.
+
+**P7-9. `lib/ftc/matches-internal.ts` exists only so server contexts
+without a browser session can share `lib/ftc/actions.ts`'s FIRST API fetch
++ merge logic.** `getMatchesForEvent` (the existing Server Action) gates on
+`requireUser()`'s session cookie, which neither the `CRON_SECRET`-gated
+cron route nor the client-fallback route (authed, but intentionally
+resolving sessions scoped to `uid`, not "whoever's session cookie this is")
+can rely on for *this* call path. The extraction is mechanical — no fetch
+/merge behavior changed, just where the `"use server"` boundary sits.
+
+**P7-10. What's unverifiable in this sandbox.** No network access means
+none of the following were tested end-to-end, only built to the
+documented, standard integration surface for each:
+- FCM web push delivery (a real device/browser actually receiving a
+  background or foreground notification).
+- A real embedded YouTube/Twitch player (iframe renders; the embed URL
+  format was checked against each platform's documented embed URL scheme,
+  not against a live video).
+- The `vercel.json` cron entry and the documented external-scheduler setup
+  actually firing on their schedules once deployed.
+- Event detection (`/api/live/detect-event`) against a real, currently
+  -live FTC event stream.
+- The full live flow against a real in-progress FTC match (no real event
+  is running during development) — tested instead with synthetic
+  Firestore state and the existing pure-logic unit tests for every
+  decision point (`lib/live/*.test.ts`, `lib/practice-sessions.test.ts`).
+
 ## Commands to run locally
 
 ```bash
@@ -952,6 +1065,38 @@ npm run dev
 # "Load this assignment" fills in the match/team -> submit -> confirm the
 # banner advances to the next unscouted assignment. Go to My Scouting ->
 # confirm "My upcoming assignments" lists the same scout's remaining slots.
+
+# P7: on Practice Scouting's Difficulty screen, click Live -> paste a
+# YouTube link (watch/live/youtu.be all work) -> confirm it either
+# auto-suggests an event with "Yes, that's the event" or asks you to pick
+# one from the season's event list -> pick/confirm a match number (it
+# should suggest the next unplayed one) or enter the 4 teams manually if
+# the match isn't posted yet -> pick your alliance/robot (if nobody else is
+# live on this match you get a free choice of any of the 4; if a teammate
+# already has one robot on an alliance, you're forced onto its partner) ->
+# confirm the stream embeds (or shows "Open in new tab" for an
+# unrecognized URL) and <ScoutForm mode="live"> renders beside it -> submit
+# -> confirm the session moves to "completed" and a "waiting for scores"
+# panel shows (since no real official match data exists yet in dev) with
+# an "Enable notifications" button. From a second account, start a live
+# session on the SAME match/alliance but don't pick a robot yet -> confirm
+# the Practice Scouting landing page's Presence panel shows "join" and
+# clicking it forces you onto the uncovered robot, skipping straight to the
+# session screen. Back on the landing page, confirm "Pending robots" lists
+# any alliance partner nobody ever scouted, with a working "Scout now".
+# Open the top-of-app pill on another page while exactly one scout is live
+# solo on a match -> confirm it shows and dismissing it hides it until the
+# match composition changes. To exercise the scoring path without a real
+# live event, manually edit a completed live session's two entries' + the
+# event's matches in Firestore to simulate a posted official score, then
+# call POST /api/live/check-scores signed in as that session's owner (or
+# GET /api/cron/poll-live-scores with `Authorization: Bearer <CRON_SECRET>`)
+# -> confirm both sessions get `accuracy` filled in, a `notifications/{id}`
+# doc is created for each, and the Results screen (or the global "Scores
+# are available" popup, if you're elsewhere in the app) shows the
+# breakdown. Re-run the same poll call -> confirm nothing changes (no
+# duplicate notification docs, no re-computation) — this is the
+# idempotency check from P7-6.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

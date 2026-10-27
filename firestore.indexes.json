@@ -17,6 +17,11 @@
         { "fieldPath": "uid", "order": "ASCENDING" },
         { "fieldPath": "startedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "scouts",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [{ "fieldPath": "teamId", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []

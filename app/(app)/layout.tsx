@@ -7,6 +7,8 @@ import { Topbar } from "@/components/layout/topbar";
 import { PageTransition } from "@/components/layout/page-transition";
 import { PlaceholderBanner } from "@/components/ui/placeholder-banner";
 import { VerifyEmailBanner } from "@/components/layout/verify-email-banner";
+import { LiveMatchPill } from "@/components/layout/live-match-pill";
+import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
 import { useAuth } from "@/lib/auth";
 
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
@@ -56,9 +58,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         <main className="min-w-0">
           <VerifyEmailBanner className="mb-4" />
           {isPlaceholderPage && <PlaceholderBanner className="mb-4" />}
+          <LiveMatchPill />
           <PageTransition>{children}</PageTransition>
         </main>
       </div>
+      <ScoresReadyWatcher />
     </div>
   );
 }

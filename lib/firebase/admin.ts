@@ -2,6 +2,7 @@ import "server-only";
 import { cert, getApps, getApp, initializeApp, type App } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { getMessaging, type Messaging } from "firebase-admin/messaging";
 
 // Server-only counterpart to lib/firebase/client.ts. Used by app/api/auth/session
 // (to mint/verify session cookies) and lib/server/require-user.ts (to verify
@@ -45,6 +46,7 @@ export function isFirebaseAdminConfigured(): boolean {
 let app: App | null = null;
 let authInstance: Auth | null = null;
 let firestoreInstance: Firestore | null = null;
+let messagingInstance: Messaging | null = null;
 
 function getAdminApp(): App | null {
   if (app) return app;
@@ -80,4 +82,13 @@ export function getAdminFirestore(): Firestore | null {
   if (!adminApp) return null;
   firestoreInstance = getFirestore(adminApp);
   return firestoreInstance;
+}
+
+/** P7: sends web push for live-score-ready notifications (app/api/cron/poll-live-scores, app/api/live/check-scores). Null when unconfigured, same convention as the others. */
+export function getAdminMessaging(): Messaging | null {
+  if (messagingInstance) return messagingInstance;
+  const adminApp = getAdminApp();
+  if (!adminApp) return null;
+  messagingInstance = getMessaging(adminApp);
+  return messagingInstance;
 }

@@ -7,7 +7,7 @@ import { DIFFICULTY_CLASSNAMES, DIFFICULTY_LABELS, type Difficulty } from "@/lib
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 
-export function DifficultySelect({ onSelect }: { onSelect: (difficulty: Difficulty) => void }) {
+export function DifficultySelect({ onSelect, onSelectLive }: { onSelect: (difficulty: Difficulty) => void; onSelectLive: () => void }) {
   return (
     <div className="flex flex-col gap-4">
       <h2 className="text-lg font-bold">Choose a difficulty</h2>
@@ -26,12 +26,10 @@ export function DifficultySelect({ onSelect }: { onSelect: (difficulty: Difficul
 
       <h3 className="mt-2 text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Other ways to scout</h3>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <GlassPanel className="flex flex-col items-center gap-2 py-8 text-center opacity-60">
-          <Radio className="h-6 w-6 text-[var(--muted-foreground)]" />
+        <GlassPanel interactive onClick={onSelectLive} className="flex flex-col items-center gap-2 py-8 text-center">
+          <Radio className="h-6 w-6 text-[var(--color-primary)]" />
           <div className="text-base font-semibold">Live</div>
-          <Badge variant="outline" className="text-[10px]">
-            Coming soon
-          </Badge>
+          <p className="text-xs text-[var(--muted-foreground)]">Scout a real, livestreamed FTC match.</p>
         </GlassPanel>
         <GlassPanel className="flex flex-col items-center gap-2 py-8 text-center opacity-60">
           <Users className="h-6 w-6 text-[var(--muted-foreground)]" />

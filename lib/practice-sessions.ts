@@ -17,6 +17,7 @@ import {
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { Difficulty } from "@/lib/difficulty";
+import type { MatchType } from "@/lib/ftc/types";
 
 export type SessionKind = "solo" | "live" | "lobby";
 export type SessionStatus = "in-progress" | "paused" | "completed";
@@ -59,6 +60,23 @@ export type PracticeSession = {
   pairId: string | null;
   startedAt: string;
   finishedAt: string | null;
+  /**
+   * P7, `kind: "live"` only. Solo identifies its match via `libraryMatchId`
+   * alone; a live match may never be in the library at all (`libraryMatchId`
+   * stays null then), so live sessions record the real match type/number
+   * directly. Also doubles as the `liveMatches/{eventCode_matchKey}`
+   * presence doc's own key (`lib/match-library.ts`'s `libraryMatchId()`
+   * helper, reused purely for its id-formatting).
+   */
+  matchType: MatchType | null;
+  matchNumber: number | null;
+  /** P7, `kind: "live"` only — both teams on `alliance`, so "the other robot" (pending/presence/join logic) never needs a fresh FIRST API roster lookup. `robots` itself stays this session's own single scouted team. */
+  allianceTeams: [number, number] | null;
+  /** P7, `kind: "live"` only — null for solo/lobby. The pasted livestream link. */
+  streamUrl: string | null;
+  /** P7: stream position (seconds) when scouting started/ended, when the embed could report it — used to re-watch the match later. Null if not captured (e.g. "Open in a new tab" fallback) or not finished yet. */
+  streamStartSec: number | null;
+  streamEndSec: number | null;
 };
 
 const COLLECTION = "practiceSessions";
@@ -184,6 +202,42 @@ export function useTeamPracticeSessions(teamId: string | null) {
       },
       (err) => {
         console.error("team practiceSessions subscription failed:", err);
+        setSessions([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId]);
+
+  return { sessions, loaded };
+}
+
+/**
+ * Realtime subscription to every `live` session for the team (P7) — what
+ * the Pending Robots list and the Presence panel's "is this alliance fully
+ * covered" checks read, team-wide (not just the caller's own), same
+ * reasoning as `useTeamPracticeSessions`.
+ */
+export function useTeamLiveSessions(teamId: string | null) {
+  const [sessions, setSessions] = useState<PracticeSession[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSessions([]);
+      setLoaded(true);
+      return;
+    }
+    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId), where("kind", "==", "live"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setSessions(snap.docs.map((d) => toSession(d.id, d.data())));
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("team live practiceSessions subscription failed:", err);
         setSessions([]);
         setLoaded(true);
       }

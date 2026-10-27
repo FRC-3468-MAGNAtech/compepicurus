@@ -48,6 +48,12 @@ function makeSession(overrides: Partial<PracticeSession>): PracticeSession {
     pairId: null,
     startedAt: new Date().toISOString(),
     finishedAt: null,
+    matchType: null,
+    matchNumber: null,
+    allianceTeams: null,
+    streamUrl: null,
+    streamStartSec: null,
+    streamEndSec: null,
     ...overrides,
   };
 }

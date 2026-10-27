@@ -629,3 +629,79 @@ describe("assignments/{teamId}_{eventCode} (P6)", () => {
     await assertFails(deleteDoc(doc(db, "assignments", `${TEAM_ID}_USWABON4`)));
   });
 });
+
+describe("liveMatches/{matchKey}/scouts/{uid} (P7)", () => {
+  const presence = { uid: SCOUT_UID, teamId: TEAM_ID, name: "Scout One", robot: 100, alliance: "red", sessionId: "LV-ABCDEF", lastSeen: new Date() };
+
+  it("lets a scout create their own presence doc", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "liveMatches", "USWABON1_Q1", "scouts", SCOUT_UID), presence));
+  });
+
+  it("blocks creating a presence doc under someone else's uid", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(db, "liveMatches", "USWABON1_Q1", "scouts", ADMIN_UID), { ...presence, uid: ADMIN_UID }));
+  });
+
+  it("lets a teammate read presence, blocks a cross-team read", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "liveMatches", "USWABON1_Q2", "scouts", SCOUT_UID), presence);
+      await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), {
+        name: "Outsider",
+        email: "outsider@example.com",
+        teamId: OTHER_TEAM_ID,
+        primaryRole: "match-scout",
+        secondaryRoles: [],
+        isAdmin: false,
+        isOwner: false,
+        themeId: "team",
+      });
+    });
+    const teammateDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(getDoc(doc(teammateDb, "liveMatches", "USWABON1_Q2", "scouts", SCOUT_UID)));
+
+    const outsiderDb = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+    await assertFails(getDoc(doc(outsiderDb, "liveMatches", "USWABON1_Q2", "scouts", SCOUT_UID)));
+  });
+
+  it("lets a scout delete (leave) their own presence", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "liveMatches", "USWABON1_Q3", "scouts", SCOUT_UID), presence);
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(deleteDoc(doc(db, "liveMatches", "USWABON1_Q3", "scouts", SCOUT_UID)));
+  });
+
+  it("blocks deleting someone else's presence", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "liveMatches", "USWABON1_Q4", "scouts", SCOUT_UID), presence);
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(deleteDoc(doc(db, "liveMatches", "USWABON1_Q4", "scouts", SCOUT_UID)));
+  });
+});
+
+describe("notifications/{id} (P7)", () => {
+  const notification = { teamId: TEAM_ID, uid: SCOUT_UID, sessionId: "LV-ABCDEF", type: "live-score-ready", title: "Scores are available", body: "...", read: false, createdAt: new Date() };
+
+  it("lets a scout read their own notification", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "notifications", "LV-ABCDEF"), notification);
+    });
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(getDoc(doc(db, "notifications", "LV-ABCDEF")));
+  });
+
+  it("blocks a teammate from reading someone else's notification", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "notifications", "LV-ABCDEF"), notification);
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(getDoc(doc(db, "notifications", "LV-ABCDEF")));
+  });
+
+  it("blocks every client write, even an admin's", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(setDoc(doc(db, "notifications", "LV-OTHER01"), notification));
+  });
+});

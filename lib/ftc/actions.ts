@@ -2,6 +2,7 @@
 
 import { getDefaultSeason } from "./config";
 import { ftcFetch, FtcApiError } from "./http";
+import { fetchMatchesForEventInternal } from "./matches-internal";
 import { buildPlayoffBracket } from "./bracket";
 import { requireUser } from "@/lib/server/require-user";
 import type {
@@ -43,45 +44,6 @@ type RawTeam = {
   country?: string | null;
   rookieYear?: number | null;
 };
-
-type RawMatchTeam = {
-  teamNumber: number;
-  station: string;
-};
-
-type RawMatch = {
-  matchNumber: number;
-  description?: string | null;
-  series?: number | null;
-  actualStartTime?: string | null;
-  scoreRedFinal?: number | null;
-  scoreBlueFinal?: number | null;
-  scoreRedFoul?: number | null;
-  scoreBlueFoul?: number | null;
-  postResultTime?: string | null;
-  teams: RawMatchTeam[];
-};
-
-type RawScheduleItem = {
-  matchNumber: number;
-  description?: string | null;
-  series?: number | null;
-  startTime?: string | null;
-  teams: RawMatchTeam[];
-};
-
-/**
- * FIRST's API numbers matches inconsistently depending on tournament level:
- * for Qualification, `matchNumber` (1, 2, 3, ...) is the unique sequential
- * id and `series` is always 0. For Playoff, it's inverted — `matchNumber` is
- * always 1 (it identifies the game *within* a series) and `series` (1, 2,
- * 3, ...) is the actual sequential match slot shown in the match
- * description ("...Match 7"). Verified against real event data. This
- * resolves it to a single "which match is this" number regardless of type.
- */
-function sequenceNumber(type: MatchType, raw: { matchNumber: number; series?: number | null }): number {
-  return type === "Playoff" ? raw.series ?? raw.matchNumber : raw.matchNumber;
-}
 
 async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   try {
@@ -134,36 +96,6 @@ function toFtcTeam(raw: RawTeam): FtcTeam {
   };
 }
 
-/**
- * Builds one FtcMatch from the two sources that can describe it: the
- * pre-match `schedule` entry (team pairings, published once the draw/alliance
- * selection happens — absent for matches not yet scheduled) and the `match`
- * result (present only once the match has actually been played). At least
- * one of the two is always provided by the caller.
- */
-function toFtcMatch(type: MatchType, schedule: RawScheduleItem | null, match: RawMatch | null): FtcMatch {
-  const source = schedule ?? match!;
-  const teamsSource = schedule?.teams ?? match?.teams ?? [];
-  const redTeams = teamsSource.filter((t) => t.station.startsWith("Red")).map((t) => t.teamNumber);
-  const blueTeams = teamsSource.filter((t) => t.station.startsWith("Blue")).map((t) => t.teamNumber);
-  const played = match?.scoreRedFinal !== null && match?.scoreRedFinal !== undefined;
-  return {
-    id: `${type}-${sequenceNumber(type, source)}`,
-    matchNumber: sequenceNumber(type, source),
-    type,
-    description: source.description ?? null,
-    series: source.series ?? null,
-    played,
-    redTeams,
-    blueTeams,
-    redScore: match?.scoreRedFinal ?? null,
-    blueScore: match?.scoreBlueFinal ?? null,
-    redPenaltyPoints: match?.scoreRedFoul ?? null,
-    bluePenaltyPoints: match?.scoreBlueFoul ?? null,
-    startTime: schedule?.startTime ?? match?.actualStartTime ?? null,
-  };
-}
-
 // --- Public API --------------------------------------------------------
 
 export async function getEvents(params?: { season?: number; search?: string }): Promise<ActionResult<FtcEvent[]>> {
@@ -201,53 +133,17 @@ export async function getTeamsForEvent(eventCode: string, season?: number): Prom
   });
 }
 
-const TOURNAMENT_LEVEL: Record<Exclude<MatchType, "Practice">, string> = {
-  Qualification: "qual",
-  Playoff: "playoff",
-};
-
-export async function getMatchesForEvent(
-  eventCode: string,
-  matchType: MatchType,
-  season?: number
-): Promise<ActionResult<FtcMatch[]>> {
+/**
+ * The fetch+merge logic itself (schedule + results, FIRST's inconsistent
+ * match-numbering across tournament levels, ...) now lives in
+ * matches-internal.ts (P7) — app/api/cron/poll-live-scores and
+ * app/api/live/check-scores need the exact same thing from a server
+ * context with no user session to gate on, so only the auth gate stays
+ * here.
+ */
+export async function getMatchesForEvent(eventCode: string, matchType: MatchType, season?: number): Promise<ActionResult<FtcMatch[]>> {
   if (!(await requireUser())) return UNAUTHORIZED_RESULT;
-  // FIRST's API only publishes official Qualification/Playoff results —
-  // practice matches are informal and never tracked, so there's no endpoint
-  // to call. Returning an empty list here (rather than guessing at a request
-  // that will always 404) keeps the "not tracked" case distinct from a real
-  // empty-schedule or error case for callers.
-  if (matchType === "Practice") {
-    return { ok: true, data: [] };
-  }
-
-  const resolvedSeason = season ?? getDefaultSeason();
-  const tournamentLevel = TOURNAMENT_LEVEL[matchType];
-  return run(async () => {
-    // The `/matches` endpoint only returns matches that have actually been
-    // played (verified against a live event) — it can't tell us how many are
-    // *scheduled but not yet run*. `/schedule` has the full planned set (team
-    // pairings, no scores) as soon as the draw/alliance selection happens, so
-    // both are needed to show accurate "played vs scheduled" counts.
-    const [scheduleRes, matchesRes] = await Promise.all([
-      ftcFetch<{ schedule: RawScheduleItem[] }>(`/${resolvedSeason}/schedule/${eventCode}`, { tournamentLevel }),
-      ftcFetch<{ matches: RawMatch[] }>(`/${resolvedSeason}/matches/${eventCode}`, { tournamentLevel }),
-    ]);
-
-    const resultsByKey = new Map(matchesRes.matches.map((m) => [sequenceNumber(matchType, m), m]));
-    const scheduledKeys = new Set(scheduleRes.schedule.map((s) => sequenceNumber(matchType, s)));
-
-    const fromSchedule = scheduleRes.schedule.map((s) =>
-      toFtcMatch(matchType, s, resultsByKey.get(sequenceNumber(matchType, s)) ?? null)
-    );
-    // A played match with no matching schedule entry shouldn't be able to
-    // happen, but surface it rather than silently drop a real result.
-    const unscheduledResults = matchesRes.matches
-      .filter((m) => !scheduledKeys.has(sequenceNumber(matchType, m)))
-      .map((m) => toFtcMatch(matchType, null, m));
-
-    return [...fromSchedule, ...unscheduledResults].sort((a, b) => a.matchNumber - b.matchNumber);
-  });
+  return run(() => fetchMatchesForEventInternal(eventCode, matchType, season));
 }
 
 export async function getPlayoffBracket(eventCode: string, season?: number): Promise<ActionResult<BracketStructure>> {

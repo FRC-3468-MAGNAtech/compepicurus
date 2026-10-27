@@ -221,6 +221,43 @@ export async function getEntriesForSession(teamId: string, sessionId: string): P
   return snap.docs.map((d) => toEntry(d.id, d.data()));
 }
 
+/** P7: both alliance robots' entries for a live match, realtime — live entries for the two robots usually belong to two *different* sessions (sometimes two different scouts), so `getEntriesForSession` (keyed by one session) can't find the sibling; this looks up by the match itself instead. */
+export function useEntriesForMatch(teamId: string | null, eventCode: string | null, matchType: ScoutEntry["matchType"] | null, matchNumber: number | null) {
+  const [entries, setEntries] = useState<ScoutEntry[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !eventCode || !matchType || matchNumber === null || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEntries([]);
+      setLoaded(true);
+      return;
+    }
+    const q = query(
+      collection(db, COLLECTION),
+      where("teamId", "==", teamId),
+      where("eventCode", "==", eventCode),
+      where("matchType", "==", matchType),
+      where("matchNumber", "==", matchNumber)
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setEntries(snap.docs.map((d) => toEntry(d.id, d.data())));
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("entries-for-match subscription failed:", err);
+        setEntries([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId, eventCode, matchType, matchNumber]);
+
+  return { entries, loaded };
+}
+
 /**
  * P5: every entry for the whole team, every source/mode — what Scout
  * Accuracy/My Scouting's stats engine needs (it covers all three

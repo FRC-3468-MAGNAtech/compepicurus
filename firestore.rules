@@ -185,5 +185,37 @@ service cloud.firestore {
       allow create, update: if isAdmin() && sameTeam(request.resource.data.teamId);
       allow delete: if false;
     }
+
+    // P7: liveMatches/{eventCode_matchKey} — presence while scouting a
+    // livestreamed real match. The parent doc itself is never written (no
+    // fields of its own); only its scouts subcollection exists, one doc
+    // per active scout. Deliberately NOT teamId-scoped at the match-key
+    // level, same reasoning as libraryMatches (P3-6) — a real match is the
+    // same match no matter which team is watching it — but every scout's
+    // OWN presence doc carries teamId, which is what actually scopes read
+    // access and the join-rules bookkeeping to one team at a time.
+    match /liveMatches/{matchKey} {
+      allow read, write: if false;
+
+      match /scouts/{uid} {
+        allow read: if sameTeam(resource.data.teamId);
+        allow create, update: if isSignedIn()
+          && request.auth.uid == uid
+          && request.resource.data.uid == uid
+          && sameTeam(request.resource.data.teamId);
+        allow delete: if isSignedIn() && request.auth.uid == uid;
+      }
+    }
+
+    // P7: notifications/{sessionId} — one per scout per resolved live
+    // alliance ("Scores are available"), doc id is the session id so
+    // app/api/cron/poll-live-scores / app/api/live/check-scores can check
+    // existence for idempotency before creating one. Only ever written by
+    // the Admin SDK (bypasses these rules entirely) — clients can read
+    // their own, nothing else.
+    match /notifications/{id} {
+      allow read: if sameTeam(resource.data.teamId) && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
   }
 }

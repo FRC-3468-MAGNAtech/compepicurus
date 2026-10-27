@@ -42,6 +42,12 @@ function session(overrides: Partial<PracticeSession> & { id: string; uid: string
     pairId: null,
     startedAt: "2026-01-01T00:00:00.000Z",
     finishedAt: "2026-01-01T00:10:00.000Z",
+    matchType: null,
+    matchNumber: null,
+    allianceTeams: null,
+    streamUrl: null,
+    streamStartSec: null,
+    streamEndSec: null,
     ...overrides,
   };
 }
