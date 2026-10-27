@@ -29,6 +29,8 @@ export function ConfigModal({
   onAddManualFlag,
   onRemoveManualFlag,
   onToggleExclude,
+  sessionExcluded,
+  onToggleSessionExclude,
 }: {
   entry: ScoutEntry | null;
   open: boolean;
@@ -37,6 +39,15 @@ export function ConfigModal({
   onAddManualFlag: (entryId: string, reason: ManualFlagReason, note?: string) => void;
   onRemoveManualFlag: (entryId: string, flagId: string) => void;
   onToggleExclude: (entryId: string) => void;
+  /**
+   * P9: when set (practice/live rows under Match Analytics' "Practice
+   * Scouted Matches" toggle), exclusion is shown and toggled at the
+   * *session* level instead of the entry level — "consistently with P5,"
+   * since that's what Scout Accuracy's practice leaderboards actually read.
+   * `undefined` keeps the normal entry-level exclude button for real-event rows.
+   */
+  sessionExcluded?: boolean;
+  onToggleSessionExclude?: () => void;
 }) {
   const [reason, setReason] = useState<ManualFlagReason>(MANUAL_FLAG_REASONS[0]);
   const [note, setNote] = useState("");
@@ -139,17 +150,35 @@ export function ConfigModal({
 
           <section className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold">Stats Exclusion</h3>
-            <p className="text-xs text-[var(--muted-foreground)]">
-              Excluded entries stay visible here but will be ignored by stats and averages.
-            </p>
-            <Button
-              variant={entry.excluded ? "glass" : "outline"}
-              size="sm"
-              className="gap-2 self-start"
-              onClick={() => onToggleExclude(entry.id)}
-            >
-              <Ban className="h-4 w-4" /> {entry.excluded ? "Include In Stats" : "Exclude From Stats"}
-            </Button>
+            {sessionExcluded !== undefined ? (
+              <>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  This excludes the whole session (both robots) from Scout Accuracy&apos;s practice averages.
+                </p>
+                <Button
+                  variant={sessionExcluded ? "glass" : "outline"}
+                  size="sm"
+                  className="gap-2 self-start"
+                  onClick={onToggleSessionExclude}
+                >
+                  <Ban className="h-4 w-4" /> {sessionExcluded ? "Include Session In Stats" : "Exclude Session From Stats"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Excluded entries stay visible here but will be ignored by stats and averages.
+                </p>
+                <Button
+                  variant={entry.excluded ? "glass" : "outline"}
+                  size="sm"
+                  className="gap-2 self-start"
+                  onClick={() => onToggleExclude(entry.id)}
+                >
+                  <Ban className="h-4 w-4" /> {entry.excluded ? "Include In Stats" : "Exclude From Stats"}
+                </Button>
+              </>
+            )}
           </section>
 
           <Button size="lg" className="mt-1" onClick={() => onOpenChange(false)}>

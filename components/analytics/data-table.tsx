@@ -8,6 +8,7 @@ import type { AccuracyStatus, ScoutEntry } from "@/lib/scout-entries";
 import { cn } from "@/lib/utils";
 import { CommentCell } from "@/components/analytics/comment-cell";
 import { AccuracyCell } from "@/components/analytics/accuracy-cell";
+import { Badge } from "@/components/ui/badge";
 
 export type SortState = { key: string; direction: "asc" | "desc" };
 
@@ -285,6 +286,10 @@ function Cell({
       return <AccuracyCell accuracy={entry.accuracy} />;
     case "scriptStatus":
       return <span className="text-[var(--muted-foreground)]">{SCRIPT_STATUS_LABEL[entry.accuracy?.status ?? "not-applicable"]}</span>;
+    case "text":
+      return <span className="font-mono text-xs text-[var(--muted-foreground)]">{String(col.getValue(entry) ?? "")}</span>;
+    case "badge":
+      return <Badge className={cn("text-[10px]", col.getBadgeClassName?.(entry))}>{String(col.getValue(entry) ?? "")}</Badge>;
     case "actions": {
       const activeFlagCount = entry.autoFlags.filter((f) => !f.dismissed).length + entry.manualFlags.length;
       const hasManual = entry.manualFlags.length > 0;

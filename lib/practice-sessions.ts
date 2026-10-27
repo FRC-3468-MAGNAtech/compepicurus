@@ -266,6 +266,43 @@ export function useTeamLiveSessions(teamId: string | null) {
   return { sessions, loaded };
 }
 
+/**
+ * Realtime, every `practiceSessions` doc for the team regardless of `kind`
+ * or `status` (P9) — what the Admin Panel's Sessions/Rescore tabs and Match
+ * Analytics' practice view need, since those tools work across solo/live/
+ * lobby sessions at once rather than one kind at a time like
+ * `useTeamPracticeSessions`/`useTeamLiveSessions` do.
+ */
+export function useAllTeamPracticeSessions(teamId: string | null) {
+  const [sessions, setSessions] = useState<PracticeSession[]>([]);
+  const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+
+  useEffect(() => {
+    if (!teamId || !isFirebaseConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSessions([]);
+      setLoaded(true);
+      return;
+    }
+    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setSessions(snap.docs.map((d) => toSession(d.id, d.data())));
+        setLoaded(true);
+      },
+      (err) => {
+        console.error("all team practiceSessions subscription failed:", err);
+        setSessions([]);
+        setLoaded(true);
+      }
+    );
+    return unsubscribe;
+  }, [teamId]);
+
+  return { sessions, loaded };
+}
+
 /** At most one paused session per user (spec) — realtime, so the Resume banner updates if it's resolved from another tab. */
 export function useOwnPausedSession(teamId: string | null, uid: string | null) {
   const [session, setSession] = useState<PracticeSession | null>(null);

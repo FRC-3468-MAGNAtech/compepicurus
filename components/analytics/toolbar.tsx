@@ -17,6 +17,8 @@ export function AnalyticsToolbar({
   onHideNamesChange,
   gameId,
   onGameChange,
+  practiceMode,
+  onPracticeModeChange,
 }: {
   entryCount: number;
   search: string;
@@ -27,6 +29,8 @@ export function AnalyticsToolbar({
   onHideNamesChange: (v: boolean) => void;
   gameId: string;
   onGameChange: (v: string) => void;
+  practiceMode: boolean;
+  onPracticeModeChange: (v: boolean) => void;
 }) {
   return (
     <GlassPanel className="flex flex-wrap items-center gap-4">
@@ -52,6 +56,11 @@ export function AnalyticsToolbar({
       <label className="flex cursor-pointer items-center gap-2 text-sm">
         <Checkbox checked={hideNames} onCheckedChange={(v) => onHideNamesChange(v === true)} />
         Hide Names
+      </label>
+
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <Checkbox checked={practiceMode} onCheckedChange={(v) => onPracticeModeChange(v === true)} />
+        Practice Scouted Matches
       </label>
 
       <Select value={gameId} onValueChange={onGameChange}>

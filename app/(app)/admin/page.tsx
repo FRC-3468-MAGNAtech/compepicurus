@@ -9,6 +9,21 @@ import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/lib/permissions";
 import { fetchTeamCreationEnabled, setTeamCreationEnabled } from "@/lib/team-enrollment";
 import { MatchLibraryPanel } from "@/components/admin/match-library-panel";
+import { SessionsPanel } from "@/components/admin/sessions-panel";
+import { RescorePanel } from "@/components/admin/rescore-panel";
+import { AuditLogPanel } from "@/components/admin/audit-log-panel";
+import { BackupsPanel } from "@/components/admin/backups-panel";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+type AdminTab = "match-library" | "sessions" | "rescore" | "audit-log" | "backups";
+
+const TAB_LABELS: Record<AdminTab, string> = {
+  "match-library": "Match Library",
+  sessions: "Sessions",
+  rescore: "Rescore",
+  "audit-log": "Audit Log",
+  backups: "Backups",
+};
 
 export default function AdminPanelPage() {
   const router = useRouter();
@@ -16,6 +31,7 @@ export default function AdminPanelPage() {
   const [teamCreationEnabled, setTeamCreationEnabledState] = useState<boolean | null>(null);
   const [togglingTeamCreation, setTogglingTeamCreation] = useState(false);
   const [teamCreationError, setTeamCreationError] = useState<string | null>(null);
+  const [tab, setTab] = useState<AdminTab>("match-library");
 
   useEffect(() => {
     if (!isAdmin) router.replace("/dashboard");
@@ -80,7 +96,21 @@ export default function AdminPanelPage() {
         </GlassPanel>
       )}
 
-      <MatchLibraryPanel />
+      <Tabs value={tab} onValueChange={(v) => setTab(v as AdminTab)}>
+        <TabsList>
+          {(Object.keys(TAB_LABELS) as AdminTab[]).map((t) => (
+            <TabsTrigger key={t} value={t}>
+              {TAB_LABELS[t]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {tab === "match-library" && <MatchLibraryPanel />}
+      {tab === "sessions" && <SessionsPanel />}
+      {tab === "rescore" && <RescorePanel />}
+      {tab === "audit-log" && <AuditLogPanel />}
+      {tab === "backups" && <BackupsPanel />}
     </div>
   );
 }

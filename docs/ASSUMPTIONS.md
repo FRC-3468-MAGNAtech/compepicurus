@@ -1092,6 +1092,134 @@ by the pure-logic unit tests where the logic is pure:
   query, which needs the new `players` index in
   `firestore.indexes.json` deployed to actually serve results.
 
+## P9 — Practice Data in Match Analytics & Admin Panel Session Tools
+
+**P9-1. No new Firestore rules or collections.** Every write this prompt
+adds — editing an entry's fields, rescoring, excluding a session from
+Match Analytics' practice view, exporting backups — goes through a path
+`firestore.rules` already covers: `scoutEntries` update/create is
+admin-or-own-uid (unchanged since P2/P3), `practiceSessions` update is
+unconditionally `isAdmin()` regardless of status (unchanged since P4/P5),
+and `auditLog` create never restricts the `action` field's value (only
+`uid`/`teamId`). I re-read all four rule blocks before concluding this —
+it's a finding, not an assumption I made without checking. No new rules
+tests were added for P9 as a result; the existing P1–P8 rules tests
+already exercise every path P9's writes travel through.
+
+**P9-2. `getEventEntries` is a plain alias for `getEntriesForEvent`, not a
+rename, and has exactly one real caller (`lib/analytics/recompute.ts`).**
+The prompt asks for "a documented helper `getEventEntries()`... every
+OTHER analytics page uses" to keep excluding practice data — but every
+Analytics page besides Match Analytics (Team Averages, Rankings, Match
+Breakdown, Pick List, Team Breakdown, Scout Status) still reads from
+`lib/mock-data.ts`, not Firestore, as of P9. There's no second page to
+refactor onto a shared helper yet. `getEventEntries` exists now, under the
+name the prompt asks for, ready for those pages to call once they go live
+against real data — see `lib/scout-entries.ts`'s own doc comment.
+
+**P9-3. Practice/live rows' accuracy column reads the owning *session's*
+accuracy, synthesized onto a display-only copy of the entry — never
+written back to Firestore.** Practice and live scoring is computed once
+per session (both robots), never stored on the entry itself
+(`entry.accuracy` stays `null` for every `source: "practice"` entry, by
+design since P4). Rather than touch the "Alliance Accuracy"/"Script
+Status" columns' `getValue` functions (which only ever receive the entry,
+not an external sessions map), Match Analytics builds a shallow entry copy
+with `accuracy` stamped from `sessionsById.get(entry.sessionId)` before
+handing it to the table — the existing columns work completely unchanged.
+
+**P9-4. Excluding a practice/live row in Match Analytics excludes the
+whole *session*, not just that one entry — literally reuses
+`lib/scout-stats/actions.ts`'s `setSessionExcluded` (the same P5
+function).** The prompt says this explicitly ("updates the owning
+session's average eligibility consistently with P5"), and it also
+resolves a real mechanical question: a practice/live session's two
+entries belong to two different robots (sometimes two different
+scouts in live/lobby mode), and Scout Accuracy's practice leaderboards
+only ever read `practiceSessions.excluded`, never `scoutEntries.excluded`
+— so entry-level exclusion for a practice row would silently do nothing
+useful. `ConfigModal` grew an optional `sessionExcluded`/
+`onToggleSessionExclude` prop pair for exactly this; real-event rows keep
+their original entry-level exclude button unchanged.
+
+**P9-5. Import CSV and Recalculate Accuracy are hidden under the Practice
+toggle.** Both are real-event-specific tools (`recomputeForEvent` fetches
+one event's official matches; CSV import assumes `source: "event"` rows
+tied to the active event) and rescoring practice/live sessions already has
+its own, more complete home — the Admin Panel's Rescore tab, which can
+target any season/event/date range, not just the one active event. Export
+CSV stays available in both views since `entriesToCsv` is generic over
+whatever schema/entries it's given.
+
+**P9-6. `lib/lobby/scoring.ts`'s `resolveLobbyPairScoring` is reused,
+unmodified, for rescoring SOLO sessions too — not just lobby ones.**
+Despite its name and P8 origin, it has no lobby-specific logic at all:
+given a `LibraryMatch`, an alliance, two entries, a mode, and a
+prior-attempt flag, it computes accuracy + session flags. A solo
+session's own two robots are exactly that same shape. Reusing it instead
+of writing a near-identical "resolve solo scoring" function is what "never
+separate logic" means in practice here.
+
+**P9-7. Rescoring never reconstructs historical `priorCompletedAttempt`
+— it's always passed as `false`.** The "Repeat Attempt" flag is normally
+set at the moment a session finishes, by checking whether this uid had
+*already* completed this exact alliance+match *before that moment*.
+Re-deriving that retroactively, as of some arbitrary earlier point in
+time, would mean replaying the team's entire session history in order —
+far more than a hygiene/bug-fix rescore tool needs. A rescore can
+therefore make a session's "Repeat Attempt" flag disappear (never
+reappear incorrectly) compared to what it showed originally; this is
+called out in the Rescore tab implicitly by it being a flag
+*recomputation*, not a guarantee of historical fidelity.
+
+**P9-8. "Refresh official scores" calls the exact same
+`importLibraryEvent` the Match Library tab's own "Refresh scores" button
+already uses** — re-exposed in the Rescore tab for workflow convenience
+(refresh, then immediately rescore, without switching tabs), not a second
+implementation. It only ever applies to solo/lobby sessions (library-match
+-based); live sessions always rescore against a *freshly fetched* FTC API
+match within the same Preview click, so there's nothing to "refresh"
+first for those.
+
+**P9-9. The Admin Panel's Sessions tab search is deliberately "look up by
+exact Session ID" (`getPracticeSession`, a direct doc-id `getDoc`), not a
+prefix/fuzzy search.** Session IDs are short, scout-facing, unambiguous
+codes shown directly on-screen throughout the app (results screens, Scout
+Accuracy's session rows, etc.) — a scout or mentor citing one types the
+whole thing. A substring search across the whole `practiceSessions`
+collection would need either a full collection scan client-side (fine at
+this team's scale, but not what "look up by Session ID" implies) or a
+dedicated search index neither Firestore nor this project has; the
+browse/filter controls below the lookup box cover "I don't have the exact
+ID" instead.
+
+**P9-10. Backups are a one-way export — there is no import/restore
+path.** The prompt calls this "a safety net for competition day," which
+this delivers (a downloadable snapshot you could hand to FIRST or
+reconstruct data from by hand if something went badly wrong), but building
+a JSON-import-back-into-Firestore tool is a meaningfully bigger, riskier
+feature (write validation, id collisions, partial-failure recovery) that
+the prompt never asks for. `lib/admin/backup.ts`'s own doc comment says
+this plainly. The exported collections are exactly the prompt's own named
+list (`users, teams, scoutEntries, practiceSessions, assignments,
+attendance, libraryMatches, auditLog`) — `liveMatches`, `notifications`,
+and `lobbies` (all added after this prompt was written, in P7/P8) are
+deliberately left out rather than silently expanding scope; a reasonable
+follow-up if ever wanted.
+
+**P9-11. What's unverifiable in this sandbox.** No Firebase emulator (no
+JVM/Firebase CLI — the standing limitation since P1) and no real
+multi-week season's worth of practice/live/lobby data to rescore against:
+- The actual dry-run-then-apply flow against real Firestore data, for
+  both the event and session Rescore tabs.
+- The Backups JSON/CSV downloads against a real, populated team (the
+  per-collection `getDocs` queries and `JSON.stringify` shape were
+  checked by reading the code, not by running it against live data).
+- Firestore `Timestamp` objects inside the JSON backup serialize via their
+  own `toJSON()` (`{seconds, nanoseconds}`) rather than an ISO string —
+  expected, not a bug, but worth knowing if you ever script against the
+  exported file.
+
 ## Commands to run locally
 
 ```bash
@@ -1250,6 +1378,38 @@ npm run dev
 # "already submitted" state. Refresh one player's tab mid-round -> confirm
 # they land back in the same spot (their own session, not a fresh one).
 # Close the lobby -> confirm everyone sees "This lobby has been closed."
+
+# P9: on Match Analytics, check "Practice Scouted Matches" -> confirm the
+# banner appears, the table switches to practice/live entries with a
+# Session ID column and a Practice/Live source badge, and Import CSV /
+# Recalculate Accuracy disappear while Export CSV still works. Try the
+# Mode/Source selects and the event chip row -> confirm the table narrows.
+# Open Config on a practice row -> confirm "Stats Exclusion" now says
+# "session" and toggling it changes that scout's Scout Accuracy average
+# for that session (check My Scouting or Scout Accuracy afterward).
+# Uncheck the toggle -> confirm the normal real-event view is unchanged.
+#
+# Go to Admin Panel -> confirm five tabs: Match Library (unchanged),
+# Sessions, Rescore, Audit Log, Backups. Sessions: look up a known Session
+# ID (from a practice/live/lobby run) -> confirm the detail dialog shows
+# everything (scout, season, mode, match, alliance, robots, entries,
+# accuracy breakdown, flags, platform, timestamps, lobby/pair info for a
+# lobby session) -> dismiss a flag, toggle exclude, edit an entry's field
+# values and confirm the score recalculates and the session's accuracy
+# updates -> check Audit Log shows the edit with full before/after. Try
+# browsing/filtering by scout, kind, and mode instead of searching by ID.
+# Rescore -> Real Event Entries: enter your active event's code -> Preview
+# Rescore -> confirm it reports how many entries would change -> Apply ->
+# confirm Match Analytics reflects it. Rescore -> Practice/Live/Lobby
+# Sessions: leave filters blank -> Preview Rescore -> confirm solo/lobby/
+# live groups each show correctly, then Apply (watch the progress count)
+# -> re-run Preview immediately after and confirm it now reports 0 changes
+# (idempotent). Try "Refresh official scores" for a library event you've
+# already imported -> confirm it reports an update, not a duplicate.
+# Backups: click "Download All Data (JSON)" -> confirm a file downloads
+# and "Last export" updates; click "Download Entries (CSV)" -> confirm
+# that downloads too. Confirm every Rescore/Edit/Backup action you just
+# took shows up correctly in the Audit Log tab's filters.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

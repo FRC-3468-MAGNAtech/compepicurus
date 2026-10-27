@@ -183,6 +183,18 @@ export async function getEntriesForEvent(teamId: string, eventCode: string): Pro
 }
 
 /**
+ * P9: the documented, canonical name for "an analytics page's real-event
+ * data" — a plain alias for `getEntriesForEvent`, which already does the
+ * actual `source == "event"` filtering (see its own doc comment). Every
+ * Analytics page besides Match Analytics still reads from
+ * `lib/mock-data.ts` rather than Firestore as of P9, so this has exactly
+ * one real caller today (`lib/analytics/recompute.ts`) — see
+ * docs/ASSUMPTIONS.md (P9) for why this is a rename-in-waiting, not a
+ * multi-page refactor.
+ */
+export const getEventEntries = getEntriesForEvent;
+
+/**
  * Realtime subscription for one event's "event"-sourced entries only (see
  * getEntriesForEvent's doc comment on the `source` filter). `pendingWrites`
  * counts how many of the returned docs are local writes not yet

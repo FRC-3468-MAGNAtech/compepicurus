@@ -11,7 +11,9 @@ export type ColumnType =
   | "comments"
   | "accuracy"
   | "scriptStatus"
-  | "actions";
+  | "actions"
+  | "text"
+  | "badge";
 
 export type AnalyticsColumn = {
   key: string;
@@ -26,6 +28,8 @@ export type AnalyticsColumn = {
   getValue: (entry: ScoutEntry) => unknown;
   /** Only needed when the natural sort order isn't just getValue() itself (e.g. match type+number). */
   getSortValue?: (entry: ScoutEntry) => number | string;
+  /** `type: "badge"` only — a Badge-compatible className for this row's value. */
+  getBadgeClassName?: (entry: ScoutEntry) => string;
 };
 
 export type GameSchema = {
@@ -181,3 +185,44 @@ export const GAMES: Record<string, GameSchema> = {
 };
 
 export const DEFAULT_GAME_ID = "biobuzz";
+
+/**
+ * P9: Match Analytics' "Practice Scouted Matches" toggle inserts a Session
+ * ID column and a source/mode badge right after the sticky Scout column —
+ * the real-event schema is never mutated, so the normal (unchecked) view's
+ * columns are untouched. `getValue`/`getBadgeClassName` read `source`/`mode`
+ * straight off the entry — practice-mode's display entries carry a
+ * session-derived `accuracy` by then (see docs/ASSUMPTIONS.md, P9), so the
+ * existing "accuracy"/"scriptStatus" columns need no changes at all.
+ */
+export function withPracticeColumns(schema: GameSchema): GameSchema {
+  const sessionIdColumn: AnalyticsColumn = {
+    key: "sessionId",
+    phase: "Information",
+    category: "Information",
+    label: "Session ID",
+    type: "text",
+    sortable: true,
+    width: 110,
+    getValue: (e) => e.sessionId ?? "—",
+  };
+  const sourceColumn: AnalyticsColumn = {
+    key: "practiceSource",
+    phase: "Information",
+    category: "Information",
+    label: "Source",
+    type: "badge",
+    sortable: true,
+    width: 150,
+    getValue: (e) =>
+      e.source === "live" ? "Live" : e.mode === "competitive" ? "Practice · Competitive" : e.mode === "trial" ? "Practice · Trial" : "Practice",
+    getBadgeClassName: (e) =>
+      e.source === "live"
+        ? "bg-violet-500/15 text-violet-300 border border-violet-400/30"
+        : "bg-sky-500/15 text-sky-300 border border-sky-400/30",
+  };
+  const insertAt = schema.columns.findIndex((c) => c.key === "scout") + 1;
+  const columns = [...schema.columns];
+  columns.splice(insertAt, 0, sessionIdColumn, sourceColumn);
+  return { ...schema, columns };
+}

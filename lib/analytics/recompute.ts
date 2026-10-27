@@ -1,6 +1,7 @@
 import { getMatchesForEvent } from "@/lib/ftc/actions";
 import type { FtcMatch, MatchType } from "@/lib/ftc/types";
-import { getEntriesForEvent, notApplicableAccuracy, updateEntry } from "@/lib/scout-entries";
+import { formatMatch } from "@/lib/analytics/game-schema";
+import { getEventEntries, notApplicableAccuracy, updateEntry, type AccuracyResult, type AutoFlag } from "@/lib/scout-entries";
 import { allianceForTeam, computeAllianceAccuracy } from "@/lib/analytics/accuracy";
 import { evaluateAutoFlagRuleIds, type FlagContext } from "@/lib/analytics/flags";
 
@@ -22,18 +23,31 @@ async function buildMatchLookup(eventCode: string, season: number): Promise<Map<
   return lookup;
 }
 
-/**
- * Recomputes accuracy + automatic flags for every entry in an event, against
- * live official match data. Run after every Scout Form submission and from
- * the Recalculate Accuracy button — recomputing the whole event (rather than
- * just the new entry) is what lets a *different* robot's entry flip from
- * "Needs Robots" to "Complete" once its alliance partner gets scouted too.
- */
-export async function recomputeForEvent(teamId: string, eventCode: string, season: number): Promise<void> {
-  const matchLookup = await buildMatchLookup(eventCode, season);
-  const entries = await getEntriesForEvent(teamId, eventCode);
+export type EventRescorePatch = {
+  entryId: string;
+  matchLabel: string;
+  teamNumber: number;
+  before: AccuracyResult;
+  after: AccuracyResult;
+  autoFlags: AutoFlag[];
+};
 
-  const writes: Promise<void>[] = [];
+/** True when applying a patch would actually change anything a reader would notice. */
+export function eventRescorePatchChanges(patch: EventRescorePatch): boolean {
+  return patch.before.value !== patch.after.value || patch.before.status !== patch.after.status;
+}
+
+/**
+ * Computes (without writing) what `recomputeForEvent` would write for every
+ * entry in an event — the shared core behind both the real recompute and
+ * the Admin Panel's Rescore tab dry-run preview (P9), so the two can never
+ * drift apart. Pure aside from the one FIRST API fetch.
+ */
+export async function computeEventRescorePlan(teamId: string, eventCode: string, season: number): Promise<EventRescorePatch[]> {
+  const matchLookup = await buildMatchLookup(eventCode, season);
+  const entries = await getEventEntries(teamId, eventCode);
+
+  const patches: EventRescorePatch[] = [];
   for (const entry of entries) {
     const match = matchLookup.get(matchKey(entry.matchType, entry.matchNumber)) ?? null;
     const allianceColor = match ? allianceForTeam(match, entry.teamNumber) : null;
@@ -66,7 +80,30 @@ export async function recomputeForEvent(teamId: string, eventCode: string, seaso
     const previouslyDismissed = new Set(entry.autoFlags.filter((f) => f.dismissed).map((f) => f.ruleId));
     const autoFlags = triggeredIds.map((ruleId) => ({ ruleId, dismissed: previouslyDismissed.has(ruleId) }));
 
-    writes.push(updateEntry(entry.id, { accuracy, autoFlags }));
+    patches.push({
+      entryId: entry.id,
+      matchLabel: formatMatch(entry),
+      teamNumber: entry.teamNumber,
+      before: entry.accuracy ?? notApplicableAccuracy,
+      after: accuracy,
+      autoFlags,
+    });
   }
-  await Promise.all(writes);
+  return patches;
+}
+
+export async function applyEventRescorePlan(patches: EventRescorePatch[]): Promise<void> {
+  await Promise.all(patches.map((p) => updateEntry(p.entryId, { accuracy: p.after, autoFlags: p.autoFlags })));
+}
+
+/**
+ * Recomputes accuracy + automatic flags for every entry in an event, against
+ * live official match data. Run after every Scout Form submission and from
+ * the Recalculate Accuracy button — recomputing the whole event (rather than
+ * just the new entry) is what lets a *different* robot's entry flip from
+ * "Needs Robots" to "Complete" once its alliance partner gets scouted too.
+ */
+export async function recomputeForEvent(teamId: string, eventCode: string, season: number): Promise<void> {
+  const patches = await computeEventRescorePlan(teamId, eventCode, season);
+  await applyEventRescorePlan(patches);
 }

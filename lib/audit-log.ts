@@ -6,11 +6,21 @@ import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
 /**
  * P5: every admin-only scout-data action (Hard Reset, Dismiss Flag, Exclude/
- * Include) writes one of these — not read by any UI yet (that's P9's Admin
- * tools), but the write path and rules exist now so nothing needs touching
- * later just to start logging.
+ * Include) writes one of these; P9 adds the Admin Panel's own session/entry
+ * edit, rescore, and backup actions. `firestore.rules` never restricts this
+ * field's value (only `uid`/`teamId` on create), so adding a new action here
+ * needs no rules change — see docs/ASSUMPTIONS.md (P9).
  */
-export type AuditAction = "hard-reset-scout-data" | "dismiss-flag" | "exclude-session" | "include-session";
+export type AuditAction =
+  | "hard-reset-scout-data"
+  | "dismiss-flag"
+  | "exclude-session"
+  | "include-session"
+  | "edit-entry"
+  | "rescore-event"
+  | "rescore-sessions"
+  | "refresh-official-scores"
+  | "export-backup";
 
 export type AuditLogEntry = {
   id: string;
@@ -56,10 +66,10 @@ export async function logAuditEvent(
 }
 
 /**
- * Realtime, most recent first — unused by any P5 page, kept here so P9's
- * Admin tools only need to render it. Sorts client-side (not `orderBy` in
- * the query) purely to avoid needing a composite index for a feature
- * nothing reads yet; P9 can add one once this has real query patterns.
+ * Realtime, most recent first — read by the Admin Panel's Audit Log tab
+ * (P9). Sorts client-side (not `orderBy` in the query) to avoid needing a
+ * composite index for what's still a small, single-field-filtered log;
+ * revisit if `auditLog` ever grows enough to need a real query pattern.
  */
 export function useAuditLog(teamId: string | null) {
   const [entries, setEntries] = useState<AuditLogEntry[]>([]);

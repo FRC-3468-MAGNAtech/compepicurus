@@ -255,17 +255,21 @@ Scouting both read their own slots out of someone else's published
 schedule); only admins can create/update; delete denied outright (undo
 goes through `previous`, not deletion).
 
-### `auditLog/{id}` (P5)
+### `auditLog/{id}` (P5; read by the Admin Panel's Audit Log tab starting P9)
 
 One entry per admin-only scout-data action (Hard Reset, Dismiss Flag,
-Exclude/Include — see `lib/scout-stats/actions.ts`). Write-once: nobody,
+Exclude/Include from P5; Edit Entry, Rescore Event, Rescore Sessions,
+Refresh Official Scores, and Export Backup from P9 — see
+`lib/scout-stats/actions.ts` and `lib/admin/`). Write-once: nobody,
 including admins, can update or delete an entry, so it stays a trustworthy
-record. Not read by any page yet — P9's Admin tools will.
+record. `firestore.rules` never restricts the `action` value itself (only
+`uid`/`teamId` on create), so P9 added its five new action strings purely
+in `lib/audit-log.ts`'s `AuditAction` union — no rules change needed.
 
 | Field | Type |
 |---|---|
 | `teamId`, `uid` (the actor), `actorName` | `string` |
-| `action` | `"hard-reset-scout-data" \| "dismiss-flag" \| "exclude-session" \| "include-session"` |
+| `action` | `AuditAction` — see `lib/audit-log.ts` for the full, current list |
 | `target` | `Record<string, unknown>` — action-specific context (e.g. `{ targetUid, targetName, category }` for a reset) |
 | `before`, `after` | `unknown` — whatever state changed |
 | `createdAt` | `Timestamp` |
@@ -1036,6 +1040,96 @@ math — see the Acceptance Checklist's own "don't duplicate logic" ask.
   Lobby" code input and a "You're still in a Live Practice Lobby — Rejoin"
   banner (from `useMyActiveLobbyId`); the Difficulty screen's Lobby tile
   routes to a new `"lobby"` step rendering `<LobbyFlow/>`.
+
+### Match Analytics practice data & Admin Panel session tools (P9)
+
+No new Firestore collections or rules — every P9 write lands on
+`scoutEntries`/`practiceSessions`/`auditLog` through the exact admin-only
+paths P1–P8 already wrote rules and tests for (`isAdmin()` can already
+update any team session regardless of status, and update/create any
+team's scout entries). See docs/ASSUMPTIONS.md (P9) for the write-up of why
+this needed no new rules.
+
+- `lib/analytics/game-schema.ts` — `withPracticeColumns(schema)`: inserts a
+  Session ID column and a source/mode badge column right after the sticky
+  Scout column, for Match Analytics' "Practice Scouted Matches" toggle. The
+  real-event schema itself is never mutated. Two new `ColumnType`s support
+  this generically: `"text"` (plain muted text) and `"badge"` (a
+  `getBadgeClassName`-colored pill) — both rendered in
+  `components/analytics/data-table.tsx`.
+- `lib/scout-entries.ts` — `getEventEntries` (P9): a documented, literal
+  alias for `getEntriesForEvent` — the canonical name every analytics page
+  should call for "this event's real data, practice excluded." See
+  docs/ASSUMPTIONS.md (P9) for why this is a rename-in-waiting rather than
+  a multi-page refactor (every other Analytics page still runs on
+  `lib/mock-data.ts`, not Firestore, as of P9).
+- `lib/analytics/recompute.ts` — split into `computeEventRescorePlan`
+  (pure given one FIRST API fetch — the match/accuracy/flag computation)
+  and `applyEventRescorePlan` (the writes); `recomputeForEvent` is now just
+  those two calls in sequence, unchanged for existing callers. This is
+  what lets the Admin Panel's Rescore tab dry-run preview and its Apply
+  step always agree — same plan either way.
+- `lib/admin/rescore-sessions.ts` — `buildSessionRescorePlan(sessions,
+  entries, libraryMatchesById, liveMatchesByKey, filter)`: the equivalent
+  split for solo/lobby/live practice sessions. Reuses `lib/lobby/scoring.ts`'s
+  `resolveLobbyPairScoring` for BOTH solo and lobby sessions (it's generic
+  over any two same-alliance entries against a `LibraryMatch`, despite the
+  name) and `lib/live/scoring.ts`'s `resolveLiveAllianceScoring` for live
+  sessions, against freshly-fetched `FtcMatch` data. Every entry's `score`
+  is recalculated from its stored `fields` first, via the schema's own
+  `calculateScore` — never trusts a possibly-stale stored score.
+  `applySessionRescorePlan` batches writes in chunks of 400 and reports
+  progress. Pure and unit-tested (`rescore-sessions.test.ts`).
+- `lib/admin/backup.ts` — `exportAllDataJson`/`exportEntriesCsv`: plain
+  client-side `getDocs` reads across the prompt's named collections (see
+  its own doc comment for the exact list and what's deliberately left
+  out), downloaded via `lib/download.ts`'s shared `downloadTextFile`
+  helper (also now used by Match Analytics' own CSV export). Both log an
+  `"export-backup"` audit entry, which is also how "last export" is
+  derived — no new field anywhere.
+- `lib/audit-log.ts` — `AuditAction` extended with `edit-entry`,
+  `rescore-event`, `rescore-sessions`, `refresh-official-scores`,
+  `export-backup`; `useAuditLog` is now actually read, by the Audit Log tab.
+- `lib/practice-sessions.ts` — `useAllTeamPracticeSessions(teamId)`:
+  realtime, every session regardless of `kind`/`status` — what both Match
+  Analytics' practice view (session-derived accuracy/exclusion lookups)
+  and the Admin Panel's Sessions/Rescore tabs need, unlike
+  `useTeamPracticeSessions`/`useTeamLiveSessions`'s one-kind-at-a-time scope.
+- `components/analytics/toolbar.tsx` — gained the "Practice Scouted
+  Matches" checkbox (`practiceMode`/`onPracticeModeChange`).
+- `components/analytics/practice-filters.tsx` — Mode/Source `<Select/>`s
+  plus a toggle-chip row for the library's imported events (multi-select,
+  empty = all) — shown only under the Practice toggle.
+- `components/analytics/config-modal.tsx` — optional `sessionExcluded`/
+  `onToggleSessionExclude` props: when set (practice/live rows), the
+  Stats Exclusion section exclude/includes the *session* instead of the
+  entry, "consistently with P5" per the prompt's own wording, since that's
+  what Scout Accuracy's practice averages actually read.
+- `app/(app)/analytics/match-scout/page.tsx` — the Practice toggle swaps
+  the data source from the active event's `subscribeEntries` to
+  `useTeamScoutEntries` filtered to `source !== "event"`, applies the
+  Mode/Source/Event filters, and stamps each displayed entry's `accuracy`
+  with its owning session's `accuracy` (a shallow, display-only copy —
+  never written back) so the existing "Alliance Accuracy"/"Script Status"
+  columns need no changes at all. Import CSV and Recalculate Accuracy are
+  hidden under the toggle (real-event-specific tools); Export CSV always
+  works, via the new shared columns.
+- `components/admin/` — `SessionsPanel` (lookup by Session ID or
+  browse/filter by scout/kind/mode/flags; a detail dialog with flags,
+  session-level exclude, Hard Reset, and per-entry Edit), `EntryEditDialog`
+  (reuses the Scout Form's own field components — `CounterControl`/
+  `FieldToggle`/`CheckboxTile` — against `getFormSchema(entry.formId)`;
+  always recalculates `score` on save; writes a full before/after
+  `auditLog` entry, never losing the original values since the log is
+  write-once), `RescorePanel` (Real Event Entries and Practice/Live/Lobby
+  Sessions sub-tabs, each dry-run-then-confirm, plus a "Refresh official
+  scores" shortcut to `importLibraryEvent`), `AuditLogPanel` (filter by
+  actor/action/session-or-entry-id, read-only, expandable before/after),
+  `BackupsPanel` (the two download buttons + last-export time).
+- `app/(app)/admin/page.tsx` — now a `Tabs`-driven shell: Match Library
+  (unchanged from P3), Sessions, Rescore, Audit Log, Backups. The
+  Owner-only "Allow team creation" toggle stays outside the tabs,
+  unchanged.
 
 ## Conventions
 
