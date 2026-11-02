@@ -15,6 +15,13 @@ export type ScoutFormField = {
   points?: number;
   /** Which score subtotal this field feeds — required for scored (toggle/counter) fields, irrelevant otherwise. */
   phase?: ScorePhase;
+  /**
+   * P10: the game element this field scores on ("Hive", "Flower", ...), so
+   * Team Profile can group points by element across phases — e.g. both the
+   * Autonomous and Teleoperated "Tip Hive" counters belong to "Hive". Optional;
+   * unset fields fall back to their sub-group label, then their own label.
+   */
+  element?: string;
   placeholder?: string;
 };
 
@@ -117,9 +124,9 @@ export const BIOBUZZ_FORM_SCHEMA: ScoutFormSchema = {
       id: "autonomous",
       label: "Autonomous",
       fields: [
-        { key: "autoLeave", type: "toggle", label: "Leave", points: 3, phase: "auto" },
-        { key: "autoPark", type: "toggle", label: "Park", points: 5, phase: "auto" },
-        { key: "autoTipHive", type: "counter", label: "Tip Hive", points: 20, phase: "auto" },
+        { key: "autoLeave", type: "toggle", label: "Leave", points: 3, phase: "auto", element: "Leave" },
+        { key: "autoPark", type: "toggle", label: "Park", points: 5, phase: "auto", element: "Park" },
+        { key: "autoTipHive", type: "counter", label: "Tip Hive", points: 20, phase: "auto", element: "Hive" },
       ],
     },
     {
@@ -128,25 +135,25 @@ export const BIOBUZZ_FORM_SCHEMA: ScoutFormSchema = {
       groups: [
         {
           label: "Hive",
-          fields: [{ key: "teleTipHive", type: "counter", label: "Tip Hive", points: 20, phase: "teleop" }],
+          fields: [{ key: "teleTipHive", type: "counter", label: "Tip Hive", points: 20, phase: "teleop", element: "Hive" }],
         },
         {
           label: "Flower",
           fields: [
-            { key: "flowerBottomNectar", type: "toggle", label: "Bottom Nectar", points: 5, phase: "teleop" },
-            { key: "flowerPollenNectar", type: "counter", label: "Pollen and Nectar", points: 2, phase: "teleop" },
+            { key: "flowerBottomNectar", type: "toggle", label: "Bottom Nectar", points: 5, phase: "teleop", element: "Flower" },
+            { key: "flowerPollenNectar", type: "counter", label: "Pollen and Nectar", points: 2, phase: "teleop", element: "Flower" },
           ],
         },
         {
           label: "Garden",
-          fields: [{ key: "gardenPollenNectar", type: "counter", label: "Pollen and Nectar", points: 1, phase: "teleop" }],
+          fields: [{ key: "gardenPollenNectar", type: "counter", label: "Pollen and Nectar", points: 1, phase: "teleop", element: "Garden" }],
         },
       ],
     },
     {
       id: "endgame",
       label: "Endgame",
-      fields: [{ key: "endgamePark", type: "toggle", label: "Park", points: 5, phase: "endgame" }],
+      fields: [{ key: "endgamePark", type: "toggle", label: "Park", points: 5, phase: "endgame", element: "Park" }],
     },
     {
       id: "general",

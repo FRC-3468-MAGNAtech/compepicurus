@@ -24,7 +24,7 @@ export type NavItem = {
 };
 
 export const mainNav: NavItem[] = [
-  { href: "/event", label: "Active Event", icon: CalendarCheck },
+  { href: "/event", label: "Active Events", icon: CalendarCheck },
   { href: "/assignments", label: "Assignments", icon: CalendarRange },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/scout", label: "Match Scout Form", icon: ClipboardList },

@@ -1,41 +1,49 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
+import { Lock, Pencil, ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ROLES, getRole, type RoleId } from "@/lib/roles";
+import { Button } from "@/components/ui/button";
+import { getRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
+import type { MemberEditState } from "@/lib/member-access";
 import type { TeamMember } from "@/lib/team-members";
 
+/**
+ * One roster row. Roles are always shown the same way — the primary role as a
+ * coloured pill, secondary roles as uncoloured pills — and editing happens in
+ * the member editor dialog (components/team/member-editor-dialog.tsx), opened
+ * from the Edit button. `editState` comes from lib/member-access.ts so the
+ * button mirrors what firestore.rules will actually allow.
+ */
 export function MemberRow({
   member,
-  editable,
-  lastAdminBlocked,
-  onPrimaryRoleChange,
-  onToggleSecondaryRole,
-  onToggleAdmin,
+  editState,
+  highlight,
+  onEdit,
 }: {
   member: TeamMember;
-  editable: boolean;
-  /** True when toggling this member's admin off would leave the team with zero admins. */
-  lastAdminBlocked: boolean;
-  onPrimaryRoleChange?: (role: RoleId) => void;
-  onToggleSecondaryRole?: (role: RoleId) => void;
-  onToggleAdmin?: () => void;
+  /** Omit for a read-only roster (non-admins) — no Edit button is shown at all. */
+  editState?: MemberEditState;
+  /** Pulses the theme glow once — set briefly after this member was saved. */
+  highlight?: boolean;
+  onEdit?: () => void;
 }) {
   const primaryRole = getRole(member.primaryRole);
-  // Owner rows can't be edited by anyone through this UI — not even the
-  // owner themself — matching the "nobody, including other admins" rule
-  // from docs/ASSUMPTIONS.md (P1b); also enforced in firestore.rules.
-  const locked = member.isOwner;
-  const rowEditable = editable && !locked;
 
   return (
-    <motion.div layout transition={spring} className="glass-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <motion.div
+      layout="position"
+      transition={spring}
+      animate={
+        highlight
+          ? { boxShadow: ["0 0 0 0 rgba(var(--glow),0)", "0 0 36px 4px rgba(var(--glow),0.55)", "0 0 0 0 rgba(var(--glow),0)"] }
+          : { boxShadow: "0 0 0 0 rgba(var(--glow),0)" }
+      }
+      className="glass-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+    >
       <div className="flex min-w-0 items-center gap-3">
         <Avatar name={member.name} size="sm" />
         <div className="min-w-0">
@@ -57,57 +65,26 @@ export function MemberRow({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-        {rowEditable ? (
-          <Select value={member.primaryRole} onValueChange={(v) => onPrimaryRoleChange?.(v as RoleId)}>
-            <SelectTrigger className="h-8 w-[160px] px-3 text-xs">
-              <SelectValue>{primaryRole.label}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {ROLES.map((r) => (
-                <SelectItem key={r.id} value={r.id}>
-                  {r.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", primaryRole.className)}>{primaryRole.label}</span>
-        )}
+        <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", primaryRole.className)}>{primaryRole.label}</span>
+        {member.secondaryRoles.map((id) => (
+          <Badge key={id} variant="glass" className="text-[10px]">
+            {getRole(id).label}
+          </Badge>
+        ))}
 
-        <div className="flex flex-wrap gap-1">
-          {ROLES.filter((r) => r.id !== member.primaryRole).map((r) => {
-            const active = member.secondaryRoles.includes(r.id);
-            if (!rowEditable && !active) return null;
-            return (
-              <button
-                key={r.id}
-                type="button"
-                disabled={!rowEditable}
-                onClick={() => onToggleSecondaryRole?.(r.id)}
-                className={cn(
-                  "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
-                  active
-                    ? "border-[var(--glass-border)] bg-white/10 text-[var(--foreground)]"
-                    : "border-dashed border-[var(--glass-border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-                  !rowEditable && "cursor-default"
-                )}
-              >
-                {r.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {rowEditable && (
-          <div className="flex items-center gap-1.5" title={lastAdminBlocked ? "At least one admin is required" : undefined}>
-            <Switch checked={member.isAdmin} onCheckedChange={onToggleAdmin} disabled={member.isAdmin && lastAdminBlocked} />
-          </div>
-        )}
-        {locked && member.isAdmin && (
-          <div className="flex items-center gap-1.5" title="Owner status can't be changed here">
-            <Switch checked disabled />
-          </div>
-        )}
+        {editState &&
+          (editState.canEdit ? (
+            <Button size="sm" variant="glass" className="gap-1.5" onClick={onEdit} aria-label={`Edit ${member.name}`}>
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </Button>
+          ) : (
+            <span
+              className="flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-[var(--muted-foreground)]"
+              title={editState.lockedReason ?? undefined}
+            >
+              <Lock className="h-3.5 w-3.5" /> Locked
+            </span>
+          ))}
       </div>
     </motion.div>
   );

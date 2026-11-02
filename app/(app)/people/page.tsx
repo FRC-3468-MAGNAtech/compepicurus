@@ -8,16 +8,21 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CalendarCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { useActiveEvent } from "@/lib/active-event";
-import { useEventAttendance } from "@/lib/event-attendance";
+import { useActiveEvents } from "@/lib/active-event";
+import { useTeamEventAttendance } from "@/lib/event-attendance";
 import { useTeamMembers } from "@/lib/team-members";
 import { getRole, ROLES } from "@/lib/roles";
 
 export default function PeoplePage() {
   const { profile } = useAuth();
   const { members, loaded } = useTeamMembers(profile?.teamId ?? null);
-  const { activeEvent } = useActiveEvent();
-  const { attendance } = useEventAttendance(profile?.teamId ?? null, activeEvent?.code ?? null);
+  const { isActive } = useActiveEvents();
+  const { attendance } = useTeamEventAttendance(profile?.teamId ?? null);
+  // Attending at *any* active event (a team can have several at once).
+  const attendingUids = useMemo(
+    () => new Set(attendance.filter((a) => isActive(a.eventCode)).flatMap((a) => a.uids)),
+    [attendance, isActive]
+  );
   const [query, setQuery] = useState("");
   const filtered = useMemo(
     () => members.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())),
@@ -75,7 +80,7 @@ export default function PeoplePage() {
                       Admin
                     </Badge>
                   )}
-                  {attendance?.uids.includes(p.uid) && (
+                  {attendingUids.has(p.uid) && (
                     <Badge variant="success" className="gap-1 text-[10px]">
                       <CalendarCheck className="h-3 w-3" /> Attending
                     </Badge>

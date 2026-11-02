@@ -1220,6 +1220,436 @@ multi-week season's worth of practice/live/lobby data to rescore against:
   expected, not a bug, but worth knowing if you ever script against the
   exported file.
 
+## FIX1 — Bugfix Pass 1 (Page Jump, Event Selection, Role Editing)
+
+### FIX1-1: pages that start low, then snap into place
+
+**FIX1-1a. Root cause: the page transition left the outgoing page in the
+document flow.** `components/layout/page-transition.tsx` wrapped every route
+in an `AnimatePresence` *without* `mode="wait"` (deliberately — see the old
+comment about pages not appearing), with a `y: 14`/`scale: 0.985` entrance
+and a spring exit. Without `wait`, the exiting page stays mounted, *in flow*,
+for the whole exit spring while the new page mounts right below it — so the
+new page rendered lower than its final position and snapped up when the old
+one unmounted. That is exactly the reported symptom and it applied to every
+route, which is why it looked site-wide. Fix: no `AnimatePresence`, no exit;
+a keyed `motion.div` that fades in with a 4px nudge and a plain 0.18s tween
+(no spring, so position can't overshoot). `pageTransitionVariants` lost its
+`exit`/`scale`; the bouncy springs stay on buttons, cards, and toggles.
+Dropping `AnimatePresence` also avoids the original "new page invisible until
+something re-renders" problem the old comment was guarding against, because
+there is no longer an exit to stall.
+
+**FIX1-1b. Stacked child offsets.** `cardEntranceVariants` (stat cards, the
+Event Selection grid, My Scouting cards, results screens, login/signup)
+entered from `y: 18, scale: 0.97` on top of the page animation. Reduced to
+`y: 4, scale: 0.99` so children can't read as the page starting low.
+
+**FIX1-1c. Late-arriving in-flow elements.** Two real ones:
+- `components/layout/live-match-pill.tsx` is shown whenever a Firestore
+  subscription reports a scout who needs a partner — i.e. *after* the page is
+  already on screen — and it was an in-flow element, so it shoved the whole
+  page down on arrival. It is now a `fixed` overlay below the mobile topbar,
+  clear of the safe-area inset.
+- The Practice Scouting landing inserts panels above the Season picker as
+  their subscriptions resolve (presence, pending robots, "still in a lobby",
+  recent live matches, the Resume banner). It already waited on the paused-
+  session query; it now also waits for the live-sessions, lobby, and presence
+  queries before rendering, so nothing pops in above the picker afterwards.
+
+**FIX1-1d. Checked and *not* a cause** (so nobody re-investigates):
+- *Scroll restoration:* the app is Next.js App Router, whose layout router
+  resets scroll to the top of the new segment before paint on navigation. The
+  only thing that could have made height grow after that was FIX1-1a's
+  lingering old page. I did not add a manual `scrollRestoration` or a
+  `useLayoutEffect` scroll reset — it would fight the router's own handling
+  for no benefit.
+- `VerifyEmailBanner` / `PlaceholderBanner`: the shell renders only after
+  auth has resolved (`user`, and so `emailVerified`, are known at first
+  paint) and the placeholder banner depends on `pathname` alone, so neither
+  arrives late.
+- `ScoresReadyWatcher`'s popup and the mobile `Topbar` are already
+  `fixed`/`sticky` with constant offsets; nothing sets a safe-area offset
+  after mount.
+- Fonts come from `next/font` (self-hosted with size adjustment) so they
+  don't reflow text late; no page container uses a `layout` prop.
+
+**FIX1-1e. How this was verified — and what wasn't.** This environment has no
+Playwright, no browser tooling, and no Java for the Firebase emulators, so I
+could not drive a signed-in browser through every route or record layout
+shift, and **I did not watch the bug before or after**. What I did do: found
+the cause by reading the code, confirmed every route renders through the one
+`PageTransition` wrapper (so the fix covers every nav route, including all
+Analytics subpages — they share the same shell — and the Admin Panel tabs,
+which are in-page state, not routes), and ran `tsc`, `eslint`, `vitest`, and
+`next build`. To confirm in a browser: open DevTools > Performance, enable
+"Layout Shift Regions" (Rendering tab), set CPU to 6x slowdown and network to
+Slow 4G, and click through every sidebar entry — nothing should flash a
+shift region at the top of the page content. A Playwright script
+(visit each route as an emulator test user, sample the first content
+element's `getBoundingClientRect().top` for 1s) is the obvious automated
+follow-up once the emulators can run.
+
+### FIX1-2: Event Selection
+
+**FIX1-2a. `getEventStatus(event, now)` compares calendar days, in the
+event's own timezone.** (`lib/ftc/event-status.ts`.) "Today is between start
+and end" is a date comparison, not an instant one: the old server helper
+parsed the API's date-only strings as UTC midnights, which made an event
+"in progress" the evening before it began for US timezones and "completed"
+the evening of its last day. It now compares `YYYY-MM-DD` strings using the
+event's `timezone` when valid, falling back to the viewer's local day. The
+server action (`lib/ftc/actions.ts`) calls the same helper, so there is one
+definition. `FtcEvent.status` is frozen at fetch time (and copied onto the
+team doc), so **display code recomputes with `getEventStatus` rather than
+trusting `.status`**.
+
+**FIX1-2b. Order, filter, sort.** Default order is In Progress → Upcoming
+(soonest first) → Completed (most recent first). Search narrows first and the
+All/In Progress/Upcoming/Completed counts describe *what the search found*, so
+the segmented control never promises hidden events. Group headings (with
+counts) appear when sorting by Status; the two date sorts are one flat list.
+"Now" is captured once per visit so badges, counts, and groups always agree.
+
+**FIX1-2c. Data model.** `teams/{id}.activeEventCode` (+ `activeSeasonId`,
+`activeEvent`) stay as the **primary** event so nothing that read them
+breaks; `activeEventCodes: string[]` is the full list (always including the
+primary) and `activeEvents: FtcEvent[]` holds the denormalized event objects
+for the same reason `activeEvent` always has (pages don't re-hit the FIRST API
+just to show a name). The user's spec only named `activeEventCodes`; the
+extra array is what lets every consumer render names/dates with no extra
+fetch. `readActiveEvents()` derives a one-event list from a legacy doc at read
+time, so un-migrated teams work immediately; additionally the first *admin*
+session to see an un-migrated team writes `activeEventCodes = [activeEventCode]`
+(`useActiveEvents`, once per team per page load). Primary rules: the first
+selected event is primary; removing the primary promotes the next; the
+Selected-events panel's star changes it. Limit: 10 (`MAX_ACTIVE_EVENTS`).
+
+**FIX1-2d. Rules.** `validActiveEvents()` in `firestore.rules` (only when a
+write carries `activeEventCodes`): a list of at most 10; with a primary it
+must contain the primary, without one it must be empty; `activeEvents` (if
+present) the same length. Limitation worth knowing: **Firestore rules can't
+loop, so "every element is a string" isn't checkable** — the write is
+admin-only and `buildActiveEventsFields()` is the only writer. Writes that
+carry no `activeEventCodes` (a pre-migration doc, or an old single-event
+write) still pass, but on a migrated doc an old-style write that moves only
+the primary is rejected, since it would leave the list out of sync.
+
+**FIX1-2e. Removal confirmation.** Selecting an event no longer *replaces*
+the active one, so the old "Switch active event?" dialog is gone. Removing an
+event now asks first when the team has already scouted Real Event entries for
+it ("scouting data in progress is tied to it"); with no data it just
+removes. I read "in progress" as "any scouted data tied to it" because a
+precise in-progress signal doesn't exist (offline pending writes are per-device
+and invisible to an admin on another device). The dialog says the data is kept.
+
+**FIX1-2f. Consumers of the old single active event** — every one was updated
+(`useActiveEvent()` still exists, returning the primary, but nothing that
+picks an event uses it any more):
+- *Match Scout Form:* an Event select in the Assigned Match section, only when
+  more than one event is active. Default is an In Progress active event
+  (primary preferred if it is one), otherwise the primary
+  (`pickDefaultActiveEvent`). The pick is per-visit state, not persisted.
+  Changing event clears the picked match and team (they belonged to the old
+  event) and any loaded assignment. With one active event nothing is shown and
+  behavior is unchanged.
+- *Assignments:* the event select lists active events first (primary starred),
+  then an "Other events" divider, then the rest of the season. Default is the
+  primary.
+- *Match Analytics:* one event at a time, with an event select (shown only for
+  more than one active event); import/export/recalculate are per event, so
+  merging events into one table would have been wrong for them.
+- *My Scouting:* one "My upcoming assignments" panel per active event.
+- *Scout Accuracy / My Scouting filters:* `useRealEventOptions(entries,
+  activeEvents)` lists active events first, by name, and includes ones with no
+  scouted data yet; data-only events follow, as before.
+- *People:* "Attending" means attending at *any* active event.
+- *Live Practice:* the fallback event (when the stream link doesn't identify
+  one) is `pickDefaultActiveEvent`.
+- *Online/pending-sync indicator:* subscribes to every active event and shows
+  the summed pending count.
+- *Event Selection's own "active event" summary card* (three FIRST API queries)
+  stays for the primary only — one per active event would multiply those calls.
+
+**FIX1-2g. Selected-events panel + condensed bar.** The big panel stays in
+the flow and simply scrolls away; the condensed bar lives in a **zero-height
+`sticky` slot** with an absolutely positioned child, so showing or hiding it
+changes no layout box and nothing below can jump (stronger than reserving the
+panel's height). An `IntersectionObserver` on the big panel (with a
+`rootMargin` equal to the bar's pin offset — below the mobile topbar, clear of
+the safe-area inset) flips it; there is no scroll listener. The bar uses
+`.glass-overlay` (the solid backing the other floating UI uses). The slot has a
+negative bottom margin that cancels the page's `gap-6`, so **the panel must be
+a direct child of the page's `flex flex-col gap-6` root** (noted in its
+docblock). Condensed chips: the first three, then `+N` on tablets and up;
+phones show every chip in a horizontally scrolling row. The bar's top offset
+(5.25rem on phones, 0.75rem at `lg`) is the same one `LiveMatchPill` uses, so
+the two can overlap if both are visible at once on a phone — the pill is
+transient and dismissible, so I left it.
+
+**FIX1-2h. Small things.** The page heading and nav label are now "Active
+Events". Cards show the checkbox affordance only to admins; non-admins see the
+same cards read-only.
+
+### FIX1-3: Team Management role editing
+
+**FIX1-3a. It wasn't actually missing — it was inline and cramped.** The
+prompt says role editing "was never added", but P1 *did* build it: an inline
+primary-role `Select`, tiny secondary-role toggle chips, and an admin `Switch`
+on each `MemberRow`. What genuinely didn't exist: an editor with Save/Cancel,
+audit entries, rules covering last-admin/role validity, and tests. I replaced
+the inline controls with the editor dialog (the cramped inline chips are
+likely why it read as absent) rather than layering a second UI on top.
+
+**FIX1-3b. UX.** Rows show the primary role as a coloured pill and secondary
+roles as uncoloured pills; admins get an **Edit** button (non-admins see no
+button; owner rows show a "Locked" marker with the reason). The dialog
+(`.glass-overlay` backing, 40px touch targets) has a primary-role select whose
+options are the coloured pills, secondary-role toggle chips (the primary is
+excluded — a role can't be both), and the admin switch. Save is disabled until
+something changed; a successful save plays the theme-glow pulse on the dialog
+and then the row, and the change reaches other users through the existing
+realtime roster. Secondary roles are stored normalized (primary removed,
+canonical `ROLES` order) so equal selections compare equal.
+
+**FIX1-3c. Protections, UI and rules both** (`lib/member-access.ts` is the UI
+mirror of the rules; the rules are the enforcement):
+- non-admins edit nothing, their own row included;
+- an owner's roles/admin status can't be changed by anyone, the owner included;
+- an admin may edit their own *roles*;
+- **last-admin safeguard = an admin cannot remove their *own* admin flag.**
+  Rules can't count admins, so "the last admin can't be demoted" is enforced
+  by the equivalent, race-free rule: the only way the last admin could ever be
+  demoted is by themself, and two admins demoting each other simultaneously
+  fails because the second write no longer passes `isAdmin()`. **Behavior
+  change:** an admin who wants to step down now asks another admin (the
+  editor says so); before, the UI allowed self-demotion while 2+ admins
+  existed. The UI also still blocks demoting the sole admin explicitly.
+- rules additionally require real role ids (`validRoleIds()` duplicates
+  `lib/roles.ts` — **keep them in sync when adding a role**), a boolean
+  `isAdmin`, a list `secondaryRoles` of at most 9, and pin `teamId` for admin
+  updates (the self-update rule already did).
+
+**FIX1-3d. Audit.** One `edit-member-roles` entry per save, with
+`target: { targetUid, targetName }` and full `before`/`after` of
+`{ primaryRole, secondaryRoles, isAdmin }`, written **in the same batch** as
+the change (`updateMemberAccess` in `lib/team-members.ts`) so a role change
+can never land without its entry — and if the batch is rejected, no orphan
+entry exists. It appears in the Admin Panel's Audit Log tab under "Edit Member
+Roles". The editor's `before` is the roster row at save time, not at open
+time, so the entry reflects what was really overwritten.
+
+**FIX1-3e. Downstream role filters.** Scout Accuracy and Assignments read
+`primaryRole`/`secondaryRoles` straight off the same `users` docs and nothing
+about their shape changed, so their role filters pick up edits through the
+existing realtime roster; the only difference is that secondaries no longer
+include the primary role (which no UI path produced before either).
+
+### FIX1: verification summary
+
+Run and passing here: `tsc --noEmit`, `eslint` (0 errors; the one existing
+`useVirtualizer` warning is untouched), `vitest` (new: `event-status`,
+`active-events`, `member-access`), and `next build`. After installing
+Microsoft OpenJDK 21 (the Temurin winget package failed its installer-hash
+check, so it was not used), `npm run test:rules` ran the Firestore emulator:
+**all 94 `firestore.rules.test.ts` tests pass**, including the new "FIX1"
+blocks (active events, role editing, the role-change + audit batch). The
+`PERMISSION_DENIED` lines in that output are the expected denials from
+`assertFails`.
+
+**`api-routes.emulator.test.ts` still fails (11 of 12) and is not caused by
+FIX1.** It had never been run before (no Java), and needed two harness fixes
+just to load — a `server-only` alias to `test-stubs/server-only.ts` in
+`vitest.rules.config.ts`, and a runtime-generated throwaway RSA key instead of
+a truncated placeholder PEM (firebase-admin really parses it). Past that, every
+route call returns 401 because the Admin SDK's `verifyIdToken` rejects the Auth
+emulator's tokens — it fails before reaching any route logic. FIX1's only
+change to a route there is two extra fields in `/api/team/create`'s new-team
+document. I did not baseline the suite against the pre-FIX1 code, and I have
+not chased the token-verification failure; it needs its own look.
+**Not run anywhere:** the browser checks in FIX1-1e and a manual pass of the
+Event Selection sticky bar on a real phone.
+
+## P10 — Analytics Foundation, Team Profile, Team Averages & Rankings
+
+**P10-0. No clarifying questions were asked** — nothing blocked; every call
+below is a default I'd have recommended. The prompt's context block says
+React + Vite + React Router; this is still Next.js App Router (see P1-1), so
+"route `/analytics/teams/:teamNumber`" is `app/(app)/analytics/teams/[teamNumber]/page.tsx`
+and `useParams()`/`useSearchParams()` replace React Router's.
+
+### Filters (`lib/analytics/filters.ts`, `filter-context.tsx`, `components/analytics/filter-bar.tsx`)
+
+**P10-1. The URL query string is the single source of truth.** The provider
+parses `useSearchParams()` on every render and writes with
+`window.history.pushState`/`replaceState` (Next's router integrates both —
+documented in `01-getting-started/04-linking-and-navigating.md`), so filters
+are shareable, Back restores them, and nothing needs syncing between React
+state and the URL. The catch: **a plain `<Link>` between Analytics pages would
+silently reset the filters**, so every link between them carries the query —
+`AnalyticsTabs`, the team tables' rows, and Team Profile's links all use
+`AnalyticsLink`/`useAnalyticsHref`. Use those for any new link between
+Analytics pages. A change pushes a history entry (Back undoes it); typing a
+custom accuracy `replace`s instead, so one number isn't a history entry per
+keystroke. Params: `game`, `events` (`all` or comma-separated codes; absent =
+active events), `practice=1`, `mode`, `source`, `acc` (1-100; absent = ALL).
+Only non-defaults are written; other params on the URL (a page's own
+`team=`/`match=`) are preserved (`mergeFilterParams`). Invalid values fall
+back to defaults instead of producing an impossible state. The provider is
+wrapped in `<Suspense>` (required for `useSearchParams`), with a
+fixed-height fallback so the page doesn't shift when it resolves.
+
+**P10-2. Event scope has three kinds, not two.** `active` (default — the
+team's active events via `useActiveEvents()`), `all`, and `custom` (exact
+codes). In **Practice** mode there is no such thing as an "active" library
+event, so `active` reads as every event there (the control says "All events").
+Changing Game or toggling Practice resets the Event scope to the default,
+since the available events differ. Unchecking the last custom event falls
+back to `active` rather than a match-nothing selection. Status chips come from
+`getEventStatus` against the FIRST API event when known (active events, or the
+game's season event list — a cached query shared with Event Selection).
+
+**P10-3. Game select.** Options are `getEnabledSeasons()`; the game id is the
+season id, which equals the form id and the `GAMES` key (all `biobuzz` today).
+`parseFilters` validates it against `GAMES`, so an unknown `game=` falls back.
+
+**P10-4. Single-event mode** is a per-page request: a page calls
+`useSingleEventMode()` and the layout-level bar's Event control becomes a
+single select while it's mounted (the spec's `singleEvent` prop can't be a
+prop, since the bar lives in the layout above every page). Only real-event
+data uses it; Practice still spans events. `useSingleEvent()` resolves the
+page's one event: explicit pick, else `pickDefaultActiveEvent`, else the first
+event with data. **Only Match Scout Analytics uses it** (its Import CSV /
+Recalculate Accuracy act on one event); no P10 page needed it otherwise.
+
+**P10-5. "N of M entries shown".** M = every entry matching Game / Event /
+Practice, *including* excluded ones; N = what a page may use (excluded
+dropped, accuracy threshold applied). The bar also says how many were hidden
+and why. On the raw Match Scout Analytics route there's no accuracy filter and
+excluded entries stay visible, so it reads "M of M" for the pinned event.
+
+### Accuracy filter semantics
+
+**P10-6. Alliance accuracy is read, never recomputed.** Real-event entries
+carry the value the shared engine stored on them (`lib/analytics/recompute.ts`
+via `lib/accuracy/engine.ts`) — `entry.accuracy.value` (0-1) when `status ===
+"complete"`; practice/live entries take their **session's** accuracy
+(practice scoring is per session — P9), and, as Match Scout Analytics has
+always displayed, the entry's `accuracy` is replaced by the session's. The
+catch: a real-event entry that has never been recomputed has no accuracy
+(`null`), so under a threshold it's dropped until someone runs Recalculate
+Accuracy — which already runs after every Scout Form submit.
+
+**P10-7. The threshold compares the whole percent the UI shows** (the same
+`Math.round` `getStatus` uses). An alliance displayed as "75%" passes a 75%
+threshold instead of being dropped for being 74.6. This reads the prompt's "at
+or above the threshold" against what the user can see; if you want the raw
+fraction instead it's one line in `passesAccuracy`.
+
+**P10-8. ALL keeps entries whose accuracy can't be computed; any threshold
+drops them.** Excluded entries are ignored in every case: `entry.excluded` for
+real events, and `session.excluded` (the Config modal's stats exclusion) for
+practice/live entries. Match Scout Analytics is the one place excluded entries
+stay visible.
+
+**P10-9. Custom field**: digits only, at most 3, clamped to 1-100 ("0" → 1,
+"150" → 100, applied on typing; shown clamped on blur). Clicking **Custom**
+with nothing typed leaves the filter at ALL until a number is entered. A value
+that equals a preset (75/85/90) shows as that preset.
+
+### Data layer (`lib/analytics/entries.ts`, `data-context.tsx`)
+
+**P10-10. One subscription.** `AnalyticsDataProvider` (Analytics layout)
+holds a single team-wide `scoutEntries` subscription and, only while Practice
+is on, one `practiceSessions` subscription; pages read via
+`useAnalyticsEntries(filters?, options?)` / `useTeamStats()`. Match Scout
+Analytics previously subscribed to one event's entries; it now reads this shared
+team-wide stream and filters client-side —
+fine at this team's scale (see P9-style reasoning), and it no longer
+re-subscribes when the event changes. `useAnalyticsEntries(filters)` accepts an
+override and `{ applyAccuracy, includeExcluded }`; with neither it returns the
+provider's already-computed selection.
+
+### Team stats and ranking (`lib/analytics/team-stats.ts`)
+
+**P10-11. Definitions** (all schema-driven — iterate `schema.sections`, never
+BIOBUZZ's field names; a test builds stats for an unrelated made-up schema):
+- *stdDev* is the **sample** standard deviation (n-1); 0 with one entry.
+- *consistency* = `100 − (stdDev / avgTotal) × 100`, clamped to 0-100 (higher =
+  steadier; a steady zero-scorer reads 100). The prompt only said "derived from
+  stdDev".
+- *trend*: the last 3 entries by `submittedAt` vs the overall average; needs
+  at least 4 entries (otherwise `direction: null`); "flat" within 5% of the
+  overall average (and at least 1 point).
+- *fieldStats*: counters get avg/high; toggles and checkboxes get a rate
+  (0-100); scored fields also get `avgPoints`. `incidentRates` is every
+  checkbox field (the General incidents), by key.
+- *Element breakdown* (Team Profile's "breakdowns by game element"): added an
+  optional `element` to `ScoutFormField` (`lib/scout-form/schema.ts`) so Hive
+  groups the Autonomous *and* Teleoperated Tip Hive counters, and Park groups
+  Autonomous and Endgame. Unset falls back to the sub-group label, then the
+  field's own label. The elements' points add up to the average score (tested).
+- `buildTeamStats(entries, schema, { teamNumber?, teamName? })` is for ONE
+  team and never filters (callers pass `selectAnalyticsEntries`' `used`);
+  `buildAllTeamStats` groups. `teamName` is an option because the function is
+  pure — names come from the FIRST API (`use-event-data.ts`).
+
+**P10-12. Low-sample teams are unranked.** `rankTeams(stats, metric, min = 2)`
+ranks teams at or above `min` entries with `rankWithTies` (1, 2, 2, 4) and
+lists the rest after them, flagged, with **no rank number** ("—") — otherwise a
+single lucky match could take #1, and giving them ranks would interleave
+numbers with real ones. The Rankings page's Min. entries control (1-5)
+adjusts it; 1 ranks everyone. Values are compared at 2 decimals so float noise
+can't split a genuine tie; ties order by team number. Sorting any column
+reorders rows only — rank numbers come from `rankTeams`.
+
+### Team Profile, Averages, Rankings
+
+**P10-13. Official rank/record** needed a new server action,
+`getRankingsForEvent` (FIRST API `/{season}/rankings/{eventCode}`, parsed
+defensively for `rankings`/`Rankings`). **It is unverified against the live
+API** — this environment has no FIRST credentials, and the field names are
+from memory of the v2.0 API. Any failure or empty result simply omits the
+chip (Team Profile never depends on it). It's only shown for real events (not
+Practice). Team names use the existing `getTeamsForEvent` per event in scope;
+failures leave the name as "—".
+
+**P10-14. Chart.** There was no chart library, so `score-chart.tsx` is plain
+SVG on theme tokens: one series (total score by match) in `--color-accent`
+(7:1+ against both themes' backgrounds, so the graphical-object contrast
+floor holds), a labelled average reference line, hairline solid gridlines,
+8px markers with a 2px surface ring, a snapping crosshair + tooltip that
+also works from the keyboard (arrow keys), and the match list beside it as
+the table view. One series → no legend (the card title names it), and the
+`dataviz` palette validator doesn't apply (no categorical palette). Dense
+series (>40 matches) show only the hovered marker.
+
+**P10-15. Links out of Team Profile.** Each match row links to Match
+Breakdown (`?event=&match=`) and to the raw entry in Match Scout Analytics
+(`?events=&team=&match=`, which that page turns into its initial search).
+**Match Breakdown is still a placeholder** (not in scope), so that link lands
+on the placeholder and its params are not read yet. Back uses
+`router.back()` when there is history and falls back to Team Averages for a
+deep link; filters are in the URL, so they come back with it.
+
+**P10-16. Scope notes.** The filter bar appears above *every* Analytics
+subpage (it's in the layout), including the placeholder pages and Scout
+Status — Scout Status's own page is untouched. The placeholder banner is gone
+from Team Averages, Rankings, and Team Profile (`REALIZED_PAGES`). Team
+Averages' virtualization uses `@tanstack/react-virtual` like the entry table,
+so it shows the same React Compiler "incompatible library" lint *warning*.
+
+### P10: verification
+
+Run and passing: `tsc`, `eslint` (0 errors; 2 `useVirtualizer` warnings),
+`vitest` (new: `filters`, `entries`, `team-stats`, `chart` — 297 tests total),
+`next build`. **Not run:** the Firestore emulator tests (P10 adds no
+collections, fields, or rules, so none were needed) and — importantly —
+**no browser check at all**: this environment can't sign in, so the filter bar's
+URL round-trip, the event popover, the sticky table columns, the chart's
+hover, and every page's layout are verified only by type-checking, build, and
+reading the code. Worth a manual pass (see the commands block below).
+
 ## Commands to run locally
 
 ```bash
@@ -1410,6 +1840,40 @@ npm run dev
 # and "Last export" updates; click "Download Entries (CSV)" -> confirm
 # that downloads too. Confirm every Rescore/Edit/Backup action you just
 # took shows up correctly in the Audit Log tab's filters.
+
+# FIX1: after `firebase deploy --only firestore:rules` (below) and a deploy of
+# this branch: sign in as an admin and open Active Events -> the first admin
+# visit silently migrates the team doc (activeEventCodes = [activeEventCode]).
+# Tap two more events -> confirm both get the check animation + glow, the
+# first stays starred, the Selected events panel lists them, and scrolling
+# down swaps it for the condensed bar (tap it for the popover with remove
+# buttons) with no content jump. Remove an event that already has scouted
+# entries -> confirm the confirmation dialog. Open Match Scout Form -> confirm
+# an Event pick appears (and disappears again with one event active).
+# Team Management -> Edit a member -> change primary/secondary roles + admin
+# -> Save -> confirm the glow, the realtime update in a second browser, and
+# an "Edit Member Roles" row in Admin Panel > Audit Log. Confirm the owner row
+# shows "Locked" and your own admin switch is disabled.
+# Layout check: DevTools > Rendering > Layout Shift Regions, 6x CPU
+# slowdown, click every sidebar entry -> no shift region at the top of the
+# page content.
+npm run test:rules   # needs Java + firebase-tools; includes the new FIX1 blocks
+
+# P10 (no rules or env changes). Open Analytics > Team Averages as an admin:
+# the filter bar should show Game, Events (default 'Active events (N)'),
+# Practice, and the Accuracy ALL / 75% / 85% / 90% / Custom control with an
+# info tooltip and 'N of M entries shown'. Pick 85% -> confirm the URL gains
+# ?acc=85, N drops, then click Rankings / Match Scout Analytics / a team
+# row and confirm the filters carry over (and Back restores them). Match
+# Scout Analytics: no Accuracy control; Event becomes a single select; Import
+# CSV / Recalculate still work. Custom: type 150 -> 100, 0 -> 1, letters
+# ignored, max 3 digits. Toggle Practice -> Mode/Source appear and the event
+# list shows library events. Click a team -> Team Profile: header, tiles,
+# chart hover (and arrow keys), match list links, averages, comments. Open
+# /analytics/teams/99999 -> 'No scouted data' empty state. Rankings: change
+# 'Rank by', raise Min. entries -> low-sample teams drop below, unranked;
+# click column headers -> rank numbers stay put. The official rank chip
+# needs the live FIRST API (FTC_API_* set) — verify its field names there.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

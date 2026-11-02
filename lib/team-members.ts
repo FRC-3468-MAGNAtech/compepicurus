@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, doc, onSnapshot, query, updateDoc, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
+import { buildAuditEntry, newAuditLogRef } from "@/lib/audit-log";
+import type { MemberAccess } from "@/lib/member-access";
 import type { RoleId } from "@/lib/roles";
 
 export type TeamMember = {
@@ -63,14 +65,30 @@ export function useTeamMembers(teamId: string | null) {
   return { members, loaded };
 }
 
-export async function setMemberPrimaryRole(uid: string, role: RoleId) {
-  await updateDoc(doc(db, "users", uid), { primaryRole: role });
-}
+/**
+ * FIX1-3: saves whatever the Team Management editor changed (primary role,
+ * secondary roles, admin flag) *and* its `edit-member-roles` audit entry
+ * (who, whom, before, after) in one atomic batch — so a role change can never
+ * land without its audit record, and teammates get a single realtime change.
+ * Admin-gated at the call site (lib/member-access.ts's getMemberEditState) and
+ * enforced in firestore.rules — owners are untouchable and an admin can't
+ * demote themself. No-op when `changes` is empty.
+ */
+export async function updateMemberAccess(
+  actor: { teamId: string; uid: string; name: string },
+  member: Pick<TeamMember, "uid" | "name"> & MemberAccess,
+  changes: Partial<MemberAccess>
+) {
+  if (Object.keys(changes).length === 0) return;
 
-export async function setMemberSecondaryRoles(uid: string, roles: RoleId[]) {
-  await updateDoc(doc(db, "users", uid), { secondaryRoles: roles });
-}
+  const before: MemberAccess = { primaryRole: member.primaryRole, secondaryRoles: member.secondaryRoles, isAdmin: member.isAdmin };
+  const after: MemberAccess = { ...before, ...changes };
 
-export async function setMemberAdmin(uid: string, isAdmin: boolean) {
-  await updateDoc(doc(db, "users", uid), { isAdmin });
+  const batch = writeBatch(db);
+  batch.update(doc(db, "users", member.uid), changes);
+  batch.set(
+    newAuditLogRef(),
+    buildAuditEntry(actor.teamId, actor.uid, actor.name, "edit-member-roles", { targetUid: member.uid, targetName: member.name }, before, after)
+  );
+  await batch.commit();
 }

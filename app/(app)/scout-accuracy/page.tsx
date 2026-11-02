@@ -12,6 +12,8 @@ import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/permissions";
 import type { RoleId } from "@/lib/roles";
 import { useRealEventOptions, useScoutStats } from "@/lib/scout-stats/use-scout-stats";
+import { useActiveEvents } from "@/lib/active-event";
+import { orderPrimaryFirst } from "@/lib/active-events";
 import type { RankingBasisId, RealEventCalculationScope, ScoutCategory } from "@/lib/scout-stats/types";
 
 export default function ScoutAccuracyPage() {
@@ -47,7 +49,9 @@ export default function ScoutAccuracyPage() {
     rankingBasis: effectiveRankingBasis,
     realEventScope,
   });
-  const eventOptions = useRealEventOptions(sources.entries);
+  const { events: activeEvents, primaryCode } = useActiveEvents();
+  const orderedActiveEvents = useMemo(() => orderPrimaryFirst({ events: activeEvents, primaryCode }), [activeEvents, primaryCode]);
+  const eventOptions = useRealEventOptions(sources.entries, orderedActiveEvents);
 
   const sessionsById = useMemo(() => new Map(sources.sessions.map((s) => [s.id, s])), [sources.sessions]);
 

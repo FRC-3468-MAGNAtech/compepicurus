@@ -21,6 +21,7 @@ import { detectPlatform } from "@/lib/platform";
 import { getSeason } from "@/lib/seasons";
 import { useLibraryMatchesBySeason } from "@/lib/match-library";
 import { useMyActiveLobbyId } from "@/lib/lobby";
+import { useTeamActiveLiveScouts } from "@/lib/live-presence";
 import type { Difficulty } from "@/lib/difficulty";
 import type { MatchRow } from "@/lib/practice-match-rows";
 import {
@@ -51,7 +52,7 @@ export default function PracticeScoutingPage() {
   const usePlaceholder = team?.usePlaceholderVideo ?? false;
 
   const { session: pausedSession, loaded: pausedLoaded } = useOwnPausedSession(teamId, user?.uid ?? null);
-  const { sessions: liveSessions } = useTeamLiveSessions(teamId);
+  const { sessions: liveSessions, loaded: liveSessionsLoaded } = useTeamLiveSessions(teamId);
   const myRecentLiveSessions = liveSessions
     .filter((s) => s.uid === user?.uid && s.status === "completed")
     .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""))
@@ -69,7 +70,8 @@ export default function PracticeScoutingPage() {
   const [lobbyId, setLobbyId] = useState<string | undefined>(undefined);
   const [joinCode, setJoinCode] = useState("");
 
-  const { lobbyId: myActiveLobbyId } = useMyActiveLobbyId(user?.uid ?? null);
+  const { lobbyId: myActiveLobbyId, loaded: lobbyLoaded } = useMyActiveLobbyId(user?.uid ?? null);
+  const { loaded: presenceLoaded } = useTeamActiveLiveScouts(teamId);
 
   const { session: activeSession } = usePracticeSession(activeSessionId);
   const { matches: activeSeasonMatches } = useLibraryMatchesBySeason(activeSession?.seasonId ?? null);
@@ -146,7 +148,11 @@ export default function PracticeScoutingPage() {
     setStep("season");
   };
 
-  if (loading || !pausedLoaded) {
+  // Every source that can insert a panel above the Season picker (presence,
+  // pending robots, "still in a lobby", recent live matches, the Resume
+  // banner) must have answered before the landing renders — otherwise each
+  // one popping in pushed the picker down (FIX1-1).
+  if (loading || !pausedLoaded || !liveSessionsLoaded || !lobbyLoaded || !presenceLoaded) {
     return <div className="glass-card h-64 animate-pulse" />;
   }
 

@@ -54,6 +54,8 @@ export async function POST(request: Request) {
         activeEventCode: null,
         activeSeasonId: null,
         activeEvent: null,
+        activeEventCodes: [],
+        activeEvents: [],
         createdAt: FieldValue.serverTimestamp(),
       });
       txn.set(userRef, {

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { FtcEvent } from "@/lib/ftc/types";
+import { buildActiveEventsFields, type ActiveEventsState } from "@/lib/active-events";
 
 export type TeamDoc = {
   number: number;
@@ -16,6 +17,16 @@ export type TeamDoc = {
   // trip just to show its name/dates — refreshed whenever an admin sets a
   // new one (see setActiveEvent below).
   activeEvent: FtcEvent | null;
+  /**
+   * FIX1: the team can have several active events at once. `activeEventCode`/
+   * `activeSeasonId`/`activeEvent` above stay as the **primary** event so
+   * pre-FIX1 readers keep working; these two hold the full selection (always
+   * including the primary). Optional — absent on teams created before FIX1,
+   * which `readActiveEvents()` (lib/active-events.ts) reads as a one-event list.
+   */
+  activeEventCodes?: string[];
+  /** Denormalized copies of every active event, same reason as `activeEvent`. */
+  activeEvents?: FtcEvent[];
   /** P3: admin-set in Match Library. Optional — absent on teams created before this field existed, treat as `false`. */
   usePlaceholderVideo?: boolean;
 };
@@ -62,13 +73,14 @@ export function useTeamDoc(teamId: string | null) {
   return { team, loaded };
 }
 
-/** Admin-gated at the call site (Event Selection page) via usePermissions(); also enforced in firestore.rules. */
+/** FIX1: writes the whole multi-event selection plus the legacy primary-event fields. Admin-gated at the call site (Event Selection page) via usePermissions(); also enforced in firestore.rules. */
+export async function setActiveEvents(teamId: string, state: ActiveEventsState) {
+  await updateDoc(doc(db, "teams", teamId), buildActiveEventsFields(state));
+}
+
+/** Single-event convenience over setActiveEvents() — replaces the whole selection with this one event (or clears it). */
 export async function setActiveEvent(teamId: string, event: FtcEvent | null) {
-  await updateDoc(doc(db, "teams", teamId), {
-    activeEventCode: event?.code ?? null,
-    activeSeasonId: event?.season ?? null,
-    activeEvent: event ?? null,
-  });
+  await setActiveEvents(teamId, event ? { events: [event], primaryCode: event.code } : { events: [], primaryCode: null });
 }
 
 /** Admin-gated at the call site (Admin Panel > Match Library) via usePermissions(); also enforced in firestore.rules. */

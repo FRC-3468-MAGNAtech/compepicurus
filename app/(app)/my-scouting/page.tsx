@@ -10,8 +10,10 @@ import { MyScoutingCard } from "@/components/scout-stats/my-scouting-card";
 import { PlatformBadge } from "@/components/scout-stats/platform-badge";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
-import { useActiveEvent } from "@/lib/active-event";
+import { useActiveEvents } from "@/lib/active-event";
+import { orderPrimaryFirst } from "@/lib/active-events";
 import { useAssignments } from "@/lib/assignments";
+import type { FtcEvent } from "@/lib/ftc/types";
 import { matchSortValue } from "@/lib/analytics/game-schema";
 import { getPercentColor } from "@/lib/accuracy/engine";
 import { computeScoutStats } from "@/lib/scout-stats/engine";
@@ -21,17 +23,40 @@ import type { RoleId } from "@/lib/roles";
 
 const CATEGORIES: ScoutCategory[] = ["trial", "competitive", "real-event"];
 
+/** One active event's "my upcoming assignments" — its own component because the assignments subscription is a hook, and a team can now have several active events. */
+function UpcomingAssignmentsPanel({ teamId, uid, event }: { teamId: string | null; uid: string; event: FtcEvent }) {
+  const { assignments } = useAssignments(teamId, event.code);
+  const mine = !assignments?.current
+    ? []
+    : assignments.current.slots.filter((s) => s.scoutUid === uid).sort((a, b) => matchSortValue(a) - matchSortValue(b));
+
+  return (
+    <GlassPanel className="flex flex-col gap-3">
+      <h2 className="text-base font-semibold">My upcoming assignments &mdash; {event.name}</h2>
+      {mine.length === 0 ? (
+        <p className="text-sm text-[var(--muted-foreground)]">No assignments yet for this event.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {mine.map((s, i) => (
+            <div key={i} className="glass-card flex items-center gap-3 p-3 text-sm">
+              <Badge variant="glass" className="font-mono">
+                {s.matchType} {s.matchNumber}
+              </Badge>
+              <span>Team {s.teamNumber}</span>
+              <span className="text-[var(--muted-foreground)]">{s.slot}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </GlassPanel>
+  );
+}
+
 export default function MyScoutingPage() {
   const { user, profile } = useAuth();
   const teamId = profile?.teamId ?? null;
-  const { activeEvent } = useActiveEvent();
-  const { assignments } = useAssignments(teamId, activeEvent?.code ?? null);
-
-  const myUpcomingAssignments = (() => {
-    if (!assignments?.current || !user) return [];
-    const mine = assignments.current.slots.filter((s) => s.scoutUid === user.uid);
-    return [...mine].sort((a, b) => matchSortValue(a) - matchSortValue(b));
-  })();
+  const { events: activeEvents, primaryCode } = useActiveEvents();
+  const orderedActiveEvents = useMemo(() => orderPrimaryFirst({ events: activeEvents, primaryCode }), [activeEvents, primaryCode]);
 
   const [roleFilter, setRoleFilter] = useState<RoleId[]>([]);
   const [eventFilter, setEventFilter] = useState<string[]>([]);
@@ -39,7 +64,7 @@ export default function MyScoutingPage() {
   const [realEventScope, setRealEventScope] = useState<RealEventCalculationScope>({ eventCode: null, variant: "plain" });
 
   const sources = useScoutStatsSources(teamId);
-  const eventOptions = useRealEventOptions(sources.entries);
+  const eventOptions = useRealEventOptions(sources.entries, orderedActiveEvents);
 
   // Derived (not effect-corrected — see the matching comment in
   // app/(app)/scout-accuracy/page.tsx) so turning a filter back on restores
@@ -133,26 +158,9 @@ export default function MyScoutingPage() {
             })}
           </div>
 
-          {activeEvent && (
-            <GlassPanel className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold">My upcoming assignments &mdash; {activeEvent.name}</h2>
-              {myUpcomingAssignments.length === 0 ? (
-                <p className="text-sm text-[var(--muted-foreground)]">No assignments yet for this event.</p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {myUpcomingAssignments.map((s, i) => (
-                    <div key={i} className="glass-card flex items-center gap-3 p-3 text-sm">
-                      <Badge variant="glass" className="font-mono">
-                        {s.matchType} {s.matchNumber}
-                      </Badge>
-                      <span>Team {s.teamNumber}</span>
-                      <span className="text-[var(--muted-foreground)]">{s.slot}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </GlassPanel>
-          )}
+          {orderedActiveEvents.map((event) => (
+            <UpcomingAssignmentsPanel key={event.code} teamId={teamId} uid={user.uid} event={event} />
+          ))}
 
           <GlassPanel className="flex flex-col gap-3">
             <h2 className="text-base font-semibold">Recent practice sessions</h2>

@@ -8,6 +8,7 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CounterControl } from "@/components/scout/counter-control";
 import { FieldToggle } from "@/components/scout/field-toggle";
 import { CheckboxTile } from "@/components/scout/checkbox-tile";
@@ -60,6 +61,10 @@ export type ScoutFormProps = {
   mode: ScoutFormMode;
   /** Active event context — only used to look up matches/teams; omit for modes with no live event (e.g. a standalone practice session). */
   activeEvent?: FtcEvent | null;
+  /** FIX1: every active event. With more than one, the Assigned Match section shows an Event pick; with zero or one, behavior is unchanged. */
+  eventChoices?: FtcEvent[];
+  /** Called when the scout picks a different event — the parent swaps `activeEvent` in response. The form clears its match/team itself, since they belonged to the previous event. */
+  onEventChange?: (event: FtcEvent) => void;
   prefill?: ScoutFormPrefill;
   /** Keys shown but not editable: "match", "teamNumber", or any schema field key. Scout Name is always read-only regardless of this list. */
   lockedFields?: string[];
@@ -198,6 +203,8 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
     schema = BIOBUZZ_FORM_SCHEMA,
     mode,
     activeEvent = null,
+    eventChoices = [],
+    onEventChange,
     prefill,
     lockedFields = [],
     hideMatchPicker = false,
@@ -239,6 +246,16 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
       setTeamNumber(prefill.teamNumber);
     }
   }, [prefill?.teamNumber]);
+
+  const handleEventChange = (code: string) => {
+    const next = eventChoices.find((e) => e.code === code);
+    if (!next || next.code === activeEvent?.code) return;
+    // The picked match and team belong to the previous event's schedule/roster.
+    setAssignedMatch(null);
+    setTeamNumber(null);
+    setValidation({});
+    onEventChange?.(next);
+  };
 
   const reset = () => {
     setAssignedMatch(prefill?.match ?? null);
@@ -330,6 +347,23 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
         <section id="assigned-match" className="scroll-mt-20">
           <GlassPanel className="flex flex-col gap-4">
             <h2 className="text-lg font-bold">Assigned Match</h2>
+            {eventChoices.length > 1 && (
+              <div className="sm:max-w-sm">
+                <Label htmlFor="scout-event-picker">Event</Label>
+                <Select value={activeEvent?.code ?? ""} onValueChange={handleEventChange} disabled={isLocked("match")}>
+                  <SelectTrigger id="scout-event-picker">
+                    <SelectValue>{activeEvent?.name ?? "Pick an event"}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {eventChoices.map((e) => (
+                      <SelectItem key={e.code} value={e.code}>
+                        {e.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <Button
                 size="lg"

@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
-import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   assertFails,
   assertSucceeds,
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { setDoc, doc, getDoc, updateDoc, deleteDoc, collection, addDoc } from "firebase/firestore";
+import { setDoc, doc, getDoc, updateDoc, deleteDoc, collection, addDoc, writeBatch } from "firebase/firestore";
 
 // Unverified in this environment — no Java / firebase-tools available here
 // to run the Emulator Suite (see docs/ASSUMPTIONS.md, "P1: rules tests").
@@ -990,5 +990,208 @@ describe("lobbies/{lobbyId}/players/{uid} (P8)", () => {
         allianceTeams: [300, 400],
       })
     );
+  });
+});
+
+describe("FIX1: teams/{teamId} active events", () => {
+  const EVENT_A = { code: "USWABON1", season: 2025, name: "Bonney Lake" };
+  const EVENT_B = { code: "USWASEQ", season: 2025, name: "Seattle Qualifier" };
+
+  it("lets an admin set several active events with the primary in the list", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(
+      updateDoc(doc(db, "teams", TEAM_ID), {
+        activeEventCode: "USWASEQ",
+        activeSeasonId: 2025,
+        activeEvent: EVENT_B,
+        activeEventCodes: ["USWABON1", "USWASEQ"],
+        activeEvents: [EVENT_A, EVENT_B],
+      })
+    );
+  });
+
+  it("lets an admin clear every active event", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(
+      updateDoc(doc(db, "teams", TEAM_ID), {
+        activeEventCode: null,
+        activeSeasonId: null,
+        activeEvent: null,
+        activeEventCodes: [],
+        activeEvents: [],
+      })
+    );
+  });
+
+  it("blocks a non-admin from setting active events", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(
+      updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USWABON1", activeEventCodes: ["USWABON1"], activeEvents: [EVENT_A] })
+    );
+  });
+
+  it("blocks a primary that is not in the list", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(
+      updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USWASEQ", activeEventCodes: ["USWABON1"], activeEvents: [EVENT_A] })
+    );
+  });
+
+  it("blocks a list when there is no primary, and a primary with an empty list", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: null, activeEventCodes: ["USWABON1"], activeEvents: [EVENT_A] }));
+    await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USWABON1", activeEventCodes: [], activeEvents: [] }));
+  });
+
+  it("blocks more than 10 active events", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    const codes = Array.from({ length: 11 }, (_, i) => `EVT${i}`);
+    await assertFails(
+      updateDoc(doc(db, "teams", TEAM_ID), {
+        activeEventCode: "EVT0",
+        activeEventCodes: codes,
+        activeEvents: codes.map((code) => ({ ...EVENT_A, code })),
+      })
+    );
+    await assertSucceeds(
+      updateDoc(doc(db, "teams", TEAM_ID), {
+        activeEventCode: "EVT0",
+        activeEventCodes: codes.slice(0, 10),
+        activeEvents: codes.slice(0, 10).map((code) => ({ ...EVENT_A, code })),
+      })
+    );
+  });
+
+  it("blocks activeEventCodes that is not a list", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USWABON1", activeEventCodes: "USWABON1" }));
+  });
+
+  it("blocks activeEvents whose length does not match activeEventCodes", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(
+      updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USWABON1", activeEventCodes: ["USWABON1", "USWASEQ"], activeEvents: [EVENT_A] })
+    );
+  });
+
+  it("blocks an old-style single-event write that would leave the list out of sync with the primary", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "teams", TEAM_ID), {
+        activeEventCode: "USWABON1",
+        activeEventCodes: ["USWABON1"],
+        activeEvents: [EVENT_A],
+      });
+    });
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { activeEventCode: "USWASEQ" }));
+  });
+});
+
+describe("FIX1: Team Management role editing", () => {
+  it("lets an admin change another member's primary role, secondary roles, and admin flag", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(
+      updateDoc(doc(db, "users", SCOUT_UID), { primaryRole: "drive-team", secondaryRoles: ["media", "pit-scout"], isAdmin: true })
+    );
+  });
+
+  it("lets an admin edit their own roles (admin status has its own last-admin test)", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(updateDoc(doc(db, "users", ADMIN_UID), { primaryRole: "lead-strategist", secondaryRoles: ["team-coach"] }));
+  });
+
+  it("blocks a non-admin from editing anyone's roles or admin flag, their own included", async () => {
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { primaryRole: "lead-scout" }));
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { isAdmin: true }));
+    await assertFails(updateDoc(doc(db, "users", ADMIN_UID), { secondaryRoles: ["media"] }));
+    await assertFails(updateDoc(doc(db, "users", ADMIN_UID), { isAdmin: false }));
+  });
+
+  it("protects an owner: no admin can change their roles or admin status", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { primaryRole: "media" }));
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { secondaryRoles: ["media"] }));
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { isAdmin: false }));
+  });
+
+  it("protects an owner from themself too", async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { secondaryRoles: ["media"] }));
+    await assertFails(updateDoc(doc(db, "users", OWNER_UID), { isAdmin: false }));
+  });
+
+  it("last-admin safeguard: an admin cannot remove their own admin flag", async () => {
+    // Rules cannot count admins, but a self-demotion is the only way the last admin could ever be demoted.
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(adminDb, "users", ADMIN_UID), { isAdmin: false }));
+  });
+
+  it("last-admin safeguard: another admin can still demote an admin, and the demoted one loses admin rights", async () => {
+    const ownerDb = testEnv.authenticatedContext(OWNER_UID).firestore();
+    await assertSucceeds(updateDoc(doc(ownerDb, "users", ADMIN_UID), { isAdmin: false }));
+    const adminDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(adminDb, "users", SCOUT_UID), { primaryRole: "media" }));
+  });
+
+  it("two admins cannot demote each other: the second write no longer passes isAdmin()", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { isAdmin: true });
+    });
+    const aDb = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    const bDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(updateDoc(doc(aDb, "users", SCOUT_UID), { isAdmin: false }));
+    await assertFails(updateDoc(doc(bDb, "users", ADMIN_UID), { isAdmin: false }));
+  });
+
+  it("blocks a role id that is not one of the team's roles", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { primaryRole: "supreme-leader" }));
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { secondaryRoles: ["media", "supreme-leader"] }));
+  });
+
+  it("blocks a malformed role write (secondaryRoles not a list, isAdmin not a boolean)", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { secondaryRoles: "media" }));
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { isAdmin: "yes" }));
+  });
+
+  it("blocks an admin from moving a member to a different team", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { teamId: OTHER_TEAM_ID }));
+  });
+});
+
+describe("FIX1: role change + audit entry in one batch (lib/team-members.ts updateMemberAccess)", () => {
+  it("lets an admin commit a role change and its audit entry together", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    const batch = writeBatch(db);
+    batch.update(doc(db, "users", SCOUT_UID), { primaryRole: "drive-team", secondaryRoles: ["media"] });
+    batch.set(doc(collection(db, "auditLog")), {
+      teamId: TEAM_ID,
+      uid: ADMIN_UID,
+      actorName: "Admin Person",
+      action: "edit-member-roles",
+      target: { targetUid: SCOUT_UID, targetName: "Scout Person" },
+      before: { primaryRole: "match-scout", secondaryRoles: [], isAdmin: false },
+      after: { primaryRole: "drive-team", secondaryRoles: ["media"], isAdmin: false },
+      createdAt: new Date(),
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("rejects the whole batch when the role change is not allowed, so no orphan audit entry is written", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    const auditRef = doc(collection(db, "auditLog"));
+    const batch = writeBatch(db);
+    batch.update(doc(db, "users", OWNER_UID), { primaryRole: "media" });
+    batch.set(auditRef, { teamId: TEAM_ID, uid: ADMIN_UID, actorName: "Admin Person", action: "edit-member-roles", target: {}, before: null, after: null, createdAt: new Date() });
+    await assertFails(batch.commit());
+
+    // The owner's row is untouched — and with the batch rejected, so is the audit log.
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snap = await getDoc(doc(ctx.firestore(), "users", OWNER_UID));
+      expect(snap.data()?.primaryRole).toBe("lead-scout");
+    });
   });
 });

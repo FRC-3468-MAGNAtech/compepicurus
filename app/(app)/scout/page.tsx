@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScoutForm, type ScoutFormValues } from "@/components/scout/scout-form";
 import type { AssignedMatch } from "@/components/scout/match-picker-dialog";
-import { useActiveEvent } from "@/lib/active-event";
+import { useActiveEvents } from "@/lib/active-event";
+import { orderPrimaryFirst, pickDefaultActiveEvent } from "@/lib/active-events";
 import { useAuth } from "@/lib/auth";
 import { useAssignments } from "@/lib/assignments";
 import { useTeamScoutEntries, saveEntry, type ScoreBreakdown } from "@/lib/scout-entries";
@@ -39,8 +40,16 @@ function syntheticAssignedMatch(matchType: FtcMatch["type"], matchNumber: number
 }
 
 export default function MatchScoutFormPage() {
-  const { activeEvent } = useActiveEvent();
+  const { events, primaryCode } = useActiveEvents();
   const { user, profile } = useAuth();
+  // Fixed per visit; only used to prefer an In Progress event as the default.
+  const [now] = useState(() => Date.now());
+  const [pickedEventCode, setPickedEventCode] = useState<string | null>(null);
+  const eventChoices = orderPrimaryFirst({ events, primaryCode });
+  // The scout's own pick wins while that event is still active; otherwise an
+  // In Progress active event, otherwise the primary. With one active event all
+  // of this collapses to that event, exactly as before.
+  const activeEvent = events.find((e) => e.code === pickedEventCode) ?? pickDefaultActiveEvent({ events, primaryCode }, now);
   const name = profile?.name ?? "";
   const teamId = profile?.teamId ?? null;
 
@@ -129,6 +138,12 @@ export default function MatchScoutFormPage() {
       <ScoutForm
         mode="event"
         activeEvent={activeEvent}
+        eventChoices={eventChoices}
+        onEventChange={(event) => {
+          setPickedEventCode(event.code);
+          // An assignment loaded for the previous event doesn't apply to this one.
+          setLoadedAssignment(null);
+        }}
         prefill={{ scoutName: name, ...loadedAssignment }}
         onSubmit={handleSubmit}
       />

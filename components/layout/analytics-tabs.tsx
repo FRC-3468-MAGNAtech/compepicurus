@@ -5,16 +5,20 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { analyticsNav } from "@/lib/nav";
 import { spring } from "@/lib/motion";
+import { useAnalyticsHref } from "@/lib/analytics/filter-context";
 
 export function AnalyticsTabs() {
   const pathname = usePathname();
+  // Tabs carry the filters in the URL so they persist from subpage to subpage.
+  const withFilters = useAnalyticsHref();
 
   return (
     <div className="glass-pill mb-6 flex w-full flex-wrap items-center gap-1 overflow-x-auto p-1.5">
       {analyticsNav.map((item) => {
-        const active = pathname === item.href;
+        // A Team Profile (/analytics/teams/254) is reached from Team Averages / Rankings; keep Team Averages lit.
+        const active = pathname === item.href || (item.href === "/analytics/team-averages" && pathname.startsWith("/analytics/teams/"));
         return (
-          <Link key={item.href} href={item.href} className="relative">
+          <Link key={item.href} href={withFilters(item.href)} className="relative">
             <motion.div
               whileHover={{ scale: active ? 1 : 1.03 }}
               whileTap={{ scale: 0.97 }}

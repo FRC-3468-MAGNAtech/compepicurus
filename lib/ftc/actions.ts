@@ -4,13 +4,14 @@ import { getDefaultSeason } from "./config";
 import { ftcFetch, FtcApiError } from "./http";
 import { fetchMatchesForEventInternal } from "./matches-internal";
 import { buildPlayoffBracket } from "./bracket";
+import { getEventStatus } from "./event-status";
 import { requireUser } from "@/lib/server/require-user";
 import type {
   ActionResult,
   BracketStructure,
-  EventLifecycleStatus,
   FtcEvent,
   FtcMatch,
+  FtcRanking,
   FtcTeam,
   MatchType,
 } from "./types";
@@ -57,16 +58,6 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   }
 }
 
-function eventStatus(dateStart: string, dateEnd: string): EventLifecycleStatus {
-  const now = Date.now();
-  const start = new Date(dateStart).getTime();
-  // dateEnd from the API is a date (no time) — treat it as end-of-day.
-  const end = new Date(dateEnd).getTime() + 24 * 60 * 60 * 1000 - 1;
-  if (now < start) return "upcoming";
-  if (now > end) return "completed";
-  return "in-progress";
-}
-
 function toFtcEvent(raw: RawEvent, season: number): FtcEvent {
   return {
     code: raw.code,
@@ -80,7 +71,28 @@ function toFtcEvent(raw: RawEvent, season: number): FtcEvent {
     venue: raw.venue ?? null,
     website: raw.website ?? null,
     timezone: raw.timezone ?? null,
-    status: eventStatus(raw.dateStart, raw.dateEnd),
+    status: getEventStatus({ dateStart: raw.dateStart, dateEnd: raw.dateEnd, timezone: raw.timezone ?? null }),
+  };
+}
+
+type RawRanking = {
+  rank?: number;
+  teamNumber?: number;
+  wins?: number;
+  losses?: number;
+  ties?: number;
+  matchesPlayed?: number;
+};
+
+function toFtcRanking(raw: RawRanking): FtcRanking | null {
+  if (typeof raw.teamNumber !== "number" || typeof raw.rank !== "number") return null;
+  return {
+    teamNumber: raw.teamNumber,
+    rank: raw.rank,
+    wins: raw.wins ?? 0,
+    losses: raw.losses ?? 0,
+    ties: raw.ties ?? 0,
+    matchesPlayed: raw.matchesPlayed ?? (raw.wins ?? 0) + (raw.losses ?? 0) + (raw.ties ?? 0),
   };
 }
 
@@ -130,6 +142,21 @@ export async function getTeamsForEvent(eventCode: string, season?: number): Prom
   return run(async () => {
     const res = await ftcFetch<{ teams: RawTeam[] }>(`/${resolvedSeason}/teams`, { eventCode });
     return res.teams.map(toFtcTeam).sort((a, b) => a.teamNumber - b.teamNumber);
+  });
+}
+
+/**
+ * Official qualification rankings (rank + win/loss/tie record). Empty until
+ * the event has played qualification matches; callers treat an error or an
+ * empty list as "no official rank available" rather than a failure (Team
+ * Profile just omits the rank chip).
+ */
+export async function getRankingsForEvent(eventCode: string, season?: number): Promise<ActionResult<FtcRanking[]>> {
+  if (!(await requireUser())) return UNAUTHORIZED_RESULT;
+  const resolvedSeason = season ?? getDefaultSeason();
+  return run(async () => {
+    const res = await ftcFetch<{ rankings?: RawRanking[]; Rankings?: RawRanking[] }>(`/${resolvedSeason}/rankings/${eventCode}`);
+    return (res.rankings ?? res.Rankings ?? []).map(toFtcRanking).filter((r): r is FtcRanking => r !== null);
   });
 }
 

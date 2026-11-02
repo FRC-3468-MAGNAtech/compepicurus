@@ -25,6 +25,16 @@ export type FtcTeam = {
   rookieYear: number | null;
 };
 
+/** One row of an event's official qualification rankings (FIRST API `/rankings/{eventCode}`). */
+export type FtcRanking = {
+  teamNumber: number;
+  rank: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  matchesPlayed: number;
+};
+
 export type MatchType = "Practice" | "Qualification" | "Playoff";
 
 export type FtcMatch = {

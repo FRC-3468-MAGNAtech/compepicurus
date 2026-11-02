@@ -21,6 +21,32 @@ service cloud.firestore {
       return isSignedIn() && myProfile().isAdmin == true;
     }
 
+    // FIX1: the ids in lib/roles.ts's ROLES — keep in sync when a role is added.
+    function validRoleIds() {
+      return ['match-scout', 'pit-scout', 'pit-team', 'drive-team', 'lead-scout',
+              'lead-strategist', 'team-coach', 'media', 'judge-awards'];
+    }
+
+    // FIX1: a team can have several active events. `activeEventCode` stays
+    // as the *primary* (so pre-FIX1 readers keep working) and
+    // `activeEventCodes` is the full list. Only checked when the write
+    // actually carries `activeEventCodes`, so a pre-migration team doc (and
+    // the old single-event write) still passes. Rules can't loop over a list,
+    // so the per-element "is a string" check isn't expressible here — only
+    // admins can write this field (see below) and lib/active-events.ts
+    // always builds it from event codes; see docs/ASSUMPTIONS.md (FIX1).
+    function validActiveEvents() {
+      let d = request.resource.data;
+      return !('activeEventCodes' in d) || (
+        d.activeEventCodes is list
+        && d.activeEventCodes.size() <= 10
+        && (d.activeEventCode == null
+          ? d.activeEventCodes.size() == 0
+          : d.activeEventCode is string && d.activeEventCode in d.activeEventCodes)
+        && (!('activeEvents' in d) || (d.activeEvents is list && d.activeEvents.size() == d.activeEventCodes.size()))
+      );
+    }
+
     match /teams/{teamId} {
       // P1b: no more public read. Team lookup by join code, the first-run
       // "does a team exist" check, and team creation itself all moved
@@ -35,9 +61,9 @@ service cloud.firestore {
       allow create: if false;
 
       // Admins of *this* team can still update its settings directly
-      // (active event/season — see lib/team.ts's setActiveEvent) the same
-      // way as P1.
-      allow update: if sameTeam(teamId) && isAdmin();
+      // (active events/season — see lib/team.ts's setActiveEvents) the same
+      // way as P1, FIX1 adding the active-events shape check above.
+      allow update: if sameTeam(teamId) && isAdmin() && validActiveEvents();
       allow delete: if false;
     }
 
@@ -67,9 +93,28 @@ service cloud.firestore {
       // either way (only app/api/auth/sync-roles, via the Admin SDK, which
       // bypasses these rules). P1b: "nobody, including other admins" can
       // edit an owner's row — see docs/ASSUMPTIONS.md.
+      //
+      // FIX1 tightened this three ways:
+      //  - the roles written must be real role ids (a primary, plus a list
+      //    of secondaries) and isAdmin a boolean — Team Management's role
+      //    editor is the only writer;
+      //  - teamId can't be moved (previously only the self-update rule
+      //    pinned it);
+      //  - last-admin safeguard: an admin can't remove their *own* admin
+      //    flag. Rules can't count admins, but this is equivalent and
+      //    race-free — the last admin can only be demoted by themself, and
+      //    two admins demoting each other at once fail because the second
+      //    write no longer passes isAdmin(). To step down, ask another admin.
       allow update: if sameTeam(resource.data.teamId) && isAdmin()
         && resource.data.isOwner != true
-        && request.resource.data.isOwner == resource.data.isOwner;
+        && request.resource.data.isOwner == resource.data.isOwner
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.isAdmin is bool
+        && request.resource.data.primaryRole in validRoleIds()
+        && request.resource.data.secondaryRoles is list
+        && request.resource.data.secondaryRoles.size() <= 9
+        && request.resource.data.secondaryRoles.hasOnly(validRoleIds())
+        && (request.auth.uid != uid || request.resource.data.isAdmin == true);
 
       allow delete: if false;
     }

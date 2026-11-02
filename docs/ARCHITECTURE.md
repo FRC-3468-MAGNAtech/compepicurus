@@ -56,9 +56,11 @@ docs/ASSUMPTIONS.md, P1b-1.
 | `number` | `number` | FTC team number |
 | `name` | `string \| null` | Optional team name (P1b) |
 | `joinCode` | `string` | Random 6-char code (no ambiguous 0/O/1/I). No longer publicly readable (P1b — see `firestore.rules` and P1b-1); only a team's own members can read it, mainly so Team Management can show it to admins |
-| `activeEventCode` | `string \| null` | FIRST API event code |
+| `activeEventCode` | `string \| null` | FIRST API event code of the **primary** active event. Since FIX1 a team can have several active events; this stays pointed at the primary so pre-FIX1 readers keep working |
 | `activeSeasonId` | `number \| null` | FIRST API season year |
-| `activeEvent` | `FtcEvent \| null` | Denormalized full event object (P1-5) so pages don't need a second API round-trip just to show the active event's name/dates |
+| `activeEvent` | `FtcEvent \| null` | Denormalized full event object (P1-5) so pages don't need a second API round-trip just to show the active event's name/dates — the primary event |
+| `activeEventCodes` | `string[]` (FIX1, optional) | Every active event's code, in selection order, **always including the primary** (`activeEventCode`); empty iff there is no primary. At most 10. Absent on pre-FIX1 teams — `readActiveEvents()` reads those as `[activeEventCode]` and an admin's session persists it. Validated in `firestore.rules` (`validActiveEvents()`) |
+| `activeEvents` | `FtcEvent[]` (FIX1, optional) | Denormalized event objects for `activeEventCodes`, same order and length (same reason as `activeEvent`) |
 | `usePlaceholderVideo` | `boolean` (P3, optional) | Admin Panel > Match Library's "Use placeholder video for testing" — absent on teams created before this field existed, treat as `false` |
 | `createdAt` | `Timestamp` | |
 
@@ -85,9 +87,9 @@ only ever touched by the Admin SDK from `app/api/public/config`,
 | `name` | `string` | |
 | `email` | `string` | Mirrors the Firebase Auth email |
 | `teamId` | `string` | References a `teams/{teamId}` doc |
-| `primaryRole` | `RoleId` | One of `lib/roles.ts`'s `ROLES`; shown as a colored pill |
-| `secondaryRoles` | `RoleId[]` | Shown as neutral pills |
-| `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management |
+| `primaryRole` | `RoleId` | One of `lib/roles.ts`'s `ROLES`; shown as a colored pill. Admin-editable in Team Management's editor (FIX1); `firestore.rules` requires a real role id |
+| `secondaryRoles` | `RoleId[]` | Shown as neutral pills. Stored normalized since FIX1: primary removed, canonical `ROLES` order, at most 9 |
+| `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management. Changed only by another admin (FIX1: never by the admin themself — the last-admin safeguard — and never on an owner) |
 | `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own (see P1b-3) |
 | `themeId` | `string` | Applied once the profile first loads (see `app/(app)/layout.tsx`) |
 | `createdAt` | `Timestamp` | |
@@ -265,6 +267,11 @@ including admins, can update or delete an entry, so it stays a trustworthy
 record. `firestore.rules` never restricts the `action` value itself (only
 `uid`/`teamId` on create), so P9 added its five new action strings purely
 in `lib/audit-log.ts`'s `AuditAction` union — no rules change needed.
+FIX1 added `edit-member-roles` (Team Management's role editor): `target`
+`{ targetUid, targetName }`, `before`/`after` `{ primaryRole, secondaryRoles,
+isAdmin }`, written in the same batch as the role change itself
+(`lib/team-members.ts`'s `updateMemberAccess`, using `buildAuditEntry`/
+`newAuditLogRef` from `lib/audit-log.ts`).
 
 | Field | Type |
 |---|---|
@@ -378,16 +385,40 @@ the whole team, writable only by that uid (create/update/delete).
   account-linking-conflict pair `pendingGoogleLink`/`completeGoogleLink`.
 - `lib/team.ts` — `useTeamDoc(teamId)` (realtime `onSnapshot` on a specific
   `teams/{teamId}` — `teamId` comes from the caller's own profile, not a
-  fixed id; see P1b-1) and `setActiveEvent(teamId, event)` (admin-gated at
-  call sites via `usePermissions()`, enforced again in `firestore.rules`).
-- `lib/active-event.tsx` — thin shim over `lib/team.ts` so every existing
-  consumer (Event Selection, Scout Form, Match Analytics) keeps calling
-  `useActiveEvent()` with no arguments — it resolves `teamId` from
-  `useAuth().profile` internally.
+  fixed id; see P1b-1), `setActiveEvents(teamId, state)` (FIX1: writes the
+  whole multi-event selection plus the legacy primary fields) and
+  `setActiveEvent(teamId, event)` (replaces the selection with one event).
+  Admin-gated at call sites via `usePermissions()`, enforced again in
+  `firestore.rules`.
+- `lib/active-event.tsx` — **`useActiveEvents()`** (FIX1) → `{ events,
+  primary, primaryCode, isActive(code), loaded }`, realtime, resolves
+  `teamId` from `useAuth().profile`; also persists the one-time
+  `activeEventCodes` migration from an admin's session. Everything that
+  picks or filters by event uses this. `useActiveEvent()` remains as a shim
+  returning just the primary.
+- `lib/active-events.ts` (FIX1, pure, tested) — `readActiveEvents(team)`,
+  `toggleActiveEvent`/`setPrimaryActiveEvent` (selection rules: first
+  selected is primary, removing the primary promotes the next, max
+  `MAX_ACTIVE_EVENTS = 10`), `buildActiveEventsFields(state)` (the exact
+  fields written to the team doc), `needsActiveEventsMigration`,
+  `orderPrimaryFirst`, and `pickDefaultActiveEvent(state, now)` (an In
+  Progress active event, else the primary — the default for the Scout Form,
+  Match Analytics, and Live Practice).
+- `lib/ftc/event-status.ts` (FIX1, pure, tested) — `getEventStatus(event,
+  now)` (calendar-day comparison in the event's timezone — the single
+  definition; the FIRST API server action uses it too), `sortEvents(events,
+  "status" | "newest" | "oldest", now)`, `countEventsByStatus`. Display code
+  recomputes status with this instead of trusting the frozen `FtcEvent.status`.
 - `lib/team-members.ts` — `useTeamMembers(teamId)` (realtime roster) plus
-  `setMemberPrimaryRole`/`setMemberSecondaryRoles`/`setMemberAdmin`. Backs
-  both Team Management (editable) and People (read-only). `TeamMember` now
-  carries `isOwner` too (P1b).
+  `updateMemberAccess(actor, member, changes)` (FIX1: the editor's save — the
+  role/admin change and its `edit-member-roles` audit entry in one atomic
+  batch; replaces the old `setMemberPrimaryRole`/`setMemberSecondaryRoles`/
+  `setMemberAdmin`). Backs both Team Management (editable) and People
+  (read-only). `TeamMember` now carries `isOwner` too (P1b).
+- `lib/member-access.ts` (FIX1, pure, tested) — `getMemberEditState(actor,
+  member, adminCount)` (the UI mirror of `firestore.rules`: non-admins edit
+  nothing, owners are locked, no self-demotion, no demoting the sole admin),
+  `diffMemberAccess`, `normalizeSecondaryRoles`.
 - `lib/roles.ts` — the 9-role config (`ROLES`, `RoleId`, `getRole`,
   `DEFAULT_ROLE_ID`), each with a fixed Tailwind color token.
 - `lib/permissions.ts` — `usePermissions()` → `{ isAdmin, isOwner,
@@ -402,9 +433,22 @@ the whole team, writable only by that uid (create/update/delete).
   season)`: recomputes accuracy + auto flags for every entry in an event
   against live official match data.
 - `components/layout/connection-status.tsx` — the nav Online/Offline/"N
-  pending sync" indicator, scoped to the active event's entries.
-- `components/team/member-row.tsx` — shared member display, editable
-  (admin) or read-only, used by Team Management and People.
+  pending sync" indicator, scoped to the active events' entries (summed).
+- `components/team/member-row.tsx` — member display for Team Management:
+  coloured primary pill, uncoloured secondary pills, and (admins) an Edit
+  button / "Locked" marker driven by `getMemberEditState`.
+- `components/team/member-editor-dialog.tsx` (FIX1) — the admin role editor:
+  primary select, secondary toggles, admin switch, Save/Cancel, glow on save.
+  Mount with a fresh `key` per open.
+- `components/event/selected-events-panel.tsx` (FIX1) — the Event
+  Selection "Selected events" panel and its condensed sticky bar (zero-height
+  sticky slot + IntersectionObserver; never moves content). Also exports
+  `STATUS_BADGE`/`formatDateRange`. Render it as a direct child of the page's
+  `flex flex-col gap-6` root.
+- `components/layout/page-transition.tsx` — fade-in-only route wrapper
+  (FIX1-1): no `AnimatePresence`/exit, so an outgoing page can never linger in
+  flow and push the new one down. `lib/motion.ts`'s `pageTransitionVariants`
+  is `opacity` + a 4px nudge, `cardEntranceVariants` is `y: 4`.
 
 ### Auth proxy (server-side)
 
@@ -1130,6 +1174,103 @@ this needed no new rules.
   (unchanged from P3), Sessions, Rescore, Audit Log, Backups. The
   Owner-only "Allow team creation" toggle stays outside the tabs,
   unchanged.
+
+### Analytics foundation, Team Profile, Team Averages & Rankings (P10)
+
+No new collections, fields, or rules. P10 adds a shared client-side layer that
+every Analytics subpage reads, plus three pages. Everything below lives under
+`lib/analytics/` and `components/analytics/` unless noted.
+
+**Routes.** `/analytics/team-averages`, `/analytics/rankings`, and
+`/analytics/teams/[teamNumber]` (Team Profile — nested under Analytics so
+filters carry over; the tab bar keeps "Team Averages" lit for it).
+`/analytics/match-scout` was retrofitted onto the same filters. Scout Status,
+Match Breakdown, Team Breakdown, and Pick List are still placeholders.
+
+**Mounted once, in the Analytics layout** (`components/analytics/analytics-shell.tsx`,
+a client component the server layout renders): `<Suspense>` →
+`AnalyticsFilterProvider` → `AnalyticsDataProvider` → tabs + `AnalyticsFilterBar`
++ the page. Next keeps the layout mounted across subpages, so filters and the
+subscription persist.
+
+**Filter state — `filters.ts` (pure, tested) + `filter-context.tsx`.**
+`AnalyticsFilters = { gameId, events: EventScope, practice, practiceMode,
+practiceSource, accuracy }`; `EventScope = {kind:"active"} | {kind:"all"} |
+{kind:"custom", codes}`; `accuracy` is `null` (ALL) or a whole percent 1-100.
+The **URL is the source of truth**:
+
+| Param | Meaning | Default (omitted) |
+|---|---|---|
+| `game` | game/season id | `biobuzz` |
+| `events` | `all`, or comma-separated event codes | the active events |
+| `practice` | `1` = practice/live data | off |
+| `mode` / `source` | `trial`\|`competitive` / `practice`\|`live` (only with `practice=1`) | both |
+| `acc` | accuracy threshold, 1-100 | ALL |
+
+Pure helpers: `parseFilters`, `serializeFilters`, `filtersToQuery`,
+`mergeFilterParams` (keeps non-filter params), `resolveEventCodes(filters,
+activeCodes)` (→ codes, or `null` = unrestricted), `resolveSingleEventCode`,
+`clampAccuracy`/`sanitizeAccuracyText`/`parseAccuracyText`, `ACCURACY_PRESETS`.
+Hooks/components: `useAnalyticsFilters()` → `{ filters, setFilters(patch,
+"push"|"replace"), resetFilters, query, singleEvent }`;
+`useAnalyticsHref()` and `<AnalyticsLink href params>` (**use these for every
+link between Analytics pages** — a bare `<Link>` drops the filters);
+`useSingleEventMode()` (a page's request that the Event control be a single
+select — Match Scout Analytics uses it).
+
+**Entry selection — `entries.ts` (pure, tested).** `AnalyticsEntry =
+ScoutEntry & { allianceAccuracy: number | null /* 0-100 */, isExcluded }`.
+`toAnalyticsEntry(entry, session?)` joins accuracy **without recomputing it**:
+real-event entries use their stored engine result, practice/live entries their
+session's (and take its `accuracy` and exclusion). `isInScope` (Game / Event /
+Practice mode+source), `passesAccuracy(entry, threshold)` (compares the
+displayed whole percent; `null` threshold = ALL keeps uncomputable entries; a
+threshold drops them), and `selectAnalyticsEntries({ entries, sessionsById,
+filters, activeEventCodes }, { applyAccuracy = true, includeExcluded = false })`
+→ `{ scope, used }`. `scope` is "M" in "N of M entries shown"; `used` is what
+pages may use (excluded always dropped unless `includeExcluded`).
+
+**Data layer — `data-context.tsx`.** `AnalyticsDataProvider` holds the one
+team-wide `scoutEntries` subscription (plus `practiceSessions` only while
+Practice is on, and the library for practice event names), the FIRST-API event
+directory, the event options for the filter bar, the shared `selection`, and
+the shared `teamStats`. Hooks: `useAnalyticsEntries(filters?, options?)` →
+`{ entries, scope, usedCount, scopeCount, loaded, filters, schema }` (no args =
+the already-computed shared selection; Match Scout Analytics passes
+`{ applyAccuracy: false, includeExcluded: true }`); `useTeamStats()` →
+`{ teamStats, teamNames, loaded, schema, entries }`; `useSingleEvent()` →
+`{ code, event }`; `useAnalyticsData()` for the extras (`sessionsById`,
+`eventOptions`, `activeEvents`, `eventDirectory`, `season`).
+
+**Team stats — `team-stats.ts` (pure, tested, schema-driven).**
+`buildTeamStats(entries, schema, { teamNumber?, teamName? })` → `TeamStats`
+(`teamNumber`, `teamName`, `entryCount`, `matchesScouted[]`, `avgTotal`,
+`medianTotal`, `highTotal`, `lowTotal`, `stdDev` (sample), `consistency` (100 −
+coefficient of variation, 0-100), `avgAuto`/`avgTeleop`/`avgEndgame`,
+`fieldStats{ key → { avg, high, rate, avgPoints, ... } }`, `incidentRates`,
+`elementBreakdown[]`, `avgAccuracy`, `trend`). `buildAllTeamStats` groups by
+team. Ranking: `rankTeams(teamStats, metric, minEntries = 2)` →
+`RankedTeam[]` (`rank` via `rankWithTies`; teams below `minEntries` are
+flagged, listed last, and have `rank: null`), `lowSample(stats, min)`,
+`RANK_METRICS`, `metricValue`, `schemaFieldMeta(schema)`, `TREND_RECENT_COUNT`,
+`DEFAULT_MIN_ENTRIES`. `ScoutFormField` gained an optional **`element`**
+(`lib/scout-form/schema.ts`) that groups points by game element across phases.
+`chart.ts` has `niceTicks` (axis ticks).
+
+**FIRST API joins — `use-event-data.ts`.** `useTeamNames(requests)` (team
+number → name) and `useEventRankings(requests)` (event code → rankings), both
+with a tab-level cache and silent failure. New server action
+`getRankingsForEvent(eventCode, season)` in `lib/ftc/actions.ts` (type
+`FtcRanking` in `lib/ftc/types.ts`) — unverified against the live API.
+
+**Components.** `filter-bar.tsx` (`AnalyticsFilterBar`, `isRawAnalyticsRoute`),
+`event-multiselect.tsx`, `team-table.tsx` (`TeamTable` — virtualized, sticky
+header + sticky columns, rows are `AnalyticsLink`s to the profile),
+`team-bits.tsx` (`TeamCell`, `InlineBar`, `LowSampleBadge`), `score-chart.tsx`
+(SVG line chart), `analytics-link.tsx`, `analytics-shell.tsx`; and
+`components/ui/info-tip.tsx` (a hover/focus/tap tooltip on `.glass-overlay`).
+`components/analytics/practice-filters.tsx` was removed (the shared bar's
+Mode/Source replace it) and `toolbar.tsx` lost its Game/Practice controls.
 
 ## Conventions
 

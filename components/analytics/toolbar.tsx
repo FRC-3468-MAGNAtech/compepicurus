@@ -4,8 +4,6 @@ import { Search } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GAMES } from "@/lib/analytics/game-schema";
 
 export function AnalyticsToolbar({
   entryCount,
@@ -15,10 +13,6 @@ export function AnalyticsToolbar({
   onAutoExpandChange,
   hideNames,
   onHideNamesChange,
-  gameId,
-  onGameChange,
-  practiceMode,
-  onPracticeModeChange,
 }: {
   entryCount: number;
   search: string;
@@ -27,10 +21,6 @@ export function AnalyticsToolbar({
   onAutoExpandChange: (v: boolean) => void;
   hideNames: boolean;
   onHideNamesChange: (v: boolean) => void;
-  gameId: string;
-  onGameChange: (v: string) => void;
-  practiceMode: boolean;
-  onPracticeModeChange: (v: boolean) => void;
 }) {
   return (
     <GlassPanel className="flex flex-wrap items-center gap-4">
@@ -58,23 +48,6 @@ export function AnalyticsToolbar({
         Hide Names
       </label>
 
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <Checkbox checked={practiceMode} onCheckedChange={(v) => onPracticeModeChange(v === true)} />
-        Practice Scouted Matches
-      </label>
-
-      <Select value={gameId} onValueChange={onGameChange}>
-        <SelectTrigger className="w-40">
-          <SelectValue>{GAMES[gameId]?.name}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {Object.values(GAMES).map((g) => (
-            <SelectItem key={g.id} value={g.id}>
-              {g.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
     </GlassPanel>
   );
 }

@@ -1,43 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { CalendarX2, Download, RefreshCw, Upload } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { AnalyticsToolbar } from "@/components/analytics/toolbar";
-import { PracticeFilters, type PracticeModeFilter, type PracticeSourceFilter } from "@/components/analytics/practice-filters";
 import { AnalyticsDataTable, type SortState } from "@/components/analytics/data-table";
 import { ConfigModal } from "@/components/analytics/config-modal";
 import { ImportCsvDialog } from "@/components/analytics/import-csv-dialog";
-import { useActiveEvent } from "@/lib/active-event";
 import { useAuth } from "@/lib/auth";
 import { GAMES, DEFAULT_GAME_ID, withPracticeColumns } from "@/lib/analytics/game-schema";
 import { entriesToCsv } from "@/lib/analytics/csv";
 import { recomputeForEvent } from "@/lib/analytics/recompute";
-import { useAllLibraryMatches } from "@/lib/match-library";
-import { useAllTeamPracticeSessions } from "@/lib/practice-sessions";
+import { useAnalyticsData, useAnalyticsEntries, useSingleEvent } from "@/lib/analytics/data-context";
+import { useAnalyticsFilters, useSingleEventMode } from "@/lib/analytics/filter-context";
 import { setSessionExcluded } from "@/lib/scout-stats/actions";
 import { downloadTextFile } from "@/lib/download";
-import {
-  deleteEntry,
-  subscribeEntries,
-  updateEntry,
-  useTeamScoutEntries,
-  type ManualFlagReason,
-  type ScoutEntry,
-} from "@/lib/scout-entries";
+import { deleteEntry, updateEntry, type ManualFlagReason, type ScoutEntry } from "@/lib/scout-entries";
 
 export default function MatchScoutAnalyticsPage() {
-  const { activeEvent } = useActiveEvent();
   const { user, profile } = useAuth();
   const teamId = profile?.teamId ?? null;
+  const searchParams = useSearchParams();
 
-  const [loaded, setLoaded] = useState(false);
-  const [entries, setEntries] = useState<ScoutEntry[]>([]);
-  const [gameId, setGameId] = useState(DEFAULT_GAME_ID);
-  const [search, setSearch] = useState("");
+  // Game / Event / Practice now come from the shared filter bar (P10). Import
+  // and Recalculate act on a single event, so this page asks the bar's Event
+  // control to be a single select while it's mounted.
+  useSingleEventMode();
+  const { filters } = useAnalyticsFilters();
+  const data = useAnalyticsData();
+  const practiceMode = filters.practice;
+  const { code: eventCode, event: singleEvent } = useSingleEvent();
+  const eventSeason = singleEvent?.season ?? data.season;
+  const sessionsById = data.sessionsById;
+
+  // Real-event data is pinned to the one chosen event; practice data spans events, as the filter says.
+  const pinnedFilters = useMemo(
+    () => (practiceMode ? filters : { ...filters, events: { kind: "custom" as const, codes: eventCode ? [eventCode] : [] } }),
+    [practiceMode, filters, eventCode]
+  );
+  // This is the *raw* table: no accuracy filter, and excluded entries stay visible (the Config modal toggles them).
+  const { scope: sourceEntries, loaded } = useAnalyticsEntries(pinnedFilters, { applyAccuracy: false, includeExcluded: true });
+
+  // A Team Profile "open the raw entry" link arrives as ?match=Q12&team=254 — start with that search.
+  const [search, setSearch] = useState(() => [searchParams.get("match"), searchParams.get("team")].filter(Boolean).join(" "));
   const [autoExpand, setAutoExpand] = useState(false);
   const [hideNames, setHideNames] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: "match", direction: "asc" });
@@ -46,77 +55,7 @@ export default function MatchScoutAnalyticsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
 
-  const [practiceMode, setPracticeMode] = useState(false);
-  const [practiceModeFilter, setPracticeModeFilter] = useState<PracticeModeFilter>("all");
-  const [practiceSourceFilter, setPracticeSourceFilter] = useState<PracticeSourceFilter>("all");
-  const [practiceEventCodes, setPracticeEventCodes] = useState<string[]>([]);
-
-  const schema = withSchemaForMode(gameId, practiceMode);
-
-  const { entries: teamEntries, loaded: teamEntriesLoaded } = useTeamScoutEntries(practiceMode ? teamId : null);
-  const { sessions: allSessions, loaded: sessionsLoaded } = useAllTeamPracticeSessions(practiceMode ? teamId : null);
-  const { matches: libraryMatches } = useAllLibraryMatches();
-  const practiceLoaded = teamEntriesLoaded && sessionsLoaded;
-
-  useEffect(() => {
-    if (!teamId || !activeEvent) {
-      // Deliberate: clears stale entries from a previous team/event once
-      // either becomes unavailable, rather than leaving them on screen.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEntries([]);
-      setLoaded(true);
-      return;
-    }
-    setLoaded(false);
-    const unsubscribe = subscribeEntries(teamId, activeEvent.code, (next) => {
-      setEntries(next);
-      setLoaded(true);
-    });
-    return unsubscribe;
-  }, [teamId, activeEvent]);
-
-  const sessionsById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
-
-  const practiceEvents = useMemo(() => {
-    const byCode = new Map<string, string>();
-    for (const m of libraryMatches) byCode.set(m.eventCode, m.eventName);
-    return [...byCode.entries()].map(([code, name]) => ({ code, name }));
-  }, [libraryMatches]);
-
-  const practiceEntries = useMemo(() => {
-    const pool = teamEntries.filter((e) => e.source !== "event");
-    return pool.filter((e) => {
-      if (practiceModeFilter !== "all" && e.mode !== practiceModeFilter) return false;
-      if (practiceSourceFilter !== "all" && e.source !== practiceSourceFilter) return false;
-      if (practiceEventCodes.length > 0 && !practiceEventCodes.includes(e.eventCode)) return false;
-      return true;
-    });
-  }, [teamEntries, practiceModeFilter, practiceSourceFilter, practiceEventCodes]);
-
-  // Session accuracy stands in for entry accuracy here — practice/live
-  // scoring is computed per-session (both robots), never on the entry
-  // itself (see docs/ASSUMPTIONS.md, P9). A shallow display-only copy, never
-  // written back.
-  const practiceDisplayEntries = useMemo(
-    () =>
-      practiceEntries.map((e) => {
-        const session = e.sessionId ? sessionsById.get(e.sessionId) : null;
-        if (!session || session.accuracy === null) return { ...e, accuracy: null };
-        return {
-          ...e,
-          accuracy: {
-            status: "complete" as const,
-            value: session.accuracy / 100,
-            scoutedTotal: session.scoutedTotal,
-            penaltyPoints: session.penaltyPoints,
-            officialScore: session.officialScore,
-          },
-        };
-      }),
-    [practiceEntries, sessionsById]
-  );
-
-  const sourceEntries = practiceMode ? practiceDisplayEntries : entries;
+  const schema = withSchemaForMode(filters.gameId, practiceMode);
 
   const nameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -166,19 +105,19 @@ export default function MatchScoutAnalyticsPage() {
 
   const handleExport = () => {
     const csv = entriesToCsv(schema, visibleEntries, resolveDisplayName);
-    const filename = practiceMode ? "match-scout-practice.csv" : `match-scout-${activeEvent?.code ?? "export"}.csv`;
+    const filename = practiceMode ? "match-scout-practice.csv" : `match-scout-${eventCode ?? "export"}.csv`;
     downloadTextFile(filename, csv, "text/csv;charset=utf-8");
   };
 
   const handleRecalculate = async () => {
-    if (!activeEvent || !teamId) return;
+    if (!eventCode || !teamId) return;
     setRecalculating(true);
-    await recomputeForEvent(teamId, activeEvent.code, activeEvent.season);
+    await recomputeForEvent(teamId, eventCode, eventSeason);
     setRecalculating(false);
   };
 
   const withEntry = (id: string, patch: (entry: ScoutEntry) => Partial<ScoutEntry>) => {
-    const entry = (practiceMode ? practiceEntries : entries).find((e) => e.id === id);
+    const entry = sourceEntries.find((e) => e.id === id);
     if (!entry) return;
     void updateEntry(id, patch(entry));
   };
@@ -196,13 +135,13 @@ export default function MatchScoutAnalyticsPage() {
 
   const handleToggleExclude = (id: string) => {
     if (practiceMode) {
-      const entry = practiceEntries.find((e) => e.id === id);
+      const entry = sourceEntries.find((e) => e.id === id);
       const session = entry?.sessionId ? sessionsById.get(entry.sessionId) : null;
       if (session && teamId && user && profile) void setSessionExcluded(teamId, user.uid, profile.name, session, !session.excluded);
       return;
     }
     withEntry(id, (e) => ({ excluded: !e.excluded }));
-    if (activeEvent && teamId) void recomputeForEvent(teamId, activeEvent.code, activeEvent.season);
+    if (eventCode && teamId) void recomputeForEvent(teamId, eventCode, eventSeason);
   };
 
   const confirmDelete = () => {
@@ -211,14 +150,14 @@ export default function MatchScoutAnalyticsPage() {
     setDeleteTarget(null);
   };
 
-  if (!activeEvent && !practiceMode) {
+  if (!eventCode && !practiceMode) {
     return (
       <GlassPanel className="flex flex-col items-center gap-3 py-12 text-center">
         <CalendarX2 className="h-8 w-8 text-[var(--muted-foreground)]" />
         <div>
-          <div className="font-semibold">No active event selected</div>
+          <div className="font-semibold">No event selected</div>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Select an event to see its match scouting data, or check &ldquo;Practice Scouted Matches&rdquo; below.
+            Set an active event, pick one in the Event filter above, or turn on Practice to see practice scouting data.
           </p>
         </div>
         <Link href="/event">
@@ -237,7 +176,7 @@ export default function MatchScoutAnalyticsPage() {
           <h2 className="text-xl font-semibold tracking-tight">Match Analytics</h2>
           <p className="text-sm text-[var(--muted-foreground)]">Match scouting breakdown with sticky match/team columns.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="glass" size="sm" className="gap-2" onClick={handleExport}>
             <Download className="h-4 w-4" /> Export CSV
           </Button>
@@ -263,30 +202,11 @@ export default function MatchScoutAnalyticsPage() {
         onAutoExpandChange={setAutoExpand}
         hideNames={hideNames}
         onHideNamesChange={setHideNames}
-        gameId={gameId}
-        onGameChange={setGameId}
-        practiceMode={practiceMode}
-        onPracticeModeChange={setPracticeMode}
       />
 
-      {practiceMode && (
-        <>
-          <GlassPanel className="border-sky-400/20 bg-sky-500/5 text-sm text-sky-200">Showing practice scouting data.</GlassPanel>
-          <PracticeFilters
-            mode={practiceModeFilter}
-            onModeChange={setPracticeModeFilter}
-            source={practiceSourceFilter}
-            onSourceChange={setPracticeSourceFilter}
-            events={practiceEvents}
-            selectedEventCodes={practiceEventCodes}
-            onToggleEvent={(code) =>
-              setPracticeEventCodes((codes) => (codes.includes(code) ? codes.filter((c) => c !== code) : [...codes, code]))
-            }
-          />
-        </>
-      )}
+      {practiceMode && <GlassPanel className="border-sky-400/20 bg-sky-500/5 text-sm text-sky-200">Showing practice scouting data.</GlassPanel>}
 
-      {(practiceMode ? !practiceLoaded : !loaded) ? (
+      {!loaded ? (
         <div className="glass-card h-64 animate-pulse" />
       ) : visibleEntries.length === 0 ? (
         <GlassPanel className="py-12 text-center text-sm text-[var(--muted-foreground)]">
@@ -318,17 +238,17 @@ export default function MatchScoutAnalyticsPage() {
         onToggleSessionExclude={configEntry ? () => handleToggleExclude(configEntry.id) : undefined}
       />
 
-      {!practiceMode && teamId && user && activeEvent && (
+      {!practiceMode && teamId && user && eventCode && (
         <ImportCsvDialog
           open={importOpen}
           onOpenChange={setImportOpen}
           schema={schema}
           teamId={teamId}
           uid={user.uid}
-          eventCode={activeEvent.code}
-          existingEntries={entries}
+          eventCode={eventCode}
+          existingEntries={sourceEntries}
           onImported={() => {
-            void recomputeForEvent(teamId, activeEvent.code, activeEvent.season);
+            void recomputeForEvent(teamId, eventCode, eventSeason);
           }}
         />
       )}

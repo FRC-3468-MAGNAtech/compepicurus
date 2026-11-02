@@ -1,4 +1,4 @@
-import { AnalyticsTabs } from "@/components/layout/analytics-tabs";
+import { AnalyticsShell } from "@/components/analytics/analytics-shell";
 
 export default function AnalyticsLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -7,8 +7,7 @@ export default function AnalyticsLayout({ children }: { children: React.ReactNod
         <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
         <p className="text-sm text-[var(--muted-foreground)]">Everything the scouting data tells us, sliced a few ways.</p>
       </div>
-      <AnalyticsTabs />
-      <div>{children}</div>
+      <AnalyticsShell>{children}</AnalyticsShell>
     </div>
   );
 }

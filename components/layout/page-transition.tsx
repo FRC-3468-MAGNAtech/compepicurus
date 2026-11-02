@@ -1,31 +1,27 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
-import { pageTransitionVariants, springSoft } from "@/lib/motion";
+import { motion } from "framer-motion";
+import { pageTransitionVariants, pageTransition } from "@/lib/motion";
 
+/**
+ * Fade-in only — no exit animation, deliberately no AnimatePresence.
+ *
+ * The previous version wrapped the page in an AnimatePresence (without
+ * `mode="wait"`) with a y-offset slide and a spring exit. Without `wait`, the
+ * *outgoing* page stays in the document flow for the whole exit spring while
+ * the incoming page mounts right below it, so the new page rendered lower
+ * than its final position and then snapped up when the old one unmounted —
+ * the "content starts too low, then jumps" bug (FIX1-1). A keyed element that
+ * simply fades in has nothing in flow to leave behind, and the offset is
+ * tiny enough (see pageTransitionVariants) that it can't read as a jump.
+ */
 export function PageTransition({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  // Deliberately no `mode="wait"`: that mode blocks mounting the new page
-  // until the outgoing one's exit animation fully resolves, so anything
-  // that stalls that exit (a tab losing focus mid-animation, framer-motion
-  // missing a tick) leaves the new page invisible until something else
-  // forces a re-render — exactly the "page doesn't load until I click"
-  // symptom. Letting enter/exit run independently means the new page
-  // always appears on schedule regardless of what the old one is doing.
   return (
-    <AnimatePresence initial={false}>
-      <motion.div
-        key={pathname}
-        variants={pageTransitionVariants}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        transition={springSoft}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
+    <motion.div key={pathname} variants={pageTransitionVariants} initial="initial" animate="animate" transition={pageTransition}>
+      {children}
+    </motion.div>
   );
 }

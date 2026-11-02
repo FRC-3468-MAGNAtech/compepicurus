@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { deleteApp, initializeApp, type FirebaseApp } from "firebase/app";
 import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, type Auth } from "firebase/auth";
@@ -15,13 +16,19 @@ import { connectFirestoreEmulator, getFirestore as getClientFirestore } from "fi
 
 const PROJECT_ID = "compepicurus-api-test";
 
-// The Admin SDK only needs *shaped* credentials to construct a client when
+// The Admin SDK only needs credentials that *parse* to construct a client when
 // FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST redirect every call
-// to the local emulators — neither emulator validates them.
+// to the local emulators — neither emulator validates them. firebase-admin
+// really does parse the PEM, so a hand-written placeholder isn't enough:
+// generate a throwaway RSA key at runtime (nothing secret, never persisted).
+const { privateKey: THROWAWAY_PRIVATE_KEY } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+});
 process.env.FIREBASE_ADMIN_PROJECT_ID = PROJECT_ID;
 process.env.FIREBASE_ADMIN_CLIENT_EMAIL = "test@example.com";
-process.env.FIREBASE_ADMIN_PRIVATE_KEY =
-  "-----BEGIN PRIVATE KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEAq8YYlFX/qvzYcVqz\n-----END PRIVATE KEY-----\n";
+process.env.FIREBASE_ADMIN_PRIVATE_KEY = THROWAWAY_PRIVATE_KEY;
 process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
 process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
 process.env.OWNER_EMAILS = "owner@example.com";

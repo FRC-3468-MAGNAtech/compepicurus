@@ -7,6 +7,7 @@ import { useTeamPracticeSessions } from "@/lib/practice-sessions";
 import type { RoleId } from "@/lib/roles";
 import { useTeamScoutEntries, type ScoutEntry } from "@/lib/scout-entries";
 import { useTeamMembers } from "@/lib/team-members";
+import type { FtcEvent } from "@/lib/ftc/types";
 import { computeScoutStats } from "./engine";
 import type { RankingBasisId, RealEventCalculationScope, ScoutCategory, ScoutStatsResult } from "./types";
 
@@ -24,8 +25,14 @@ export function useScoutStatsSources(teamId: string | null) {
   return { members, sessions, entries, libraryMatchesById, attendance, loaded };
 }
 
-/** Distinct real-event event codes the team has data for, most-recently-scouted first — what the Real Event Calculation dropdown's per-event options come from (see docs/ASSUMPTIONS.md, P5, for why this reads `scoutEntries` rather than the P6 Assignments page). */
-export function useRealEventOptions(entries: ScoutEntry[]): { eventCode: string; eventName: string }[] {
+/**
+ * Distinct real-event event codes the team has data for, most-recently-scouted first — what the Real Event Calculation dropdown's per-event options come from (see docs/ASSUMPTIONS.md, P5, for why this reads `scoutEntries` rather than the P6 Assignments page).
+ *
+ * FIX1: pass the team's active events (primary first) and they lead the list —
+ * named, and present even before anything has been scouted for them — ahead
+ * of the data-only events. With no active events this is unchanged.
+ */
+export function useRealEventOptions(entries: ScoutEntry[], activeEvents: FtcEvent[] = []): { eventCode: string; eventName: string }[] {
   return useMemo(() => {
     const latestByCode = new Map<string, string>();
     for (const e of entries) {
@@ -33,10 +40,14 @@ export function useRealEventOptions(entries: ScoutEntry[]): { eventCode: string;
       const existing = latestByCode.get(e.eventCode);
       if (!existing || e.submittedAt > existing) latestByCode.set(e.eventCode, e.submittedAt);
     }
-    return [...latestByCode.entries()]
+    const active = activeEvents.map((e) => ({ eventCode: e.code, eventName: e.name }));
+    const activeCodes = new Set(active.map((e) => e.eventCode));
+    const dataOnly = [...latestByCode.entries()]
+      .filter(([eventCode]) => !activeCodes.has(eventCode))
       .sort((a, b) => b[1].localeCompare(a[1]))
       .map(([eventCode]) => ({ eventCode, eventName: eventCode }));
-  }, [entries]);
+    return [...active, ...dataOnly];
+  }, [entries, activeEvents]);
 }
 
 export type UseScoutStatsOptions = {

@@ -5,19 +5,25 @@ import { Copy, Eye, EyeOff } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { MemberRow } from "@/components/team/member-row";
+import { MemberEditorDialog } from "@/components/team/member-editor-dialog";
 import { useAuth } from "@/lib/auth";
 import { useTeamDoc } from "@/lib/team";
 import { usePermissions } from "@/lib/permissions";
-import { setMemberAdmin, setMemberPrimaryRole, setMemberSecondaryRoles, useTeamMembers } from "@/lib/team-members";
-import type { RoleId } from "@/lib/roles";
+import { updateMemberAccess, useTeamMembers, type TeamMember } from "@/lib/team-members";
+import { getMemberEditState, type MemberAccess } from "@/lib/member-access";
 
 export default function TeamManagementPage() {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const { team, loaded: teamLoaded } = useTeamDoc(profile?.teamId ?? null);
   const { isAdmin } = usePermissions();
   const { members, loaded: membersLoaded } = useTeamMembers(profile?.teamId ?? null);
   const [showJoinCode, setShowJoinCode] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState<TeamMember | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  // Bumped on every open so the editor remounts with a draft taken from the member's current values.
+  const [editorKey, setEditorKey] = useState(0);
+  const [savedUid, setSavedUid] = useState<string | null>(null);
 
   const adminCount = members.filter((m) => m.isAdmin).length;
 
@@ -32,13 +38,27 @@ export default function TeamManagementPage() {
     }
   };
 
-  const handleToggleAdmin = (uid: string, current: boolean) => {
-    void setMemberAdmin(uid, !current);
+  const actor = { uid: user?.uid ?? "", isAdmin };
+  // The roster is realtime: guard and block-reasons use the member's *current* row, while the editor's draft keeps the values it opened with.
+  const liveEditing = editing ? (members.find((m) => m.uid === editing.uid) ?? editing) : null;
+  const editState = (m: TeamMember) => getMemberEditState(actor, m, adminCount);
+
+  const openEditor = (m: TeamMember) => {
+    setEditing(m);
+    setEditorKey((k) => k + 1);
+    setEditorOpen(true);
   };
 
-  const handleToggleSecondaryRole = (uid: string, roles: RoleId[], role: RoleId) => {
-    const next = roles.includes(role) ? roles.filter((r) => r !== role) : [...roles, role];
-    void setMemberSecondaryRoles(uid, next);
+  const handleSave = async (member: TeamMember, changes: Partial<MemberAccess>) => {
+    if (!user || !profile) return;
+    // Re-checked here, not just by the button: the roster is realtime, so the
+    // member (or the admin count) may have changed since the editor opened.
+    if (!getMemberEditState(actor, member, adminCount).canEdit) throw new Error("not allowed");
+
+    // One atomic batch: the role change and its audit entry land together or not at all.
+    await updateMemberAccess({ teamId: profile.teamId, uid: user.uid, name: profile.name }, member, changes);
+    setSavedUid(member.uid);
+    setTimeout(() => setSavedUid((current) => (current === member.uid ? null : current)), 1500);
   };
 
   return (
@@ -87,25 +107,25 @@ export default function TeamManagementPage() {
               <MemberRow
                 key={m.uid}
                 member={m}
-                editable={isAdmin}
-                lastAdminBlocked={m.isAdmin && adminCount <= 1}
-                onPrimaryRoleChange={(role) => {
-                  if (m.isOwner) return;
-                  void setMemberPrimaryRole(m.uid, role);
-                }}
-                onToggleSecondaryRole={(role) => {
-                  if (m.isOwner) return;
-                  handleToggleSecondaryRole(m.uid, m.secondaryRoles, role);
-                }}
-                onToggleAdmin={() => {
-                  if (m.isOwner || (m.isAdmin && adminCount <= 1)) return;
-                  handleToggleAdmin(m.uid, m.isAdmin);
-                }}
+                editState={isAdmin ? editState(m) : undefined}
+                highlight={savedUid === m.uid}
+                onEdit={() => openEditor(m)}
               />
             ))
           )}
         </div>
       </GlassPanel>
+
+      {editing && liveEditing && (
+        <MemberEditorDialog
+          key={editorKey}
+          member={editing}
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          adminToggleBlock={editState(liveEditing).adminToggleBlock}
+          onSave={(changes) => handleSave(liveEditing, changes)}
+        />
+      )}
     </div>
   );
 }

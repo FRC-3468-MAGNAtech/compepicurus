@@ -1,6 +1,6 @@
 "use client";
 
-import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
@@ -20,7 +20,8 @@ export type AuditAction =
   | "rescore-event"
   | "rescore-sessions"
   | "refresh-official-scores"
-  | "export-backup";
+  | "export-backup"
+  | "edit-member-roles";
 
 export type AuditLogEntry = {
   id: string;
@@ -44,6 +45,24 @@ function toMillis(value: unknown): number {
   return 0; // not yet server-resolved (pending write) — sorts last, fine for a log that's about to get a real timestamp any moment
 }
 
+/** The document written for one audit entry — shared by logAuditEvent() and by callers that must write the entry in the *same batch* as the change it records (see lib/team-members.ts). */
+export function buildAuditEntry(
+  teamId: string,
+  uid: string,
+  actorName: string,
+  action: AuditAction,
+  target: Record<string, unknown>,
+  before: unknown,
+  after: unknown
+) {
+  return { teamId, uid, actorName, action, target, before, after, createdAt: serverTimestamp() };
+}
+
+/** A new, empty `auditLog` doc ref — for batched writes that need the ref up front. */
+export function newAuditLogRef() {
+  return doc(collection(db, COLLECTION));
+}
+
 export async function logAuditEvent(
   teamId: string,
   uid: string,
@@ -53,16 +72,7 @@ export async function logAuditEvent(
   before: unknown,
   after: unknown
 ): Promise<void> {
-  await addDoc(collection(db, COLLECTION), {
-    teamId,
-    uid,
-    actorName,
-    action,
-    target,
-    before,
-    after,
-    createdAt: serverTimestamp(),
-  });
+  await addDoc(collection(db, COLLECTION), buildAuditEntry(teamId, uid, actorName, action, target, before, after));
 }
 
 /**

@@ -13,7 +13,9 @@ import { RandomizeModal } from "@/components/assignments/randomize-modal";
 import { ScheduleGrid } from "@/components/assignments/schedule-grid";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/permissions";
-import { useActiveEvent } from "@/lib/active-event";
+import { useActiveEvents } from "@/lib/active-event";
+import { orderPrimaryFirst } from "@/lib/active-events";
+import type { FtcEvent } from "@/lib/ftc/types";
 import { useTeamMembers } from "@/lib/team-members";
 import { useEventAttendance, setEventAttendance } from "@/lib/event-attendance";
 import { publishAssignments, swapAssignmentSlot, undoAssignments, useAssignments, type AssignmentMatchSource, type AssignmentSettings, type AssignmentVersion } from "@/lib/assignments";
@@ -36,13 +38,21 @@ export default function AssignmentsPage() {
   const { user, profile } = useAuth();
   const { isAdmin } = usePermissions();
   const teamId = profile?.teamId ?? null;
-  const { activeEvent } = useActiveEvent();
+  const { events: activeEvents, primaryCode } = useActiveEvents();
+  // Active events (primary first) lead the picker; the rest of the season's events follow.
+  const activeOptions = useMemo(() => orderPrimaryFirst({ events: activeEvents, primaryCode }), [activeEvents, primaryCode]);
 
   const [eventOverride, setEventOverride] = useState<string | null>(null);
-  const eventCode = eventOverride ?? activeEvent?.code ?? null;
-  const season = activeEvent?.season ?? getDefaultSeason();
+  const eventCode = eventOverride ?? primaryCode ?? null;
+  const activeSelected = activeOptions.find((e) => e.code === eventCode) ?? null;
+  const season = activeSelected?.season ?? getDefaultSeason();
 
   const eventsQuery = useFtcQuery(`assignments-events:${season}`, () => getEvents({ season }));
+  const otherEvents: FtcEvent[] = useMemo(
+    () => (eventsQuery.data ?? []).filter((e) => !activeOptions.some((a) => a.code === e.code)),
+    [eventsQuery.data, activeOptions]
+  );
+  const selectedEventName = activeSelected?.name ?? eventsQuery.data?.find((e) => e.code === eventCode)?.name ?? eventCode ?? "Pick an event";
 
   const { members, loaded: membersLoaded } = useTeamMembers(teamId);
   const { attendance, loaded: attendanceLoaded } = useEventAttendance(teamId, eventCode);
@@ -176,12 +186,21 @@ export default function AssignmentsPage() {
           <Label htmlFor="assignments-event">Event</Label>
           <Select value={eventCode ?? ""} onValueChange={setEventOverride}>
             <SelectTrigger id="assignments-event">
-              <SelectValue>
-                {eventsQuery.data?.find((e) => e.code === eventCode)?.name ?? eventCode ?? "Pick an event"}
-              </SelectValue>
+              <SelectValue>{selectedEventName}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {(eventsQuery.data ?? []).map((e) => (
+              {activeOptions.map((e) => (
+                <SelectItem key={e.code} value={e.code}>
+                  {e.code === primaryCode ? "★ " : ""}
+                  {e.name}
+                </SelectItem>
+              ))}
+              {activeOptions.length > 0 && otherEvents.length > 0 && (
+                <div className="mx-2 my-1 border-t border-[var(--glass-border)] px-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                  Other events
+                </div>
+              )}
+              {otherEvents.map((e) => (
                 <SelectItem key={e.code} value={e.code}>
                   {e.name}
                 </SelectItem>

@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { LiveSessionScreen } from "@/components/practice/live/live-session-screen";
 import { LiveResultsScreen } from "@/components/practice/live/live-results-screen";
 import { useAuth } from "@/lib/auth";
-import { useActiveEvent } from "@/lib/active-event";
+import { useActiveEvents } from "@/lib/active-event";
+import { pickDefaultActiveEvent } from "@/lib/active-events";
 import { useFtcQuery } from "@/lib/ftc/use-ftc-query";
 import { getEvents, getMatchesForEvent } from "@/lib/ftc/actions";
 import { getDefaultSeason } from "@/lib/ftc/config";
@@ -46,7 +47,10 @@ export function LiveFlow({
   resumePendingRobot?: ResumePendingRobot;
 }) {
   const { user, profile } = useAuth();
-  const { activeEvent } = useActiveEvent();
+  const { events: activeEvents, primaryCode } = useActiveEvents();
+  // The fallback event when the stream link doesn't identify one: an In Progress active event, else the primary.
+  const [now] = useState(() => Date.now());
+  const activeEvent = pickDefaultActiveEvent({ events: activeEvents, primaryCode }, now);
   const teamId = profile?.teamId ?? null;
   const season = activeEvent?.season ?? getDefaultSeason();
 
