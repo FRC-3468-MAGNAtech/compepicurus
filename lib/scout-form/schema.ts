@@ -22,6 +22,12 @@ export type ScoutFormField = {
    * unset fields fall back to their sub-group label, then their own label.
    */
   element?: string;
+  /**
+   * P11: marks a checkbox incident that means the robot itself failed (died,
+   * never started, disabled, froze, tipped) as opposed to a conduct incident
+   * like a card. Team Breakdown's reliability pill is built from these.
+   */
+  reliability?: boolean;
   placeholder?: string;
 };
 
@@ -159,11 +165,11 @@ export const BIOBUZZ_FORM_SCHEMA: ScoutFormSchema = {
       id: "general",
       label: "General",
       fields: [
-        { key: "diedDuringMatch", type: "checkbox", label: "Died During Match" },
-        { key: "neverStartedMatch", type: "checkbox", label: "Never Started Match" },
-        { key: "disabledByFtc", type: "checkbox", label: "Disabled by FTC" },
-        { key: "recoveredFromFreeze", type: "checkbox", label: "Recovered from Freeze" },
-        { key: "tippedOver", type: "checkbox", label: "Tipped Over" },
+        { key: "diedDuringMatch", type: "checkbox", label: "Died During Match", reliability: true },
+        { key: "neverStartedMatch", type: "checkbox", label: "Never Started Match", reliability: true },
+        { key: "disabledByFtc", type: "checkbox", label: "Disabled by FTC", reliability: true },
+        { key: "recoveredFromFreeze", type: "checkbox", label: "Recovered from Freeze", reliability: true },
+        { key: "tippedOver", type: "checkbox", label: "Tipped Over", reliability: true },
         { key: "yellowCard", type: "checkbox", label: "Yellow Card" },
         { key: "redCard", type: "checkbox", label: "Red Card" },
         {

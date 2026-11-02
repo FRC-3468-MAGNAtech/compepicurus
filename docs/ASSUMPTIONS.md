@@ -1650,6 +1650,137 @@ URL round-trip, the event popover, the sticky table columns, the chart's
 hover, and every page's layout are verified only by type-checking, build, and
 reading the code. Worth a manual pass (see the commands block below).
 
+## P11 — Match Breakdown & Team Breakdown
+
+**P11-0. No clarifying questions were asked** — nothing blocked. The prompt's
+Vite/React Router wording maps to Next.js as in P1-1; the pages stay at
+`/analytics/match-breakdown` and `/analytics/team-breakdown`.
+
+### Match Breakdown
+
+**P11-1. Where the official matches come from.** Real events: the FIRST API,
+`getMatchesForEvent` for Practice, Qualification, and Playoff per event in the
+filter's scope (`useEventMatches`, a tab-level cache like the other
+`use-event-data` hooks; "All events" = every event that has scouted data).
+Practice mode: the imported **library matches** for the chosen game (and events,
+if any), always treated as played. The list is *official matches*, so a scouted
+entry whose match isn't in it (e.g. event practice matches — the FIRST API
+doesn't track them, see the Event Selection summary's "Practice: not tracked")
+can't appear; rather than hide that silently, the page says how many scouted
+entries aren't listed and points at Match Scout Analytics.
+
+**P11-2. Alliance accuracy is computed here, with the shared engine, from the
+official score.** `buildMatchBreakdowns` calls the same
+`computeAllianceAccuracy` wrapper (`lib/analytics/accuracy.ts` → the engine)
+Match Analytics' recompute uses, with the official score + penalty points and
+the alliance's entries — rather than reading the value stored on the entry —
+so the number always agrees with the official score printed beside it, even if
+nobody has run Recalculate Accuracy. Consequence: the filter bar's "N of M" (P10)
+counts by *stored* accuracy and can differ slightly from what this page hides.
+The threshold uses the same displayed-whole-percent rule as P10-7.
+
+**P11-3. The accuracy filter is applied per alliance, in the pure function.**
+An alliance below the threshold comes back with its scouted total, per-team
+entries, and bar share already withheld (`scoutedTotal: null`, `entry: null`,
+`redFraction: null`), so no rendering path can leak them. It keeps: the
+accuracy (the reason label quotes it — "Below accuracy filter (62%)"), the
+official score (not a scouted number), the team links, and the coverage count.
+An alliance whose accuracy *can't be computed* (a robot unscouted, or no
+official score yet) is withheld too under any threshold, with its own reason
+("Accuracy can't be computed — filtered out at 75%+"), matching P10's rule that
+a threshold drops uncomputable entries. An alliance with no scouted robot is
+"Not scouted", never "below accuracy". With ALL nothing is withheld.
+
+**P11-4. Totals.** The displayed alliance total is the **sum of the scouted
+robot scores** (as specified); the engine's accuracy formula separately adds the
+penalty points to that sum, which is why a robot total of 40 can score 100%
+against an official 50 that includes 10 penalty. The official line reads
+`Official 85 (incl. 10 penalty)` only when penalty points were awarded, and is
+absent when there is no official score.
+
+**P11-5. Winner.** Official result when the match is played and both scores
+exist (tie possible); otherwise the scouted totals, but only when *both*
+alliances are fully scouted and not withheld (a half-scouted side would just
+look like it lost); otherwise none. The bar's red share uses scouted totals, and
+is an empty track unless both alliances are shown — it never shows a proportion
+built from a withheld or missing side. The detail says whether the winner is
+official or from scouted totals.
+
+**P11-6. Entries per robot.** The latest entry per team (as the engine does);
+excluded entries are dropped before this page sees them. In **Practice** mode an
+alliance can have many sessions (different scouts, repeats); one alliance is one
+session's scouting, so the **most recent session's** entries are used rather than
+mixing one robot from each session.
+
+**P11-7. Detail = an expandable row**, accordion-style (one open at a time),
+animated height with the shared spring. Team numbers are links *outside* the
+toggle button so tapping one opens its profile rather than the drawer. The
+`?event=&match=` link Team Profile already emits (P10-15) now works: that match
+opens and scrolls into view. "View raw entries" opens Match Scout Analytics with
+`?events=<code>&match=<label>` (its initial search).
+
+**P11-8. Detail content** (schema-driven, `summarizeEntry`): counters summed by
+game element ("Hive ×3"), toggles that were on (a label that repeats across
+phases gets its phase: "Park (auto)", "Park (endgame)"), and the checkbox
+incidents as warning chips. The auto/teleop/endgame bar is stacked; its length
+is scaled to the best of the match's four robots so they compare.
+
+**P11-9. Phase colors.** Auto / Teleop / Endgame use categorical slots 1-3 of
+the dataviz reference palette (blue `#3987e5`, orange `#d95926`, aqua
+`#199e70`), as CSS variables in `globals.css`. I first tried the app's role
+colors (sky / violet / emerald) — they **fail** the validator's CVD check
+(worst adjacent ΔE 5.2), so I switched. The reference trio passes every gate
+`--pairs all` against both theme surfaces (`#17070c`, `#16110a`): lightness band,
+chroma, CVD ΔE 9.4, normal-vision ΔE 20.9, ≥3:1 contrast. They are deliberately
+fixed across themes (not derived from the accent), 2px-gapped, with the values
+also written as text and a line-key legend, so colour is never the only cue.
+Alliance red/blue keep the placeholder's red/blue gradients (identity colors, not
+a series palette).
+
+### Team Breakdown
+
+**P11-10. Key stats are derived from the schema, not hard-coded.**
+`buildKeyStats`: scored **counters grouped by label and summed** — "Tip Hive"
+(autonomous + teleop) and "Pollen and Nectar" (flower + garden), exactly the two
+the prompt asks for — and each scored **toggle as its own rate**, with the phase
+added where a label repeats: Leave, Park (auto), Park (endgame), Bottom Nectar.
+(The prompt's "Park rate (auto and endgame)" is shown as two rates, since they
+are two different fields.) Grouping by label would also merge two unrelated
+fields that happen to share a name in a future game — at that point give them
+distinct labels.
+
+**P11-11. Reliability.** A schema field can now be flagged `reliability: true`
+(`ScoutFormField`); BIOBUZZ flags **Died During Match, Never Started Match,
+Disabled by FTC, Recovered from Freeze, Tipped Over** (robot failures), and *not*
+the yellow/red cards (conduct). `TeamStats.reliability` (new in P11) is the share
+of entries with **none** of them, computed per entry so a match with two
+incidents counts once; null when the schema flags none. The pill: ≥ 90% "Reliable",
+75-89% "Some issues", < 75% "Unreliable" (icon + word + number, with the actual
+incident rates in its tooltip); no pill when null. The thresholds are my
+defaults.
+
+**P11-12. Controls.** Search (team number or name), sort (avg total, times
+scouted, reliability, team number — best first, team-number ties, no-value
+teams last), and the low-sample badge at the same minimum (2) as Rankings' default
+(no control here; the prompt didn't ask for one). Cards are links to Team Profile
+with the shared hover spring/glow; the skeleton grid uses the cards' grid and
+approximate height. Practice mode needs no page logic — `useTeamStats()` (P10)
+already switches datasets.
+
+**P11-13. Scope.** The placeholder banners are removed from both pages
+(`REALIZED_PAGES`); Scout Status untouched; the mock `lib/mock-data.ts` match and
+team data is no longer used by these two pages.
+
+### P11: verification
+
+Run and passing: `tsc`, `eslint` (0 errors; the same 2 virtualizer warnings),
+`vitest` (new: `match-breakdown` — 29, `team-card` — 9, plus reliability cases in
+`team-stats`; 338 total), `next build`. No Firestore collections/rules changed, so
+no emulator run was needed. **No browser check** (this environment can't sign
+in): the animated bar, the expand/collapse, deep-link scroll, and the card grid are
+verified by types, build, and reading only. In particular the FIRST API match
+list needs the live API (`FTC_API_*`) — as with P10-13, nothing here could call it.
+
 ## Commands to run locally
 
 ```bash
@@ -1874,6 +2005,20 @@ npm run test:rules   # needs Java + firebase-tools; includes the new FIX1 blocks
 # 'Rank by', raise Min. entries -> low-sample teams drop below, unranked;
 # click column headers -> rank numbers stay put. The official rank chip
 # needs the live FIRST API (FTC_API_* set) — verify its field names there.
+
+# P11 (no rules or env changes). Analytics > Match Breakdown with an active
+# event that has played matches (needs FTC_API_* set): each match shows its
+# label, a 'N/4 robots scouted' chip, red/blue totals, and an animated bar;
+# unscouted matches are muted 'Not scouted'. Tap a match -> the drawer shows
+# each robot's total, auto/teleop/endgame bar, element chips, incidents, the
+# alliance totals, accuracy, and small 'Official 85 (incl. 10 penalty)' text;
+# team numbers open Team Profile; 'View raw entries' opens Match Scout
+# Analytics on that match. Choose Accuracy 90% -> any alliance below it is
+# dimmed with 'Below accuracy filter (NN%)' and shows no scouted numbers;
+# ALL shows everything. Toggle Practice -> the list switches to library
+# matches. From a Team Profile, click a match row -> it opens already
+# expanded. Analytics > Team Breakdown: card grid, search, sort, low-sample
+# badge, reliability pill (hover for incident rates); cards open the profile.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

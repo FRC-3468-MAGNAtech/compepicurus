@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getRankingsForEvent, getTeamsForEvent } from "@/lib/ftc/actions";
-import type { FtcRanking } from "@/lib/ftc/types";
+import { getMatchesForEvent, getRankingsForEvent, getTeamsForEvent } from "@/lib/ftc/actions";
+import { ftcMatchToOfficial, type OfficialMatch } from "@/lib/analytics/match-breakdown";
+import type { FtcRanking, MatchType } from "@/lib/ftc/types";
 
 // FIRST API data Analytics pages join onto scouted teams (P10): team names
 // and official qualification rankings. Both go through the existing server
@@ -16,9 +17,11 @@ export type EventRequest = { code: string; season: number };
 const requestKey = (r: EventRequest) => `${r.code}:${r.season}`;
 
 const RANKING_TTL_MS = 3 * 60 * 1000;
+const MATCHES_TTL_MS = 3 * 60 * 1000;
 
 const namesCache = new Map<string, Map<number, string>>();
 const rankingsCache = new Map<string, { data: FtcRanking[]; expires: number }>();
+const matchesCache = new Map<string, { data: OfficialMatch[]; expires: number }>();
 const inflight = new Set<string>();
 
 /** A stable string for a request list so hooks re-run only when the *set* of events changes. */
@@ -62,6 +65,52 @@ export function useTeamNames(requests: EventRequest[]): ReadonlyMap<number, stri
     }
     return merged;
     // `version` is the cache's change signal — the cache itself isn't React state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, version]);
+}
+
+const MATCH_TYPES: MatchType[] = ["Practice", "Qualification", "Playoff"];
+
+/**
+ * Every official match (Practice, Qualification, Playoff) of the requested
+ * events from the FIRST API, as `OfficialMatch`es. `loading` is true until
+ * each requested event has answered at least once. A failed or empty fetch is
+ * cached as "no matches" so it isn't retried in a loop (the cache expires, so a
+ * live event picks up new results on the next visit).
+ */
+export function useEventMatches(requests: EventRequest[]): { matches: OfficialMatch[]; loading: boolean } {
+  const key = keyOf(requests);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    for (const r of parseKey(key)) {
+      const k = requestKey(r);
+      const cached = matchesCache.get(k);
+      if ((cached && cached.expires > Date.now()) || inflight.has(`matches:${k}`)) continue;
+      inflight.add(`matches:${k}`);
+      Promise.all(MATCH_TYPES.map((type) => getMatchesForEvent(r.code, type, r.season)))
+        .then((results) => {
+          const data = results.flatMap((res) => (res.ok ? res.data.map((m) => ftcMatchToOfficial(r.code, m)) : []));
+          matchesCache.set(k, { data, expires: Date.now() + MATCHES_TTL_MS });
+        })
+        .catch(() => matchesCache.set(k, { data: [], expires: Date.now() + MATCHES_TTL_MS }))
+        .finally(() => {
+          inflight.delete(`matches:${k}`);
+          setVersion((v) => v + 1);
+        });
+    }
+  }, [key]);
+
+  return useMemo(() => {
+    const parsed = parseKey(key);
+    const matches: OfficialMatch[] = [];
+    let loading = false;
+    for (const r of parsed) {
+      const cached = matchesCache.get(requestKey(r));
+      if (cached) matches.push(...cached.data);
+      else loading = true;
+    }
+    return { matches, loading };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, version]);
 }

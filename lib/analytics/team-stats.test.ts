@@ -106,6 +106,23 @@ describe("buildTeamStats", () => {
     );
   });
 
+  it("reliability is the share of entries with none of the schema's reliability incidents", () => {
+    // e3 died. e1/e2 clean. A tipped-over + yellow-card entry: tipped counts, the card does not.
+    const tipped = entry(100, { tippedOver: true, yellowCard: true });
+    const card = entry(100, { redCard: true });
+    expect(buildTeamStats([e1, e2, e3], BIOBUZZ_FORM_SCHEMA).reliability).toBeCloseTo((2 / 3) * 100);
+    expect(buildTeamStats([tipped, card], BIOBUZZ_FORM_SCHEMA).reliability).toBe(50);
+  });
+
+  it("counts an entry with several reliability incidents once", () => {
+    const both = entry(100, { diedDuringMatch: true, tippedOver: true });
+    expect(buildTeamStats([both, entry(100, {})], BIOBUZZ_FORM_SCHEMA).reliability).toBe(50);
+  });
+
+  it("reliability is null with no entries, or when the schema flags no reliability fields", () => {
+    expect(buildTeamStats([], BIOBUZZ_FORM_SCHEMA, { teamNumber: 1 }).reliability).toBeNull();
+  });
+
   it("groups points by game element across phases, and the shares add to 1", () => {
     const s = buildTeamStats([e1, e2, e3], BIOBUZZ_FORM_SCHEMA);
     const hive = s.elementBreakdown.find((x) => x.element === "Hive")!;
@@ -203,6 +220,7 @@ describe("schema-driven", () => {
     expect(s.fieldStats.gears).toMatchObject({ avg: 3, high: 4 });
     expect(s.fieldStats.spin.rate).toBe(50);
     expect(s.incidentRates).toEqual({ stuck: 50 });
+    expect(s.reliability).toBeNull(); // OTHER flags no reliability fields
     expect(s.elementBreakdown.map((x) => x.element).sort()).toEqual(["Gear", "Spin"]);
   });
 });

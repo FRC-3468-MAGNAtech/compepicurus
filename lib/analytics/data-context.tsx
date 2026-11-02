@@ -12,7 +12,7 @@ import { useTeamNames } from "@/lib/analytics/use-event-data";
 import { getEvents } from "@/lib/ftc/actions";
 import { useFtcQuery } from "@/lib/ftc/use-ftc-query";
 import type { FtcEvent } from "@/lib/ftc/types";
-import { useAllLibraryMatches } from "@/lib/match-library";
+import { useAllLibraryMatches, type LibraryMatch } from "@/lib/match-library";
 import { useAllTeamPracticeSessions, type PracticeSession } from "@/lib/practice-sessions";
 import { getSeason } from "@/lib/seasons";
 import { useTeamScoutEntries, type ScoutEntry } from "@/lib/scout-entries";
@@ -48,6 +48,8 @@ type AnalyticsDataValue = {
   activeEvents: FtcEvent[];
   primaryCode: string | null;
   eventDirectory: ReadonlyMap<string, FtcEvent>;
+  /** Every imported library match — Practice mode's official matches (Match Breakdown). */
+  libraryMatches: LibraryMatch[];
   eventOptions: EventOption[];
   /** The standard selection (accuracy filter applied, excluded dropped) for the current URL filters — computed once and shared. */
   selection: EntrySelection;
@@ -137,12 +139,13 @@ export function AnalyticsDataProvider({ children }: { children: React.ReactNode 
       activeEvents,
       primaryCode,
       eventDirectory,
+      libraryMatches,
       eventOptions,
       selection,
       teamStats,
       teamNames,
     }),
-    [entriesLoaded, sessionsLoaded, filters.practice, allEntries, sessionsById, schema, game.apiSeason, activeEventCodes, activeEvents, primaryCode, eventDirectory, eventOptions, selection, teamStats, teamNames]
+    [entriesLoaded, sessionsLoaded, filters.practice, allEntries, sessionsById, schema, game.apiSeason, activeEventCodes, activeEvents, primaryCode, eventDirectory, libraryMatches, eventOptions, selection, teamStats, teamNames]
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

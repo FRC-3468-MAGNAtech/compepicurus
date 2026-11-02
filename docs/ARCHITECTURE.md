@@ -1272,6 +1272,51 @@ header + sticky columns, rows are `AnalyticsLink`s to the profile),
 `components/analytics/practice-filters.tsx` was removed (the shared bar's
 Mode/Source replace it) and `toolbar.tsx` lost its Game/Practice controls.
 
+### Match Breakdown & Team Breakdown (P11)
+
+No new collections, fields, or rules. Both pages read the P10 shared layer
+(`AnalyticsDataProvider`, `useAnalyticsEntries`, `useTeamStats`) and the filter
+bar; Scout Status is untouched.
+
+**Match Breakdown — `lib/analytics/match-breakdown.ts` (pure, tested).**
+`OfficialMatch` (`eventCode`, `matchType`, `matchNumber`, `played`, `red`/`blue`
+= `{ teams, score, penaltyPoints }`) with `ftcMatchToOfficial(eventCode, FtcMatch)`
+and `libraryMatchToOfficial(LibraryMatch)`.
+`buildMatchBreakdowns({ matches, entries, accuracyThreshold, practice })` →
+`MatchBreakdown[]` sorted P, Q, F then number then event:
+`{ key, match, label, red, blue, robotsScouted, robotsTotal, scouted, winner,
+winnerBasis, redFraction }`, each alliance an `AllianceBreakdown` (`teams:
+TeamSlot[]`, `scoutedCount`, `visibility: "shown" | "not-scouted" |
+"below-accuracy"`, `scoutedTotal`, `accuracy` (engine, 0-100), `official`,
+`hiddenReason`). **`entries` must be pre-accuracy-filter** (Game/Event/Practice
+scoped, excluded dropped — `useAnalyticsEntries(undefined, { applyAccuracy:
+false })`): the threshold is applied here per alliance, and a withheld alliance
+comes back with its numbers already stripped. Also `matchKey`, `matchHasTeam`,
+and `summarizeEntry(entry, schema)` (counters by game element, toggles, incidents).
+
+**Official matches hook — `lib/analytics/use-event-data.ts`.**
+`useEventMatches(requests)` → `{ matches: OfficialMatch[], loading }` (all three
+match types per event, 3-minute tab cache, failures cached as empty).
+`AnalyticsDataProvider` now also exposes `libraryMatches` (Practice mode's
+official matches).
+
+**Team Breakdown — `lib/analytics/team-card.ts` (pure, tested).**
+`buildKeyStats(stats, schema)` → `{ counters, rates }` (counters summed by label
+across phases, each scored toggle its own rate), `reliabilityLevel`
+(`RELIABLE_AT` 90 / `SOME_ISSUES_AT` 75), `reliabilityIncidents`, `sortTeams(teams,
+key)` with `TEAM_SORTS`, `teamMatchesSearch`. `TeamStats` (P10) gained
+**`reliability`** (share 0-100 of entries with none of the schema's
+reliability incidents; null if none flagged), and `ScoutFormField` gained an
+optional **`reliability`** flag (BIOBUZZ: died, never started, disabled, froze,
+tipped).
+
+**Components** (`components/analytics/`): `alliance-bar.tsx` (`AllianceBar` — the
+animated red/blue bar), `match-row.tsx` (`MatchRow` + expandable detail,
+`matchRowId`), `phase-bars.tsx` (`PhaseStackedBar`, `PhaseMiniBars`,
+`PhaseLegend`, `PHASES`). The phase colors are CSS variables `--phase-auto`,
+`--phase-teleop`, `--phase-endgame` in `globals.css` (dataviz categorical slots
+1-3, validated on both theme surfaces).
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

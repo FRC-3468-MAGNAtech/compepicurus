@@ -86,6 +86,13 @@ export type TeamStats = {
   fieldStats: Record<string, FieldStat>;
   /** Share (0-100) of entries with each General checkbox on, keyed by field key. */
   incidentRates: Record<string, number>;
+  /**
+   * P11: share (0-100) of entries with NONE of the schema's `reliability`
+   * incidents (died, never started, ...). Null when the schema flags no
+   * reliability fields or there are no entries. Built per entry — not from the
+   * per-field rates — so one match with two incidents counts once.
+   */
+  reliability: number | null;
   elementBreakdown: ElementStat[];
   /** Mean alliance accuracy (0-100) over the entries that have one; null if none do. */
   avgAccuracy: number | null;
@@ -197,6 +204,12 @@ export function buildTeamStats(
     }
   }
 
+  const reliabilityKeys = meta.filter((m) => m.field.reliability).map((m) => m.field.key);
+  const reliability =
+    reliabilityKeys.length === 0 || n === 0
+      ? null
+      : (entries.filter((e) => reliabilityKeys.every((k) => rawValue(e, k) !== true)).length / n) * 100;
+
   const pointsTotal = sum([...elementPoints.values()]);
   const elementBreakdown: ElementStat[] = [...elementPoints.entries()]
     .map(([element, avgPoints]) => ({ element, avgPoints, share: pointsTotal > 0 ? avgPoints / pointsTotal : 0 }))
@@ -239,6 +252,7 @@ export function buildTeamStats(
     avgEndgame: mean(entries.map((e) => e.score.endgame)),
     fieldStats,
     incidentRates,
+    reliability,
     elementBreakdown,
     avgAccuracy: accuracies.length === 0 ? null : mean(accuracies),
     trend: computeTrend(entries, avgTotal),

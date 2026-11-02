@@ -66,6 +66,16 @@
   --overlay-border: rgba(255, 214, 120, 0.22);
 }
 
+/* P11: the three score phases in stacked bars (Match Breakdown, Team Breakdown).
+   Categorical slots 1-3 of the dataviz reference palette (blue, orange, aqua) —
+   validated together, all-pairs, against both theme surfaces, so these are fixed
+   across themes on purpose and never derived from the accent. */
+:root {
+  --phase-auto: #3987e5;
+  --phase-teleop: #d95926;
+  --phase-endgame: #199e70;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
