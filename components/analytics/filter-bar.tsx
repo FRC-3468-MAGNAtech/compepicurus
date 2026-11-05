@@ -39,12 +39,13 @@ export function isRawAnalyticsRoute(pathname: string): boolean {
 export function AnalyticsFilterBar() {
   const pathname = usePathname();
   const raw = isRawAnalyticsRoute(pathname);
-  const { filters, setFilters, singleEvent } = useAnalyticsFilters();
+  const { filters, setFilters, singleEvent, singleEventInPractice } = useAnalyticsFilters();
   const data = useAnalyticsData();
   const single = useSingleEvent();
 
-  // Single-event mode only applies to real-event data; Practice shows several events at once.
-  const singleMode = singleEvent && !filters.practice;
+  // Single-event mode normally only applies to real-event data (Practice shows several events at
+  // once) — unless the page needs one event even then (the Pick List).
+  const singleMode = singleEvent && (!filters.practice || singleEventInPractice);
   // A single-event page shows exactly one event, so the "N of M" count must be that event's, not the URL's whole selection.
   const countFilters = useMemo(
     () => (singleMode ? { ...filters, events: { kind: "custom" as const, codes: single.code ? [single.code] : [] } } : undefined),

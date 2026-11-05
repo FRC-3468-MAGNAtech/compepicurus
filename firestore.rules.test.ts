@@ -6,7 +6,8 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { setDoc, doc, getDoc, updateDoc, deleteDoc, collection, addDoc, writeBatch } from "firebase/firestore";
+import { applyPickOp, sanitizePicks, type PickOp } from "@/lib/pick-list/ops";
+import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, collection, addDoc, writeBatch, runTransaction, query, where } from "firebase/firestore";
 
 // Unverified in this environment — no Java / firebase-tools available here
 // to run the Emulator Suite (see docs/ASSUMPTIONS.md, "P1: rules tests").
@@ -1192,6 +1193,232 @@ describe("FIX1: role change + audit entry in one batch (lib/team-members.ts upda
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       const snap = await getDoc(doc(ctx.firestore(), "users", OWNER_UID));
       expect(snap.data()?.primaryRole).toBe("lead-scout");
+    });
+  });
+});
+
+describe("P12: pickLists/{teamId}_{eventCode}", () => {
+  const STRATEGIST_UID = "strategist-1"; // primary: lead-strategist
+  const COACH_UID = "coach-1"; // primary match-scout, SECONDARY team-coach
+  const OUTSIDER_UID = "pick-outsider-1";
+  const EVENT = "USWABON1";
+  const LIST_ID = `${TEAM_ID}_${EVENT}`;
+
+  const listData = (over: Record<string, unknown> = {}) => ({
+    teamId: TEAM_ID,
+    eventCode: EVENT,
+    picked: [254, 971],
+    updatedBy: STRATEGIST_UID,
+    updatedByName: "Strategist Person",
+    updatedAt: new Date(),
+    ...over,
+  });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: false, isOwner: false, themeId: "team" };
+      await setDoc(doc(db, "users", STRATEGIST_UID), { ...base, name: "Strategist Person", teamId: TEAM_ID, primaryRole: "lead-strategist", secondaryRoles: [] });
+      await setDoc(doc(db, "users", COACH_UID), { ...base, name: "Coach Person", teamId: TEAM_ID, primaryRole: "match-scout", secondaryRoles: ["media", "team-coach"] });
+      await setDoc(doc(db, "users", OUTSIDER_UID), { ...base, name: "Outsider", teamId: OTHER_TEAM_ID, primaryRole: "lead-strategist", secondaryRoles: [], isAdmin: true });
+    });
+  });
+
+  const seedList = async () =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "pickLists", LIST_ID), listData());
+    });
+
+  it("lets any teammate read — including a list that doesn't exist yet", async () => {
+    const scoutDb = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(getDoc(doc(scoutDb, "pickLists", LIST_ID))); // missing doc: must not be denied
+    await seedList();
+    await assertSucceeds(getDoc(doc(scoutDb, "pickLists", LIST_ID)));
+  });
+
+  it("blocks another team's members and signed-out users from reading", async () => {
+    await seedList();
+    await assertFails(getDoc(doc(testEnv.authenticatedContext(OUTSIDER_UID).firestore(), "pickLists", LIST_ID)));
+    await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "pickLists", LIST_ID)));
+  });
+
+  it("lets an admin create the list", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "pickLists", LIST_ID), listData({ updatedBy: ADMIN_UID })));
+  });
+
+  it("lets a Lead Strategist (primary role) create and then update it", async () => {
+    const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "pickLists", LIST_ID), listData()));
+    await assertSucceeds(setDoc(doc(db, "pickLists", LIST_ID), listData({ picked: [971, 254, 118] })));
+  });
+
+  it("lets a member whose SECONDARY role is Team Coach edit it", async () => {
+    await seedList();
+    const db = testEnv.authenticatedContext(COACH_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "pickLists", LIST_ID), listData({ updatedBy: COACH_UID, picked: [971] })));
+  });
+
+  it("makes it read-only for everyone else", async () => {
+    await seedList();
+    const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(db, "pickLists", `${TEAM_ID}_NEWEVENT`), listData({ eventCode: "NEWEVENT", updatedBy: SCOUT_UID })));
+    await assertFails(updateDoc(doc(db, "pickLists", LIST_ID), { picked: [1], updatedBy: SCOUT_UID, updatedByName: "Scout Person" }));
+  });
+
+  it("blocks another team's admin from writing to our list", async () => {
+    const db = testEnv.authenticatedContext(OUTSIDER_UID).firestore();
+    await assertFails(setDoc(doc(db, "pickLists", LIST_ID), listData({ updatedBy: OUTSIDER_UID })));
+  });
+
+  it("requires the doc id to be {teamId}_{eventCode}", async () => {
+    const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+    await assertFails(setDoc(doc(db, "pickLists", `${TEAM_ID}_WRONG`), listData()));
+    await assertFails(setDoc(doc(db, "pickLists", "arbitrary-id"), listData()));
+  });
+
+  it("requires updatedBy to be the writer", async () => {
+    const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+    await assertFails(setDoc(doc(db, "pickLists", LIST_ID), listData({ updatedBy: ADMIN_UID })));
+  });
+
+  it("requires picked to be a list of at most 100", async () => {
+    const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+    await assertFails(setDoc(doc(db, "pickLists", LIST_ID), listData({ picked: "254" })));
+    await assertFails(setDoc(doc(db, "pickLists", LIST_ID), listData({ picked: Array.from({ length: 101 }, (_, i) => i + 1) })));
+    await assertSucceeds(setDoc(doc(db, "pickLists", LIST_ID), listData({ picked: Array.from({ length: 100 }, (_, i) => i + 1) })));
+    await assertSucceeds(setDoc(doc(db, "pickLists", LIST_ID), listData({ picked: [] })));
+  });
+
+  it("blocks changing the team or event of an existing list", async () => {
+    await seedList();
+    const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+    await assertFails(updateDoc(doc(db, "pickLists", LIST_ID), { eventCode: "OTHER" }));
+    await assertFails(updateDoc(doc(db, "pickLists", LIST_ID), { teamId: OTHER_TEAM_ID }));
+  });
+
+  it("never lets anyone delete a list", async () => {
+    await seedList();
+    await assertFails(deleteDoc(doc(testEnv.authenticatedContext(ADMIN_UID).firestore(), "pickLists", LIST_ID)));
+    await assertFails(deleteDoc(doc(testEnv.authenticatedContext(STRATEGIST_UID).firestore(), "pickLists", LIST_ID)));
+  });
+
+  it("supports the editor's read-modify-write transaction, audit entry included (lib/pick-list/store.ts)", async () => {
+    await seedList();
+    const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+    const ref = doc(db, "pickLists", LIST_ID);
+    await assertSucceeds(
+      runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const before = (snap.data()?.picked ?? []) as number[];
+        tx.set(ref, listData({ picked: [...before, 118] }));
+        tx.set(doc(collection(db, "auditLog")), {
+          teamId: TEAM_ID,
+          uid: STRATEGIST_UID,
+          actorName: "Strategist Person",
+          action: "edit-pick-list",
+          target: { eventCode: EVENT },
+          before: { picked: before },
+          after: { picked: [...before, 118] },
+          createdAt: new Date(),
+        });
+      })
+    );
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snap = await getDoc(doc(ctx.firestore(), "pickLists", LIST_ID));
+      expect(snap.data()?.picked).toEqual([254, 971, 118]);
+    });
+  });
+
+  describe("auditLog for pick-list editors", () => {
+    const entry = (over: Record<string, unknown> = {}) => ({
+      teamId: TEAM_ID,
+      uid: STRATEGIST_UID,
+      actorName: "Strategist Person",
+      action: "edit-pick-list",
+      target: { eventCode: EVENT },
+      before: {},
+      after: {},
+      createdAt: new Date(),
+      ...over,
+    });
+
+    it("lets a non-admin editor write an edit-pick-list entry as themselves", async () => {
+      const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+      await assertSucceeds(addDoc(collection(db, "auditLog"), entry()));
+    });
+
+    it("does not let that editor write any other kind of entry", async () => {
+      const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+      await assertFails(addDoc(collection(db, "auditLog"), entry({ action: "hard-reset-scout-data" })));
+    });
+
+    it("does not let a non-editor write even an edit-pick-list entry", async () => {
+      const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
+      await assertFails(addDoc(collection(db, "auditLog"), entry({ uid: SCOUT_UID })));
+    });
+
+    it("still requires the entry to be written as yourself, and never lets an editor read the log", async () => {
+      const db = testEnv.authenticatedContext(STRATEGIST_UID).firestore();
+      await assertFails(addDoc(collection(db, "auditLog"), entry({ uid: ADMIN_UID })));
+      await assertFails(getDocs(query(collection(db, "auditLog"), where("teamId", "==", TEAM_ID))));
+    });
+  });
+});
+
+describe("P12: concurrent pick-list edits compose (the transaction pattern in lib/pick-list/store.ts)", () => {
+  const EDITOR_A = "concurrent-a";
+  const EDITOR_B = "concurrent-b";
+  const EVENT = "USWACON1";
+  const LIST_ID = `${TEAM_ID}_${EVENT}`;
+
+  // Same read -> apply op to the latest list -> write steps as editPickList(), against the real emulator.
+  async function edit(uid: string, name: string, op: PickOp) {
+    const db = testEnv.authenticatedContext(uid).firestore();
+    const ref = doc(db, "pickLists", LIST_ID);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const before = sanitizePicks(snap.exists() ? snap.data().picked : []);
+      const after = applyPickOp(before, op);
+      tx.set(ref, { teamId: TEAM_ID, eventCode: EVENT, picked: after, updatedBy: uid, updatedByName: name, updatedAt: new Date() });
+    });
+  }
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: false, isOwner: false, themeId: "team", teamId: TEAM_ID, primaryRole: "lead-strategist", secondaryRoles: [] };
+      await setDoc(doc(db, "users", EDITOR_A), { ...base, name: "A" });
+      await setDoc(doc(db, "users", EDITOR_B), { ...base, name: "B" });
+      await setDoc(doc(db, "pickLists", LIST_ID), { teamId: TEAM_ID, eventCode: EVENT, picked: [254], updatedBy: EDITOR_A, updatedByName: "A", updatedAt: new Date() });
+    });
+  });
+
+  it("two editors adding different teams at the same moment both land", async () => {
+    await Promise.all([edit(EDITOR_A, "A", { type: "place", team: 111, before: null }), edit(EDITOR_B, "B", { type: "place", team: 222, before: null })]);
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const picked = (await getDoc(doc(ctx.firestore(), "pickLists", LIST_ID))).data()?.picked as number[];
+      expect(picked).toContain(254);
+      expect(picked).toContain(111);
+      expect(picked).toContain(222);
+      expect(new Set(picked).size).toBe(picked.length);
+    });
+  });
+
+  it("many simultaneous adds from both editors all survive, with no duplicates", async () => {
+    const adds = Array.from({ length: 8 }, (_, i) => edit(i % 2 === 0 ? EDITOR_A : EDITOR_B, i % 2 === 0 ? "A" : "B", { type: "place", team: 1000 + i, before: null }));
+    await Promise.all(adds);
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const picked = (await getDoc(doc(ctx.firestore(), "pickLists", LIST_ID))).data()?.picked as number[];
+      expect([...picked].sort((x, y) => x - y)).toEqual([254, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007]);
+    });
+  });
+
+  it("a removal and an add at the same moment both apply", async () => {
+    await Promise.all([edit(EDITOR_A, "A", { type: "remove", team: 254 }), edit(EDITOR_B, "B", { type: "place", team: 333, before: null })]);
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const picked = (await getDoc(doc(ctx.firestore(), "pickLists", LIST_ID))).data()?.picked as number[];
+      expect(picked).toEqual([333]);
     });
   });
 });

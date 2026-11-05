@@ -30,7 +30,9 @@ type FilterContextValue = {
   query: string;
   /** True while a page has asked for single-event mode (see `useSingleEventMode`). */
   singleEvent: boolean;
-  setSingleEvent: (value: boolean) => void;
+  /** …and wants it even while Practice is on (the Pick List: its official data is always one real event). */
+  singleEventInPractice: boolean;
+  setSingleEvent: (value: boolean, includePractice?: boolean) => void;
 };
 
 const FilterContext = createContext<FilterContextValue | null>(null);
@@ -39,7 +41,8 @@ export function AnalyticsFilterProvider({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryString = searchParams.toString();
-  const [singleEvent, setSingleEvent] = useState(false);
+  const [single, setSingle] = useState({ on: false, includePractice: false });
+  const setSingleEvent = useCallback((value: boolean, includePractice: boolean = false) => setSingle({ on: value, includePractice }), []);
 
   const filters = useMemo(() => parseFilters(new URLSearchParams(queryString)), [queryString]);
 
@@ -58,8 +61,16 @@ export function AnalyticsFilterProvider({ children }: { children: React.ReactNod
   const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), [setFilters]);
 
   const value = useMemo<FilterContextValue>(
-    () => ({ filters, setFilters, resetFilters, query: filtersToQuery(filters), singleEvent, setSingleEvent }),
-    [filters, setFilters, resetFilters, singleEvent]
+    () => ({
+      filters,
+      setFilters,
+      resetFilters,
+      query: filtersToQuery(filters),
+      singleEvent: single.on,
+      singleEventInPractice: single.on && single.includePractice,
+      setSingleEvent,
+    }),
+    [filters, setFilters, resetFilters, single, setSingleEvent]
   );
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
@@ -89,13 +100,15 @@ export function useAnalyticsHref(): (path: string, extra?: Record<string, string
  * Call from a page that can only show one event at a time (e.g. Match Scout
  * Analytics, whose Import/Recalculate act on a single event): the shared
  * filter bar's Event control becomes a single select for as long as the page
- * is mounted.
+ * is mounted. By default that only applies to real-event data; pass
+ * `includePractice` for a page that needs one event even in Practice mode
+ * (the Pick List).
  */
-export function useSingleEventMode(enabled: boolean = true) {
+export function useSingleEventMode(enabled: boolean = true, includePractice: boolean = false) {
   const { setSingleEvent } = useAnalyticsFilters();
   useEffect(() => {
     // Registers/unregisters this page's request with the layout-level filter bar.
-    setSingleEvent(enabled);
+    setSingleEvent(enabled, includePractice);
     return () => setSingleEvent(false);
-  }, [enabled, setSingleEvent]);
+  }, [enabled, includePractice, setSingleEvent]);
 }

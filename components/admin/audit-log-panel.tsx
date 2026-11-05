@@ -20,6 +20,7 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   "refresh-official-scores": "Refresh Official Scores",
   "export-backup": "Export Backup",
   "edit-member-roles": "Edit Member Roles",
+  "edit-pick-list": "Edit Pick List",
 };
 
 function toMillis(value: unknown): number {

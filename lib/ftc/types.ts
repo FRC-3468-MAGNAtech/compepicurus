@@ -33,6 +33,8 @@ export type FtcRanking = {
   losses: number;
   ties: number;
   matchesPlayed: number;
+  /** Ranking points (the FIRST API's primary sort value, `sortOrder1`); null if the API didn't give one. Unverified against the live API — see docs/ASSUMPTIONS.md (P12). */
+  rankingPoints: number | null;
 };
 
 export type MatchType = "Practice" | "Qualification" | "Playoff";

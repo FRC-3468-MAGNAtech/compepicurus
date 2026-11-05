@@ -82,6 +82,8 @@ type RawRanking = {
   losses?: number;
   ties?: number;
   matchesPlayed?: number;
+  sortOrder1?: number;
+  qualAverage?: number;
 };
 
 function toFtcRanking(raw: RawRanking): FtcRanking | null {
@@ -93,6 +95,8 @@ function toFtcRanking(raw: RawRanking): FtcRanking | null {
     losses: raw.losses ?? 0,
     ties: raw.ties ?? 0,
     matchesPlayed: raw.matchesPlayed ?? (raw.wins ?? 0) + (raw.losses ?? 0) + (raw.ties ?? 0),
+    // FTC ranks by ranking points (sortOrder1 in the v2.0 rankings payload); older payloads only carried qualAverage.
+    rankingPoints: raw.sortOrder1 ?? raw.qualAverage ?? null,
   };
 }
 
@@ -146,7 +150,7 @@ export async function getTeamsForEvent(eventCode: string, season?: number): Prom
 }
 
 /**
- * Official qualification rankings (rank + win/loss/tie record). Empty until
+ * Official qualification rankings (rank, win/loss/tie record, ranking points). Empty until
  * the event has played qualification matches; callers treat an error or an
  * empty list as "no official rank available" rather than a failure (Team
  * Profile just omits the rank chip).

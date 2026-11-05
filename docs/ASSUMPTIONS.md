@@ -1781,6 +1781,162 @@ in): the animated bar, the expand/collapse, deep-link scroll, and the card grid 
 verified by types, build, and reading only. In particular the FIRST API match
 list needs the live API (`FTC_API_*`) — as with P10-13, nothing here could call it.
 
+## P12 — Pick List (Official Rank, Scouted Rank, EPA, Pick Likelihood)
+
+**P12-0. No clarifying questions were asked** — nothing blocked. As in P1-1 the
+prompt's Vite/React Router wording maps to Next.js (`/analytics/pick-list`).
+The project had no drag-and-drop library (framer-motion's `Reorder` can't move
+items *between* columns), so **`@dnd-kit/core`, `@dnd-kit/sortable`, and
+`@dnd-kit/utilities` were added** to `package.json`.
+
+### Data
+
+**P12-1. Official rank.** `getRankingsForEvent` already existed from P10; P12
+adds ranking points to `FtcRanking.rankingPoints`, read from the payload's
+`sortOrder1` (falling back to `qualAverage`). **Both field names are from
+memory of the v2.0 API and unverified** — this environment has no FIRST
+credentials. Rank and record come from the same payload (P10-13). Our team
+number is `teams/{teamId}.number`; our team is kept out of both lists and
+pinned in a header card (official rank, scouted rank, record, ranking points,
+EPA).
+
+**P12-2. One event, even in Practice mode.** The page calls
+`useSingleEventMode(true, true)` (new `includePractice` argument), so the filter
+bar's Event control is a single select *always* — the O. columns belong to one real
+event, and a multi-event selection would have no sensible meaning. The event
+is `useSingleEvent()`'s: the viewer's pick, else an **In Progress** active
+event, else the primary. (The prompt says "the primary active event"; with
+several active events at once, preferring the one actually happening is the
+same rule the Scout Form uses — FIX1-2f — and it equals the primary whenever
+one event is active.) Scouted data is the shared filters **pinned to that event**
+(`useAnalyticsEntries` with `events = custom [code]`), so the accuracy filter,
+Game, and Practice all apply: in Practice mode the S. columns use practice
+data for that event's teams while O. columns stay official. Official data is
+never touched by the accuracy filter.
+
+**P12-3. The field and the columns.** Teams = the event's team list ∪ its
+rankings ∪ teams with scouted data ∪ already-picked teams (so a pick never
+vanishes if the API hiccups). **S. Rank** = `rankWithTies` on average total over
+the whole field *including our team* (so it matches the header card), `?` with
+no scouted data; S. Avg / S. High are `-` then. (The prompt says both "`?` when no
+data" for S. Rank and "`-` for S. columns"; I used `?` for the rank and `-` for the
+rest.) **O. Rank** `-` for an unranked team; unranked teams sort after ranked
+ones, by team number. The Pick % scale uses `max(field size, rankings count)`.
+
+### O. EPA (`lib/epa`)
+
+**P12-4. Algorithm as specified**, with these calls:
+- *Input:* the event's played **Qualification** matches, ordered by match number
+  (the qualification schedule is numbered in play order; I used that rather than
+  `startTime`, which can be absent or `actualStartTime`).
+- *Score:* the alliance score **minus the penalty points it was awarded**
+  (`penaltyPoints`, i.e. `scoreRedFoul`/`scoreBlueFoul` — P3's reading of that
+  field is "points this alliance got from the opponent's fouls, already folded
+  into the score"), floored at 0. The API *does* expose it, so the raw-score
+  fallback only applies per alliance when that field is `null`. Same
+  unverified-field caveat as P12-1.
+- *Update:* every team starts at (average alliance score) / 2; per alliance,
+  `error = actual − Σ pre-match EPAs`, `epa += max(0.1, 1/(n+1)) × error / 2`,
+  both alliances predicted from the ratings *before* the match.
+- **Two passes by default** (`DEFAULT_EPA_PASSES`) — the prompt allows a second
+  smoothing pass "if tests show better results", and they do. Measured over 20
+  seeds of simulated events with hidden strengths (Spearman against the truth): 24
+  teams × 12 matches, noise 8 — one pass median **0.946** / min 0.899, two passes
+  median 0.972 / min 0.937; 6 matches each — min 0.783 → 0.861; noisy (15) events
+  improve too. One pass alone already clears the 0.85 bar (tested), so the second
+  pass is a refinement; `passes: 1` gives the plain forward pass.
+- Teams with no official matches have no EPA (`-`); a team with one match gets a
+  rating from that match alone (tested, no NaN).
+
+**P12-5. EPA setting.** "EPA: Calculated / Off" lives in a **Columns** popover,
+default Calculated. "Remembered per user" is stored in **this browser's
+localStorage keyed by the user's uid** (`useEpaMode`): two people on one browser
+keep separate settings, but it does **not** follow someone to another device.
+Putting it on the `users` doc would need a rules change to the self-update
+rule (which deliberately pins every field but name/theme); not worth it for a
+display toggle. When Off, the column, the header card's EPA, and the matches
+fetch it needs are skipped.
+
+### Pick % (`lib/pickLikelihood`)
+
+**P12-6. Exactly the specified curve**, all constants in
+`lib/pickLikelihood/config.ts` (`MAX_PICK_PROBABILITY` 0.95, `MIN_SCALE` 4,
+`TEAM_COUNT_DIVISOR` 5, `TINY_PROBABILITY` 0.005): `gap = candidate − ours`;
+`gap ≤ 0` → 0%; else `0.95 × (1 − exp(−(gap/scale)²))`, `scale = max(4, teams/5)`;
+unknown rank on either side → `-`. Display is a whole percent, `<1%` for a tiny
+non-zero value, coloured red→green (HSL hue 0-120) with the number always
+printed, and a tooltip headed **"Estimate, not a prediction"** that states the gap
+("Ranked 4 below us (rank 9 vs our 5)"). For scale: on a 40-team event the team
+ranked one below us reads about 1.5%, eight below 60%. **This is a rough model:**
+real alliance selection depends on event size, alliance count, declines, and
+strategy none of it knows, and the constants are meant to be tuned against real
+events (see the config file's header).
+
+### Board, persistence, permissions
+
+**P12-7. Storage: `pickLists/{teamId}_{eventCode}`** = `{ teamId, eventCode,
+picked: number[], updatedBy (uid), updatedByName, updatedAt }`. `updatedByName`
+is stored (denormalized) so "Last edited by X" needs no roster lookup; it is the
+name at the time of the edit.
+
+**P12-8. Concurrency: ops, not arrays.** Every change is a `PickOp` (`place`
+"put team before team", `remove`, `move` ±1, `reset`) applied inside a Firestore
+**transaction** to the list *as stored at commit time* (`editPickList` in
+`lib/pick-list/store.ts`); a drag's final order becomes "put this team before
+whatever now follows it" (`placeOpFromList`). So two people editing at once
+compose. Verified against the Firestore emulator: simultaneous adds from two
+editors (including 8 at once) all land with no duplicates, and an add + a remove
+at the same moment both apply. Costs: transactions need a connection, so there
+are **no offline edits** (a failure shows a dismissible message); and the UI
+shows the user's own change immediately but pins that optimistic list to the
+server snapshot it was computed from, so any newer snapshot — theirs landing, or a
+teammate's — replaces it and it can't mask someone else's edit.
+
+**P12-9. Permissions.** `can('editPickList')` = admins, or a primary **or
+secondary** role of Lead Strategist, Lead Scout, Team Coach, Drive Team
+(`lib/pick-list/permissions.ts`, mirrored in `firestore.rules`'
+`canEditPickList()` — **keep the two role lists in sync**). Everyone else gets a
+view-only board (no handles/buttons) that still updates live, with a banner saying
+so. Rules: any teammate may read — the read rule keys off the doc id's team prefix
+(`id.split('_')[0]`), because a rule on `resource.data` would deny the first read
+of a list that doesn't exist yet; create/update need an editor, the doc id
+`{teamId}_{eventCode}`, `updatedBy == auth.uid`, a `picked` list of ≤ 100 (rules
+can't check the *elements*); delete is denied.
+
+**P12-10. Audit.** Each change writes an `edit-pick-list` entry (before/after
+`picked`) **in the same transaction**. That needed a rules change: `auditLog`
+creates were admin-only, but most pick-list editors aren't admins, so
+non-admin editors may now create **only** `edit-pick-list` entries (still as
+themselves, same team; they still can't read the log). Dragging a team is one
+change, but a busy session is many log rows — as the prompt asked ("each change").
+
+**P12-11. UI.** Available lists in official-rank order by default; the sort
+control is a Select (O. Rank / S. Rank best-first, the rest high-first) and
+search matches number or name. Drag uses a **grip handle only** (so the page still
+scrolls on touch; touch needs a short press-and-hold), with a glowing drag
+overlay and a drop indicator; every action also has Add / Move up / Move down /
+Remove buttons (44px targets), and the keyboard sensor works on the handle.
+Dropping a Picked team back on Available removes it. Below `lg` the columns become
+**Available / Picked (n)** tabs. Moves animate with the shared spring (framer
+layout on a wrapper around dnd-kit's own drag transform). "Reset list" confirms,
+and "Last edited by X · time" pulses on every change, yours or a teammate's.
+Skeletons reserve the layout, and the page waits for the team list, rankings,
+matches (when EPA is on), entries, and the stored list before drawing, so rows
+don't reorder when data arrives.
+
+### P12: verification
+
+Run and passing: `tsc`, `eslint` (0 errors; the same 2 virtualizer warnings),
+`vitest` (new: `epa` 21, `pickLikelihood` 10, `pick-list` 33; 402 total),
+`next build`, and the **Firestore emulator** (`firestore.rules.test.ts`, 114
+tests, 20 new for P12: read/write permissions by primary/secondary role, doc-id
+and shape rules, the audit carve-out, and the three concurrent-transaction cases).
+`api-routes.emulator.test.ts` still fails as before (the Auth emulator's tokens are
+rejected, unrelated to P12). **Not verified:** any browser behaviour — drag and
+drop with a mouse, touch, and keyboard, the mobile tabs, the animations — and
+the live FIRST rankings/matches payloads, none of which this environment can
+exercise.
+
 ## Commands to run locally
 
 ```bash
@@ -2019,6 +2175,24 @@ npm run test:rules   # needs Java + firebase-tools; includes the new FIX1 blocks
 # matches. From a Team Profile, click a match row -> it opens already
 # expanded. Analytics > Team Breakdown: card grid, search, sort, low-sample
 # badge, reliability pill (hover for incident rates); cards open the profile.
+
+# P12 (rules changed — deploy them first; no env changes). Analytics > Pick List
+# with an active event (needs FTC_API_*): our team is pinned in the header card
+# and absent from both lists; the filter bar's Event control is a single select
+# (also with Practice on). Before qualification matches: O. Rank / Pick % are
+# '-' with a gentle note. Once ranked: Available lists in official-rank order;
+# sort by each column; search a number or name. Drag a team from Available to
+# Picked (grip handle), reorder within Picked, drag one back to Available to
+# remove it; also use Add / Move up / Move down / Remove. On a phone width the
+# columns become Available / Picked (n) tabs. Open the page in two browsers as
+# two editors: changes appear live, 'Last edited by X' pulses, and adding
+# different teams at the same moment keeps both. Sign in as a plain Match
+# Scout: the board is view-only. Columns > EPA Off hides the column and it
+# stays off after a reload. Reset list asks first. Admin Panel > Audit Log shows
+# 'Edit Pick List' entries. Raise the Accuracy filter -> S. Rank / S. Avg /
+# S. High change, O. columns do not.
+firebase deploy --only firestore:rules   # pickLists rules + the auditLog carve-out
+npm run test:rules   # needs Java + firebase-tools; 114 rules tests incl. the P12 ones
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

@@ -267,6 +267,10 @@ including admins, can update or delete an entry, so it stays a trustworthy
 record. `firestore.rules` never restricts the `action` value itself (only
 `uid`/`teamId` on create), so P9 added its five new action strings purely
 in `lib/audit-log.ts`'s `AuditAction` union — no rules change needed.
+P12 added `edit-pick-list` (`target { eventCode, op }`, `before`/`after` `{ picked }`),
+written in the same transaction as each pick-list change; because most pick-list
+editors aren't admins, `firestore.rules` lets non-admin editors create *only*
+that action's entries.
 FIX1 added `edit-member-roles` (Team Management's role editor): `target`
 `{ targetUid, targetName }`, `before`/`after` `{ primaryRole, secondaryRoles,
 isAdmin }`, written in the same batch as the role change itself
@@ -368,6 +372,23 @@ docs/ASSUMPTIONS.md, P8).
 with code" can look one up before the joiner has a player doc of their
 own) and writable only by its `hostUid`; `players/{uid}` is readable by
 the whole team, writable only by that uid (create/update/delete).
+
+### `pickLists/{teamId}_{eventCode}` (P12)
+
+The shared alliance-selection board for one event: the teams we plan to pick,
+in priority order. Edited live by several people (see "Pick List (P12)" below
+for the transaction pattern that keeps concurrent edits from overwriting each
+other); readable by the whole team, editable only by admins and Lead Strategists,
+Lead Scouts, Team Coaches, and Drive Team members (primary *or* secondary
+role). Never deleted — "Reset list" empties `picked`.
+
+| Field | Type |
+|---|---|
+| `teamId`, `eventCode` | `string` (together = the doc id) |
+| `picked` | `number[]` — team numbers, index 0 = first choice; at most 100 |
+| `updatedBy` | `string` — uid of the last editor |
+| `updatedByName` | `string` — their name at the time (denormalized for "Last edited by X") |
+| `updatedAt` | `Timestamp` |
 
 ## Shared modules
 
@@ -1316,6 +1337,55 @@ animated red/blue bar), `match-row.tsx` (`MatchRow` + expandable detail,
 `PhaseLegend`, `PHASES`). The phase colors are CSS variables `--phase-auto`,
 `--phase-teleop`, `--phase-endgame` in `globals.css` (dataviz categorical slots
 1-3, validated on both theme surfaces).
+
+### Pick List (P12)
+
+`/analytics/pick-list` — a shared, realtime board to plan alliance selection.
+Collection: **`pickLists/{teamId}_{eventCode}`** (above). Reads the P10 shared
+layer (filter bar in single-event mode, `useAnalyticsEntries`, `buildAllTeamStats`)
+and the FIRST API hooks.
+
+**`lib/epa` (pure, tested)** — `computeEpa(matches, { passes? })` → `{ epa:
+Map<team, number>, matchesPlayed }`; online alliance-rating update (init = average
+alliance score / 2; `learningRate(n) = max(0.1, 1/(n+1))`;
+`DEFAULT_EPA_PASSES = 2`); `epaMatchesFromOfficial(OfficialMatch[])` (played
+Qualification matches in match-number order, scores with awarded penalty points
+removed); `rankEpa`.
+
+**`lib/pickLikelihood` (pure, tested; constants in `config.ts`)** —
+`pickLikelihood(candidateRank, ourRank, teamCount)` → 0-1 or null; `pickScale`,
+`formatPickLikelihood`, `pickLikelihoodColor`, `describePickGap`,
+`PICK_ESTIMATE_LABEL`.
+
+**`lib/pick-list/`** — `ops.ts` (`PickOp` = place/remove/move/reset, `applyPickOp`,
+`placeOpFromList`, `sanitizePicks`, `MAX_PICKS` 100); `rows.ts`
+(`buildPickBoard({ teamNumbers, teamNames, rankings, teamStats, epa,
+ourTeamNumber })` → `{ rows, ours, teamCount }` of `PickRow`s; `sortPickRows`,
+`PICK_SORTS`, `pickRowMatches`); `permissions.ts` (`canEditPickList`,
+`PICK_LIST_EDITOR_ROLES`); `store.ts` (client: `usePickList(teamId, eventCode,
+actor)` → `{ list, picked, loaded, edit(op), error }`, `editPickList` — the
+transactional read→apply-op→write plus its `edit-pick-list` audit entry, and
+`useEpaMode(uid)`, the per-browser EPA setting).
+
+**Permissions & rules.** `usePermissions().can("editPickList")` (admins, or a
+primary/secondary role of Lead Strategist, Lead Scout, Team Coach, Drive Team).
+`firestore.rules`: `canEditPickList()` + the `pickLists` rules (team-wide read keyed
+on the doc id's team prefix; editor-only create/update; no delete) and a carve-out
+letting non-admin editors create `edit-pick-list` `auditLog` entries (and only
+those). New `AuditAction` `"edit-pick-list"`.
+
+**FIRST API.** `FtcRanking` gained `rankingPoints` (`getRankingsForEvent`);
+`use-event-data.ts` gained `useEventTeams`, `useEventRankingsStatus` (rankings +
+`loading`); `useSingleEventMode(enabled, includePractice)` /
+`useAnalyticsFilters().singleEventInPractice` let a page keep the Event control
+single-select even in Practice mode.
+
+**Components** (`components/pick-list/`): `pick-board.tsx` (`PickBoard` — @dnd-kit
+two-column board, cards, tabs on phones), `pick-stats.tsx` (`PickStats`,
+`EPA_TOOLTIP`), `column-settings.tsx`, `our-team-card.tsx`; plus
+`components/ui/hover-tip.tsx` (`HoverTip`, hover/focus/tap tooltip on
+`.glass-overlay`). Dependencies added: `@dnd-kit/core`, `@dnd-kit/sortable`,
+`@dnd-kit/utilities`.
 
 ## Conventions
 

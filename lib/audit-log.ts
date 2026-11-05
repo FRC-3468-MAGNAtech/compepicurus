@@ -21,7 +21,8 @@ export type AuditAction =
   | "rescore-sessions"
   | "refresh-official-scores"
   | "export-backup"
-  | "edit-member-roles";
+  | "edit-member-roles"
+  | "edit-pick-list";
 
 export type AuditLogEntry = {
   id: string;

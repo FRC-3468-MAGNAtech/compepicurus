@@ -47,6 +47,15 @@ service cloud.firestore {
       );
     }
 
+    // P12: who may edit the shared Pick List — admins, or members whose primary
+    // OR secondary role is one of these. Mirrors lib/pick-list/permissions.ts's
+    // PICK_LIST_EDITOR_ROLES: keep both in sync.
+    function canEditPickList() {
+      let p = myProfile();
+      let editors = ['lead-strategist', 'lead-scout', 'team-coach', 'drive-team'];
+      return isSignedIn() && (p.isAdmin == true || p.primaryRole in editors || p.secondaryRoles.hasAny(editors));
+    }
+
     match /teams/{teamId} {
       // P1b: no more public read. Team lookup by join code, the first-run
       // "does a team exist" check, and team creation itself all moved
@@ -208,13 +217,52 @@ service cloud.firestore {
     // Reset, Dismiss Flag, Exclude/Include). Write-once: never updated or
     // deleted by anyone, including admins, so it stays a trustworthy
     // record. Not read by any P5 page — P9's Admin tools will.
+    //
+    // P12: Pick List editors who aren't admins (Lead Strategist, ...) may write
+    // *only* `edit-pick-list` entries — each pick-list change is logged in the same
+    // transaction as the change itself, so the log has to accept their writes.
+    // They still can't read the log.
     match /auditLog/{id} {
       allow read: if isAdmin();
       allow create: if isSignedIn()
-        && isAdmin()
         && request.resource.data.uid == request.auth.uid
-        && sameTeam(request.resource.data.teamId);
+        && sameTeam(request.resource.data.teamId)
+        && (isAdmin() || (request.resource.data.action == 'edit-pick-list' && canEditPickList()));
       allow update, delete: if false;
+    }
+
+    // P12: pickLists/{teamId}_{eventCode} — the shared alliance-selection board:
+    // an ordered list of team numbers we plan to pick, edited live by several
+    // people. Every team member can read it (the doc id carries the team id, so
+    // this works for a list that doesn't exist yet — the first read of a new
+    // event must not be denied); only pick-list editors can write, and only as
+    // themselves, to the id their own team/event give. Writes happen inside
+    // transactions that re-apply each edit to the latest list (lib/pick-list/
+    // store.ts), so two editors never overwrite each other. Rules can't loop,
+    // so the *elements* of `picked` aren't type-checked — only that it's a list
+    // of at most 100 — the writer is an editor and lib/pick-list/ops.ts builds it.
+    match /pickLists/{id} {
+      allow read: if isSignedIn() && id.split('_')[0] == myProfile().teamId;
+
+      allow create: if canEditPickList()
+        && sameTeam(request.resource.data.teamId)
+        && request.resource.data.eventCode is string
+        && id == request.resource.data.teamId + '_' + request.resource.data.eventCode
+        && request.resource.data.picked is list
+        && request.resource.data.picked.size() <= 100
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedByName is string;
+
+      allow update: if canEditPickList()
+        && sameTeam(resource.data.teamId)
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.eventCode == resource.data.eventCode
+        && request.resource.data.picked is list
+        && request.resource.data.picked.size() <= 100
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedByName is string;
+
+      allow delete: if false;
     }
 
     // P6: assignments/{teamId}_{eventCode} — the published scouting
