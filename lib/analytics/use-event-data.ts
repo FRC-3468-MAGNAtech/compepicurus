@@ -20,8 +20,10 @@ const RANKING_TTL_MS = 3 * 60 * 1000;
 const MATCHES_TTL_MS = 3 * 60 * 1000;
 
 const teamsCache = new Map<string, FtcTeam[]>();
-const rankingsCache = new Map<string, { data: FtcRanking[]; expires: number }>();
-const matchesCache = new Map<string, { data: OfficialMatch[]; expires: number }>();
+const rankingsCache = new Map<string, { data: FtcRanking[]; expires: number; failed: boolean }>();
+const matchesCache = new Map<string, { data: OfficialMatch[]; expires: number; failed: boolean }>();
+/** Event keys whose team-list fetch failed — kept beside the cache because a failure is stored as an empty list. */
+const failedTeams = new Set<string>();
 const inflight = new Set<string>();
 
 /** A stable string for a request list so hooks re-run only when the *set* of events changes. */
@@ -37,7 +39,7 @@ function parseKey(key: string): EventRequest[] {
 }
 
 /** Loads (once, cached) each requested event's team list; `loading` until every event has answered. Shared by useTeamNames and useEventTeams. */
-function useTeamLists(requests: EventRequest[]): { byEvent: Map<string, FtcTeam[]>; loading: boolean } {
+function useTeamLists(requests: EventRequest[]): { byEvent: Map<string, FtcTeam[]>; loading: boolean; error: boolean } {
   const key = keyOf(requests);
   const [version, setVersion] = useState(0);
 
@@ -48,9 +50,13 @@ function useTeamLists(requests: EventRequest[]): { byEvent: Map<string, FtcTeam[
       inflight.add(k);
       getTeamsForEvent(r.code, r.season)
         .then((res) => {
+          if (!res.ok) failedTeams.add(k);
           teamsCache.set(k, res.ok ? res.data : []);
         })
-        .catch(() => teamsCache.set(k, []))
+        .catch(() => {
+          failedTeams.add(k);
+          teamsCache.set(k, []);
+        })
         .finally(() => {
           inflight.delete(k);
           setVersion((v) => v + 1);
@@ -61,12 +67,14 @@ function useTeamLists(requests: EventRequest[]): { byEvent: Map<string, FtcTeam[
   return useMemo(() => {
     const byEvent = new Map<string, FtcTeam[]>();
     let loading = false;
+    let error = false;
     for (const r of parseKey(key)) {
       const cached = teamsCache.get(requestKey(r));
       if (cached) byEvent.set(r.code, cached);
       else loading = true;
+      if (failedTeams.has(requestKey(r))) error = true;
     }
-    return { byEvent, loading };
+    return { byEvent, loading, error };
     // `version` is the cache's change signal — the cache itself isn't React state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, version]);
@@ -83,13 +91,13 @@ export function useTeamNames(requests: EventRequest[]): ReadonlyMap<number, stri
 }
 
 /** Every team registered at the requested events (P12: the Pick List's field). `loading` until each event has answered; a failure reads as an empty list. */
-export function useEventTeams(requests: EventRequest[]): { teams: FtcTeam[]; loading: boolean } {
-  const { byEvent, loading } = useTeamLists(requests);
+export function useEventTeams(requests: EventRequest[]): { teams: FtcTeam[]; loading: boolean; error: boolean } {
+  const { byEvent, loading, error } = useTeamLists(requests);
   return useMemo(() => {
     const byNumber = new Map<number, FtcTeam>();
     for (const teams of byEvent.values()) for (const t of teams) byNumber.set(t.teamNumber, t);
-    return { teams: [...byNumber.values()].sort((a, b) => a.teamNumber - b.teamNumber), loading };
-  }, [byEvent, loading]);
+    return { teams: [...byNumber.values()].sort((a, b) => a.teamNumber - b.teamNumber), loading, error };
+  }, [byEvent, loading, error]);
 }
 
 const MATCH_TYPES: MatchType[] = ["Practice", "Qualification", "Playoff"];
@@ -101,7 +109,7 @@ const MATCH_TYPES: MatchType[] = ["Practice", "Qualification", "Playoff"];
  * cached as "no matches" so it isn't retried in a loop (the cache expires, so a
  * live event picks up new results on the next visit).
  */
-export function useEventMatches(requests: EventRequest[]): { matches: OfficialMatch[]; loading: boolean } {
+export function useEventMatches(requests: EventRequest[]): { matches: OfficialMatch[]; loading: boolean; error: boolean } {
   const key = keyOf(requests);
   const [version, setVersion] = useState(0);
 
@@ -114,9 +122,9 @@ export function useEventMatches(requests: EventRequest[]): { matches: OfficialMa
       Promise.all(MATCH_TYPES.map((type) => getMatchesForEvent(r.code, type, r.season)))
         .then((results) => {
           const data = results.flatMap((res) => (res.ok ? res.data.map((m) => ftcMatchToOfficial(r.code, m)) : []));
-          matchesCache.set(k, { data, expires: Date.now() + MATCHES_TTL_MS });
+          matchesCache.set(k, { data, expires: Date.now() + MATCHES_TTL_MS, failed: results.some((res) => !res.ok) });
         })
-        .catch(() => matchesCache.set(k, { data: [], expires: Date.now() + MATCHES_TTL_MS }))
+        .catch(() => matchesCache.set(k, { data: [], expires: Date.now() + MATCHES_TTL_MS, failed: true }))
         .finally(() => {
           inflight.delete(`matches:${k}`);
           setVersion((v) => v + 1);
@@ -128,12 +136,15 @@ export function useEventMatches(requests: EventRequest[]): { matches: OfficialMa
     const parsed = parseKey(key);
     const matches: OfficialMatch[] = [];
     let loading = false;
+    let error = false;
     for (const r of parsed) {
       const cached = matchesCache.get(requestKey(r));
-      if (cached) matches.push(...cached.data);
-      else loading = true;
+      if (cached) {
+        matches.push(...cached.data);
+        if (cached.failed) error = true;
+      } else loading = true;
     }
-    return { matches, loading };
+    return { matches, loading, error };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, version]);
 }
@@ -144,7 +155,7 @@ export function useEventRankings(requests: EventRequest[]): ReadonlyMap<string, 
 }
 
 /** `useEventRankings` plus `loading` (true until each event has answered once) — for pages that must not reorder when the ranks arrive. */
-export function useEventRankingsStatus(requests: EventRequest[]): { rankings: ReadonlyMap<string, FtcRanking[]>; loading: boolean } {
+export function useEventRankingsStatus(requests: EventRequest[]): { rankings: ReadonlyMap<string, FtcRanking[]>; loading: boolean; error: boolean } {
   const key = keyOf(requests);
   const [version, setVersion] = useState(0);
 
@@ -155,8 +166,8 @@ export function useEventRankingsStatus(requests: EventRequest[]): { rankings: Re
       if ((cached && cached.expires > Date.now()) || inflight.has(`rank:${k}`)) continue;
       inflight.add(`rank:${k}`);
       getRankingsForEvent(r.code, r.season)
-        .then((res) => rankingsCache.set(k, { data: res.ok ? res.data : [], expires: Date.now() + RANKING_TTL_MS }))
-        .catch(() => rankingsCache.set(k, { data: [], expires: Date.now() + RANKING_TTL_MS }))
+        .then((res) => rankingsCache.set(k, { data: res.ok ? res.data : [], expires: Date.now() + RANKING_TTL_MS, failed: !res.ok }))
+        .catch(() => rankingsCache.set(k, { data: [], expires: Date.now() + RANKING_TTL_MS, failed: true }))
         .finally(() => {
           inflight.delete(`rank:${k}`);
           setVersion((v) => v + 1);
@@ -167,12 +178,14 @@ export function useEventRankingsStatus(requests: EventRequest[]): { rankings: Re
   return useMemo(() => {
     const byEvent = new Map<string, FtcRanking[]>();
     let loading = false;
+    let error = false;
     for (const r of parseKey(key)) {
       const cached = rankingsCache.get(requestKey(r));
       if (cached && cached.data.length > 0) byEvent.set(r.code, cached.data);
       if (!cached) loading = true;
+      else if (cached.failed) error = true;
     }
-    return { rankings: byEvent as ReadonlyMap<string, FtcRanking[]>, loading };
+    return { rankings: byEvent as ReadonlyMap<string, FtcRanking[]>, loading, error };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, version]);
 }

@@ -1,101 +1,117 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { BarChart3, ClipboardList, ListChecks, TrendingUp } from "lucide-react";
-import { StatCard } from "@/components/ui/stat-card";
-import { GlassPanel } from "@/components/ui/glass-panel";
-import { Badge } from "@/components/ui/badge";
+import { CalendarX2 } from "lucide-react";
+import { AdminStrip } from "@/components/dashboard/admin-strip";
+import { HeaderStrip } from "@/components/dashboard/header-strip";
+import { dashboardRegistry } from "@/components/dashboard/registry";
+import { RoleSwitcher } from "@/components/dashboard/role-switcher";
+import { WIDGET_GRID_CLASS, WidgetBoundary } from "@/components/dashboard/widget";
 import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/avatar";
-import { dashboardStats, matches, scouts, teamStats } from "@/lib/mock-data";
+import { GlassPanel } from "@/components/ui/glass-panel";
+import { Shimmer } from "@/components/ui/shimmer";
+import { useAuth } from "@/lib/auth";
+import { DashboardProvider, useDashboard } from "@/lib/dashboard/data";
+import { useSavedDashboardRole } from "@/lib/dashboard/prefs";
+import { resolveViewRole, userRoles } from "@/lib/dashboard/roles";
+import { getRole, type RoleId } from "@/lib/roles";
+import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const topTeams = [...teamStats].sort((a, b) => a.rank - b.rank).slice(0, 5);
-  const recentMatches = matches.slice(0, 4);
-  const activeScouts = scouts.slice(0, 4);
+  const { user, profile } = useAuth();
+  const [saved, saveRole] = useSavedDashboardRole(user?.uid ?? null);
+  // An admin's "View as role" preview — never saved, and gone on reload.
+  const [viewAs, setViewAs] = useState<RoleId | null>(null);
+
+  if (!profile) return null; // the app shell only renders pages once the profile exists
+
+  const isAdmin = profile.isAdmin;
+  const roles = userRoles(profile.primaryRole, profile.secondaryRoles);
+  const role = resolveViewRole({ primaryRole: profile.primaryRole, secondaryRoles: profile.secondaryRoles, saved, viewAs: isAdmin ? viewAs : null });
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-        <p className="text-sm text-[var(--muted-foreground)]">Here&apos;s what&apos;s happening at the event right now.</p>
-      </div>
+    // The provider is keyed by role so switching roles starts from that role's own subscriptions.
+    <DashboardProvider role={role}>
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Welcome back, {profile.name.split(" ")[0] || "scout"}</h1>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Your <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", getRole(role).className)}>{getRole(role).label}</span> dashboard — what matters for your job at this event.
+            </p>
+          </div>
+        </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {dashboardStats.map((s, i) => (
-          <StatCard key={s.label} label={s.label} value={s.value} delta={s.delta} index={i} icon={[ClipboardList, ListChecks, BarChart3, TrendingUp][i]} />
+        <RoleSwitcher
+          roles={roles}
+          active={role}
+          isAdmin={isAdmin}
+          viewAs={isAdmin ? viewAs : null}
+          onChange={(r) => {
+            setViewAs(null);
+            saveRole(r);
+          }}
+          onViewAs={setViewAs}
+        />
+
+        {isAdmin && <AdminStrip />}
+
+        <DashboardBody />
+      </div>
+    </DashboardProvider>
+  );
+}
+
+function DashboardBody() {
+  const d = useDashboard();
+
+  // Waiting on the team doc: reserve the header strip's space instead of flashing "no active event".
+  if (!d.eventsLoaded) {
+    return (
+      <div className="flex flex-col gap-5" aria-busy>
+        <Shimmer className="h-[148px]" />
+        <Shimmer className="h-[232px]" />
+      </div>
+    );
+  }
+
+  if (!d.event) {
+    return (
+      <GlassPanel className="flex flex-col items-center gap-3 py-14 text-center">
+        <CalendarX2 className="h-8 w-8 text-[var(--muted-foreground)]" />
+        <div>
+          <div className="font-semibold">No active event yet</div>
+          <p className="max-w-md text-sm text-[var(--muted-foreground)]">
+            {d.isAdmin
+              ? "Pick the event (or events) the team is at, and every role's dashboard fills in with its schedule, rankings, and scouting."
+              : "An admin hasn't picked an active event yet. Once they do, your dashboard will show your schedule, rankings, and scouting."}
+          </p>
+        </div>
+        {d.isAdmin && (
+          <Link href="/event">
+            <Button className="h-11">Go to Active Events</Button>
+          </Link>
+        )}
+      </GlassPanel>
+    );
+  }
+
+  const widgets = dashboardRegistry[d.role];
+
+  return (
+    <>
+      <HeaderStrip />
+      {/* `dense` lets a small widget slide into a gap a wider one left, so rows stay full. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 [grid-auto-flow:dense]">
+        {widgets.map((w) => (
+          <div key={`${d.role}:${w.id}`} className={WIDGET_GRID_CLASS[w.size]}>
+            <WidgetBoundary title={w.title} size={w.size}>
+              {w.render()}
+            </WidgetBoundary>
+          </div>
         ))}
       </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <GlassPanel className="lg:col-span-2">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-base font-semibold">Recent matches</h2>
-            <Link href="/analytics/match-breakdown">
-              <Button variant="ghost" size="sm">View all</Button>
-            </Link>
-          </div>
-          <div className="flex flex-col gap-2.5">
-            {recentMatches.map((m) => (
-              <div key={m.id} className="glass-card flex items-center justify-between gap-3 p-3.5">
-                <div className="flex items-center gap-3">
-                  <Badge variant="glass">Q{m.matchNumber}</Badge>
-                  <div className="text-sm">
-                    <span className="text-red-300">{m.redAlliance.join(", ")}</span>
-                    <span className="mx-1.5 text-[var(--muted-foreground)]">vs</span>
-                    <span className="text-blue-300">{m.blueAlliance.join(", ")}</span>
-                  </div>
-                </div>
-                <div className="text-sm font-semibold">
-                  {m.redScore}&ndash;{m.blueScore}
-                </div>
-              </div>
-            ))}
-          </div>
-        </GlassPanel>
-
-        <GlassPanel>
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-base font-semibold">Scouts on shift</h2>
-            <Link href="/scout-accuracy">
-              <Button variant="ghost" size="sm">Details</Button>
-            </Link>
-          </div>
-          <div className="flex flex-col gap-3">
-            {activeScouts.map((s) => (
-              <div key={s.id} className="flex items-center gap-3">
-                <Avatar name={s.name} color={s.avatarColor} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{s.name}</div>
-                  <div className="truncate text-xs text-[var(--muted-foreground)]">{s.role}</div>
-                </div>
-                <Badge variant={s.accuracy > 93 ? "success" : "outline"}>{s.accuracy}%</Badge>
-              </div>
-            ))}
-          </div>
-        </GlassPanel>
-      </div>
-
-      <GlassPanel>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold">Top ranked teams</h2>
-          <Link href="/analytics/rankings">
-            <Button variant="ghost" size="sm">Full rankings</Button>
-          </Link>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {topTeams.map((t) => (
-            <div key={t.teamNumber} className="glass-card flex flex-col gap-1 p-4">
-              <div className="flex items-center justify-between">
-                <Badge variant="accent">#{t.rank}</Badge>
-                <span className="text-xs text-[var(--muted-foreground)]">{t.teamNumber}</span>
-              </div>
-              <div className="mt-1 truncate text-sm font-semibold">{t.teamName}</div>
-              <div className="text-xs text-[var(--muted-foreground)]">{t.avgTotal.toFixed(1)} avg pts</div>
-            </div>
-          ))}
-        </div>
-      </GlassPanel>
-    </div>
+    </>
   );
 }

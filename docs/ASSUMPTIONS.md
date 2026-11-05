@@ -1937,6 +1937,163 @@ drop with a mouse, touch, and keyboard, the mobile tabs, the animations — and
 the live FIRST rankings/matches payloads, none of which this environment can
 exercise.
 
+## P13 — Role Dashboards
+
+**P13-0. No clarifying questions were asked** — nothing blocked. As in P1-1 the
+prompt's Vite/React Router wording maps to Next.js; the page is still
+`/dashboard`. The mock-data placeholder (and its banner) is gone.
+
+### Shared data & read counts
+
+**P13-1. One provider, one subscription per source, only what the role needs.**
+`DashboardProvider` (`lib/dashboard/data.tsx`) owns every subscription and every
+derived value; widgets only read context (`useDashboard()`, `useOurTeamEvent()`)
+and never fetch. Which Firestore sources are live depends on the role being
+viewed (`ROLE_SOURCES` in `lib/dashboard/roles.ts`; a hook can't be conditional
+so each is gated by passing `null`):
+
+| Always | `scoutEntries` (one team-wide query) + the FIRST API for the selected event (matches, rankings, teams — tab-cached, one fetch per event) |
+|---|---|
+| Match Scout | + members, all practice sessions, match library, assignments |
+| Lead Scout | + members, sessions, attendance, assignments |
+| Team Coach | + members, sessions, attendance |
+| Lead Strategist | + the event's pick list (one doc) |
+| Pit Scout / Pit Team / Drive Team / Media / Judge Awards | nothing extra |
+| Admin (any role) | + all practice sessions (flagged-session count), and — inside the admin strip only — a narrow `auditLog` query (`action == "export-backup"`) plus one fetch of the public config route |
+
+Practice sessions use the single all-kinds subscription (`useAllTeamPracticeSessions`)
+for everything — the paused session, pending live robots, recent practice, the
+practice-activity count, flagged-session count — instead of the three separate
+solo/live/paused queries those would otherwise need. `useAllLibraryMatches` gained
+an `enabled` argument so roles that don't show practice matches don't subscribe to
+the library. Switching roles starts from the new role's source set.
+
+### Event, role, and time
+
+**P13-2. Event context.** `useActiveEvents()`; with several active events the
+header strip shows an event select defaulting to an In Progress one, else the
+primary (same rule as the Scout Form, FIX1-2f). The pick isn't remembered. With
+**no** active event the page shows a friendly empty state (admins get a "Go to
+Active Events" button) *instead of* the strip and widgets — several widgets
+would otherwise each show their own empty message. A `eventsLoaded` flag stops
+"no active event" flashing while the team doc loads.
+
+**P13-3. Roles.** Primary role by default; a segmented control appears only when
+the user has secondary roles; the last choice is remembered **per user in this
+browser's localStorage** (same trade-off as P12-5: it doesn't follow someone to
+another device). A remembered role the user no longer holds is ignored. Admins
+also get "View as role" (any of the nine roles), a preview that is **never saved**
+and shows a banner with "Back to mine". The admin strip (last backup date,
+flagged practice sessions, team creation on/off) is mounted for admins only —
+also while previewing another role.
+
+**P13-4. Times are schedules, in the event's timezone.** The FIRST API's match
+`startTime` is event-local wall time with no offset; `new Date()` would read it in
+the *viewer's* timezone and the countdown would be wrong for anyone off-site.
+`parseEventTime` (`lib/dashboard/time.ts`) reads it in the event's own timezone
+(DST-tested) and honors an offset if the API ever sends one. Every time is
+labelled "Scheduled"; a past-due unplayed match counts down to "Now" and stays
+"next" until it's played. `OfficialMatch` gained an optional `startTime`. **The
+exact API time format is unverified** (no credentials here); a string that
+doesn't parse simply shows "Scheduled time not published yet".
+
+**P13-5. Header strip.** Rank and record come from the official qualification
+rankings; the record falls back to our played qualification matches when
+rankings don't exist yet. "Next match" = the first unplayed match we're in, in
+play order (Practice, Qualification, Finals), with its alliance color and partner.
+
+### Widget definitions I had to interpret
+
+**P13-6.** Each is built only from data the app already has:
+- **Match Scout** — "Scout now" opens `/scout?event=CODE&load=next` (the Scout
+  Form page now reads those params, pre-picks the event, loads the next
+  assignment, and uses the same shared `nextAssignment()` rule; it was wrapped in
+  `Suspense` for `useSearchParams`). My accuracy/status/rank are `computeScoutStats`
+  per category with My Scouting's own defaults (all events, plain calculation,
+  preserved ranks), so the numbers match that page. Recent practice = my last 3
+  Trial/Competitive sessions.
+- **Pit Scout** — coverage = teams with ≥1 non-excluded real-event entry out of the
+  event's teams (FIRST team list ∪ any team we've scouted, so it still means
+  something if the team list failed to load); the zero-entry list; a team lookup
+  to Team Profile; the latest comments.
+- **Pit Team** — "what scouts saw" counts the schema's **reliability** fields
+  (Died During Match, Never Started Match, Disabled by FTC, Recovered from Freeze,
+  Tipped Over — one more than the prompt's four) from *our own* entries, plus the
+  latest comments about us; phases vs the event use the mean over every scouted
+  entry at the event.
+- **Drive Team** — partner + opponents from `TeamStats`; the last-match recap reuses
+  Match Breakdown's alliance maths (official score, scouted total, accuracy), so it
+  agrees with that page.
+- **Lead Scout** — coverage = played Qualification/Finals matches where every robot
+  has a real-event entry, with the missing robots listed; "flagged entries" = an
+  automatic flag nobody has dismissed (manual flags are already someone's review);
+  "needing intervention" = Mentor **or** Student Intervention; "unassigned" =
+  attending members with no slot in the published schedule.
+- **Lead Strategist** — the prompt says "our rank and trend", but no rank *history*
+  exists, so the trend is our **scouted scoring trend** (P10 `TeamStats.trend`). Pick
+  list snapshot uses the P12 Pick % formula; top 5 = `rankTeams` (teams under 2
+  entries aren't ranked); data confidence = mean alliance accuracy + entry/team
+  counts. **Hidden gems**: scouted rank better than official rank by at least
+  `max(5, 20% of the field)`, at least 2 entries (`HIDDEN_GEM_*` constants).
+- **Team Coach** — event overview, upcoming schedule, scouting health (coverage +
+  average accuracy), Mentor Intervention scouts by name, attendance count.
+- **Media** — schedule/times, upcoming opponents with names, results as
+  `Q12: Red 85 - Blue 70 (W)` with Copy buttons (Clipboard API, with a
+  textarea fallback), event highlights (highest official alliance score among
+  played Qualification/Finals matches — penalty points included, as FIRST reports —
+  and our best match).
+- **Judge Awards** — team summary and auto-generated strength bullets (ranked in the
+  top 3 officially, winning record, top-3 / top-25% scouted average, rates ≥ 80%,
+  reliability ≥ 90%, consistency ≥ 80%, scoring trending up). **Each bullet exists only
+  while it's true**; stat-based ones need ≥ 3 of our scouted entries.
+
+**P13-7. "Coming soon".** Exactly one for Pit Scout ("Pit scouting forms"), Judge
+Awards ("Judging notes"), and Media ("Media tools"); none for any other role. A
+dashed, control-free card — a placeholder, not a feature.
+
+### States, layout, security
+
+**P13-8. States.** Every widget goes through `Widget` (`components/dashboard/
+widget.tsx`): `loading` (skeleton of the same size), `empty`, `error`, `ready`, with
+reserved min-heights per size so nothing shifts. "Error" means the FIRST API
+failed with nothing cached (the use-event-data hooks now expose `error`) **or** the
+widget threw while rendering — `WidgetBoundary` catches that and offers Retry, so
+one bad card never takes the dashboard down. Limitation: the existing Firestore
+hooks swallow subscription errors into "empty" and don't expose them, so a Firestore
+failure reads as an empty state, not an error.
+
+**P13-9. Grid.** One column on phones, two on tablets, four on wide screens;
+`small` = 1 cell, `medium` = 2, `wide` = the row, with `grid-auto-flow: dense` so a
+small card fills a gap. The widgets' tap-through is a footer link (cards hold lists
+and inputs, so the whole card can't be one link).
+
+**P13-10. Security.** Everything is already readable by team members under the
+existing rules (`scoutEntries`, `users`, `practiceSessions`, `eventAttendance`,
+`assignments`, `pickLists`, `libraryMatches`); **no rules or collections changed**.
+`auditLog` is admin-read-only, and its only reader here is the admin strip, which
+isn't mounted for anyone else.
+
+### Side changes
+
+`ReliabilityPill` moved out of the Team Breakdown page into
+`components/analytics/reliability-pill.tsx` (Drive Team's preview needs it);
+`vitest.config.ts` stubs `server-only` (as the rules config already did) so
+component tests can import code that reaches the FIRST API actions; the P11
+converter test now expects `startTime`.
+
+### P13: verification
+
+Run and passing: `tsc`, `eslint` (0 errors; the same 2 virtualizer warnings),
+`vitest` — new: `lib/dashboard` (`time`, `schedule`, `insights`, `roles`: 66
+tests), the registry's structure (5), and a **smoke harness** that renders every
+widget of every role (9 roles) against rich, loading, and empty data and checks
+skeletons, key numbers, the Coming-soon cards, and the header strip (48) — 521 tests
+in all — and `next build`. No Firestore rules changed, so no emulator run. **Not
+verified:** anything visual — the harness proves no widget throws and the
+content/states are right, but not layout, spacing, shift, animation, or the real
+FIRST API's time format and payloads; and no browser session of the role switcher,
+event switcher, or admin strip.
+
 ## Commands to run locally
 
 ```bash
@@ -2193,6 +2350,23 @@ npm run test:rules   # needs Java + firebase-tools; includes the new FIX1 blocks
 # S. High change, O. columns do not.
 firebase deploy --only firestore:rules   # pickLists rules + the auditLog carve-out
 npm run test:rules   # needs Java + firebase-tools; 114 rules tests incl. the P12 ones
+
+# P13 (no rules or env changes). Dashboard as each kind of user:
+# - A Match Scout with an assignment: 'My next assignment' -> Scout now opens
+#   the Match Scout Form with that match + robot already loaded.
+# - Header strip (every role): event + status, our official rank and record,
+#   and our next match with 'Scheduled <time>', alliance color, and partner.
+#   CHECK the countdown against the real schedule at an event (needs FTC_API_*):
+#   the API's start time is read as event-local time — verify it isn't off by
+#   the viewer's timezone.
+# - Set two active events -> an event select appears in the strip; clear all
+#   active events -> a friendly empty state (admins: 'Go to Active Events').
+# - A user with a secondary role gets a segmented role control (the last choice
+#   is remembered); an admin also gets 'View as role' + the Admin strip (last
+#   backup, flagged practice sessions, team creation On/Off).
+# - Pit Scout / Judge Awards / Media each show one 'Coming soon' card.
+# - Open the dashboard with throttled network: every card is a skeleton the
+#   same size as its content (no layout shift).
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

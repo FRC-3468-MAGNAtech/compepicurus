@@ -28,6 +28,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     "/analytics/match-breakdown",
     "/analytics/team-breakdown",
     "/analytics/pick-list",
+    "/dashboard",
     "/analytics/teams",
     "/people",
     "/team-management",

@@ -28,6 +28,8 @@ export type OfficialMatch = {
   matchNumber: number;
   /** Whether the match has been played / scored. */
   played: boolean;
+  /** Scheduled (or actual) start as the FIRST API gives it — usually event-local wall time with no offset. P13's dashboard turns it into an instant with the event's timezone. */
+  startTime?: string | null;
   red: OfficialAlliance;
   blue: OfficialAlliance;
 };
@@ -38,6 +40,7 @@ export function ftcMatchToOfficial(eventCode: string, m: FtcMatch): OfficialMatc
     matchType: m.type,
     matchNumber: m.matchNumber,
     played: m.played,
+    startTime: m.startTime,
     red: { teams: m.redTeams, score: m.redScore, penaltyPoints: m.redPenaltyPoints },
     blue: { teams: m.blueTeams, score: m.blueScore, penaltyPoints: m.bluePenaltyPoints },
   };

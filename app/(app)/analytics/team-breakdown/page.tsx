@@ -2,29 +2,25 @@
 
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertOctagon, CheckCircle2, Search, TriangleAlert } from "lucide-react";
+import { Search } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AnalyticsLink } from "@/components/analytics/analytics-link";
 import { PhaseMiniBars, type PhaseValues } from "@/components/analytics/phase-bars";
 import { LowSampleBadge } from "@/components/analytics/team-bits";
+import { ReliabilityPill } from "@/components/analytics/reliability-pill";
 import { useTeamStats } from "@/lib/analytics/data-context";
 import {
   TEAM_SORTS,
   buildKeyStats,
-  reliabilityIncidents,
-  reliabilityLevel,
   sortTeams,
   teamMatchesSearch,
-  type ReliabilityLevel,
   type TeamSortKey,
 } from "@/lib/analytics/team-card";
 import { DEFAULT_MIN_ENTRIES, type TeamStats } from "@/lib/analytics/team-stats";
 import { cardEntranceVariants } from "@/lib/motion";
 import type { ScoutFormSchema } from "@/lib/scout-form/schema";
-import { cn } from "@/lib/utils";
 
 const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3";
 
@@ -162,27 +158,5 @@ function TeamCard({ team, schema, phaseMax }: { team: TeamStats; schema: ScoutFo
         )}
       </GlassPanel>
     </AnalyticsLink>
-  );
-}
-
-const RELIABILITY_STYLE: Record<Exclude<ReliabilityLevel, "unknown">, { label: string; variant: "success" | "warning" | "danger"; Icon: typeof CheckCircle2 }> = {
-  reliable: { label: "Reliable", variant: "success", Icon: CheckCircle2 },
-  "some-issues": { label: "Some issues", variant: "warning", Icon: TriangleAlert },
-  unreliable: { label: "Unreliable", variant: "danger", Icon: AlertOctagon },
-};
-
-/** Reliability from the share of entries with no died / never-started / disabled / froze / tipped incident. Icon + word + number, never colour alone. */
-function ReliabilityPill({ team, schema }: { team: TeamStats; schema: ScoutFormSchema }) {
-  const level = reliabilityLevel(team.reliability);
-  if (level === "unknown" || team.reliability === null) return null;
-  const { label, variant, Icon } = RELIABILITY_STYLE[level];
-  const incidents = reliabilityIncidents(team, schema);
-  const detail = incidents.length === 0 ? "No reliability incidents scouted" : incidents.map((i) => `${i.label} ${Math.round(i.rate)}%`).join(" · ");
-
-  return (
-    <Badge variant={variant} className={cn("gap-1.5")} title={`${Math.round(team.reliability)}% of entries incident-free. ${detail}`}>
-      <Icon className="h-3.5 w-3.5" />
-      {label} <span className="font-normal tabular-nums opacity-80">{Math.round(team.reliability)}%</span>
-    </Badge>
   );
 }

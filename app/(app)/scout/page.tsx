@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { CalendarRange } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +15,7 @@ import { useAssignments } from "@/lib/assignments";
 import { useTeamScoutEntries, saveEntry, type ScoreBreakdown } from "@/lib/scout-entries";
 import { valuesToScoutEntryFields } from "@/lib/scout-form/schema";
 import { recomputeForEvent } from "@/lib/analytics/recompute";
-import { matchSortValue } from "@/lib/analytics/game-schema";
+import { nextAssignment as findNextAssignment } from "@/lib/dashboard/insights";
 import type { FtcMatch } from "@/lib/ftc/types";
 
 /** A synthetic FtcMatch for an assigned slot — same convention as match-picker-dialog's manual-entry mode: no roster/score data exists for it yet, and downstream code already treats an unmatched (eventCode, type, number) as "no official data" gracefully. */
@@ -39,12 +40,25 @@ function syntheticAssignedMatch(matchType: FtcMatch["type"], matchNumber: number
   };
 }
 
+// `useSearchParams` needs a Suspense boundary for the static build.
 export default function MatchScoutFormPage() {
+  return (
+    <Suspense fallback={<div className="glass-card h-64 animate-pulse" />}>
+      <MatchScoutFormContent />
+    </Suspense>
+  );
+}
+
+function MatchScoutFormContent() {
   const { events, primaryCode } = useActiveEvents();
   const { user, profile } = useAuth();
+  // The Dashboard's "Scout now" opens this page as /scout?event=CODE&load=next — pre-picking that
+  // event and loading the scout's next assignment (P13).
+  const searchParams = useSearchParams();
   // Fixed per visit; only used to prefer an In Progress event as the default.
   const [now] = useState(() => Date.now());
-  const [pickedEventCode, setPickedEventCode] = useState<string | null>(null);
+  const [pickedEventCode, setPickedEventCode] = useState<string | null>(() => searchParams.get("event"));
+  const [autoLoadNext, setAutoLoadNext] = useState(() => searchParams.get("load") === "next");
   const eventChoices = orderPrimaryFirst({ events, primaryCode });
   // The scout's own pick wins while that event is still active; otherwise an
   // In Progress active event, otherwise the primary. With one active event all
@@ -57,25 +71,11 @@ export default function MatchScoutFormPage() {
   const { entries } = useTeamScoutEntries(teamId);
   const [loadedAssignment, setLoadedAssignment] = useState<{ match: AssignedMatch; teamNumber: number } | null>(null);
 
-  const nextAssignment = (() => {
-    if (!assignments?.current || !user || !activeEvent) return null;
-    const mySlots = assignments.current.slots.filter((s) => s.scoutUid === user.uid);
-    const sorted = [...mySlots].sort((a, b) => matchSortValue(a) - matchSortValue(b));
-    return (
-      sorted.find(
-        (s) =>
-          !entries.some(
-            (e) =>
-              e.uid === user.uid &&
-              e.source === "event" &&
-              e.eventCode === activeEvent.code &&
-              e.matchType === s.matchType &&
-              e.matchNumber === s.matchNumber &&
-              e.teamNumber === s.teamNumber
-          )
-      ) ?? null
-    );
-  })();
+  const nextAssignment = assignments?.current && user && activeEvent ? findNextAssignment(assignments.current.slots, user.uid, activeEvent.code, entries) : null;
+
+  // An explicit load wins; otherwise a `?load=next` link loads the next assignment as soon as it's known.
+  const effectiveLoaded =
+    loadedAssignment ?? (autoLoadNext && nextAssignment ? { match: syntheticAssignedMatch(nextAssignment.matchType, nextAssignment.matchNumber), teamNumber: nextAssignment.teamNumber } : null);
 
   const handleLoadAssignment = () => {
     if (!nextAssignment) return;
@@ -106,6 +106,7 @@ export default function MatchScoutFormPage() {
     // The just-saved entry's realtime update will advance `nextAssignment` —
     // clear the loaded override so the form reflects whatever that becomes.
     setLoadedAssignment(null);
+    setAutoLoadNext(false);
   };
 
   return (
@@ -121,7 +122,7 @@ export default function MatchScoutFormPage() {
         <div data-slot="form-season-picker" />
       </div>
 
-      {nextAssignment && !loadedAssignment && (
+      {nextAssignment && !effectiveLoaded && (
         <GlassPanel className="flex flex-wrap items-center gap-3">
           <Badge variant="glass" className="gap-1.5">
             <CalendarRange className="h-3.5 w-3.5" /> Next assignment
@@ -143,8 +144,9 @@ export default function MatchScoutFormPage() {
           setPickedEventCode(event.code);
           // An assignment loaded for the previous event doesn't apply to this one.
           setLoadedAssignment(null);
+          setAutoLoadNext(false);
         }}
-        prefill={{ scoutName: name, ...loadedAssignment }}
+        prefill={{ scoutName: name, ...effectiveLoaded }}
         onSubmit={handleSubmit}
       />
     </div>

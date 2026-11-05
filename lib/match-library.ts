@@ -197,12 +197,13 @@ export function useLibraryMatchesBySeason(seasonId: string | null) {
  * (one imported event's worth of matches today), so one unfiltered
  * subscription is simplest.
  */
-export function useAllLibraryMatches() {
+export function useAllLibraryMatches(enabled: boolean = true) {
   const [matches, setMatches] = useState<LibraryMatch[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
 
   useEffect(() => {
-    if (!isFirebaseConfigured()) {
+    // `enabled: false` (P13: a dashboard role that doesn't show practice matches) skips the subscription entirely.
+    if (!enabled || !isFirebaseConfigured()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMatches([]);
       setLoaded(true);
@@ -221,7 +222,7 @@ export function useAllLibraryMatches() {
       }
     );
     return unsubscribe;
-  }, []);
+  }, [enabled]);
 
   return { matches, loaded };
 }

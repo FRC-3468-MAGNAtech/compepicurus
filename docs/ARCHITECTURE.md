@@ -1387,6 +1387,71 @@ two-column board, cards, tabs on phones), `pick-stats.tsx` (`PickStats`,
 `.glass-overlay`). Dependencies added: `@dnd-kit/core`, `@dnd-kit/sortable`,
 `@dnd-kit/utilities`.
 
+### Role dashboards (P13)
+
+`/dashboard` shows each role its own set of bite-sized widgets. No new
+collections, fields, or rules.
+
+**Registry — `components/dashboard/registry.tsx`.** `dashboardRegistry:
+Record<RoleId, DashboardWidget[]>`; `DashboardWidget = { id, title, size:
+"small" | "medium" | "wide", render: () => ReactNode }` (`lib/dashboard/types.ts`).
+**Adding a widget = one entry here** (plus its component); `render` returns the
+widget's element and the widget reads its own data from context. If it needs a
+Firestore source the role doesn't load yet, add that source to `ROLE_SOURCES`.
+Roles whose feature doesn't exist yet get exactly one "Coming soon" card (an id
+ending `-soon`). The registry's structure is unit-tested.
+
+**Provider & hooks — `lib/dashboard/data.tsx`.** `<DashboardProvider role>` holds
+every subscription and derived value once. `useDashboard()` → the whole
+`DashboardData` (identity, `role`, `ourNumber`; `events`/`event`/`eventStatus`/
+`setEventCode`/`timeZone`; `first` `{ loading, error }`, `officialMatches`,
+`rankings`, `teams`, `teamNames`, `ourMatches`, `nextMatch`, `ourRanking`,
+`record`, `fieldSize`; `allEntries`, `eventEntries`, `usedEntries`, `schema`,
+`teamStats`, `ranked`, `ourStats`, `ourScoutedRank`; the optional sources
+`members`/`sessions`/`libraryById`/`attendance`+`attendingUids`/`assignments`/
+`pickList` each with a `…Loaded` flag; and `scoutStats` — `computeScoutStats` per
+category, My Scouting's defaults). **`useOurTeamEvent()`** → the schedule/record/
+rank slice plus `lastMatch`. Which Firestore sources are live is decided by
+`lib/dashboard/roles.ts`: `DashboardSource` (`members` `sessions` `library`
+`attendance` `assignments` `pickList`), `ROLE_SOURCES`, `sourcesFor(role,
+isAdmin)`; entries and the FIRST API are always loaded. `resolveViewRole` /
+`userRoles` / `isRoleId` pick the role shown (admin preview > the user's saved
+choice among their own roles > primary). `lib/dashboard/prefs.ts`
+(`useSavedDashboardRole`, per-user localStorage) and `lib/dashboard/admin.ts`
+(`useLastBackup` — a narrow `auditLog` query — and `useTeamCreationEnabled`, via
+the public config route; both used only by the admin strip).
+
+**Pure logic (tested).** `lib/dashboard/time.ts` — `parseEventTime` (event-local
+wall time + the event's timezone → an instant; DST-safe), `tzOffsetMs`,
+`formatScheduled`, `formatClock`, `formatCountdown`, `timeAgo`.
+`lib/dashboard/schedule.ts` — `buildOurMatches` (`OurMatch`: alliance, partner,
+opponents, `startMs`, official scores, `result`), `nextOurMatch`,
+`upcomingOurMatches`, `recentOurResults`, `ourRecord`, `formatRecord`,
+`matchShareText` (`Q12: Red 85 - Blue 70 (W)`). `lib/dashboard/insights.ts` —
+`computeCoverage`, `computeTeamCoverage`, `flaggedEntries`, `countByStatus`,
+`assignmentStatus`, `practiceActivity`, `countFlaggedSessions`, `averageAccuracy`,
+`phaseAverages`, `nextAssignment` (also used by the Scout Form), `findHiddenGems`
+(`HIDDEN_GEM_*`), `strengthBullets` (`STRENGTH_*`), `eventHighlights`.
+
+**Components** (`components/dashboard/`): `widget.tsx` (`Widget` — loading / empty /
+error / ready card with a footer detail link; `WidgetBoundary` — render-error
+boundary with Retry; `WIDGET_GRID_CLASS`), `shared.tsx` (`Countdown` — always
+"Scheduled", `useNow`, `AllianceChip`, `ResultBadge`/`ResultRow`, `TeamLink`/
+`teamHref`, `KeyNumber`, `TeamPreviewRow`, `ComingSoonCard`), `header-strip.tsx`
+(event + switcher, our rank/record, next match), `role-switcher.tsx` (own roles +
+admin "View as role"), `admin-strip.tsx`, and `widgets/` — `match-scout`,
+`pit-scout`, `pit-team`, `drive-team`, `lead-scout`, `lead-strategist`,
+`team-coach`, `media`, `judge`, plus `schedule-widgets` (`NextMatchWidget`,
+`UpcomingMatchesWidget`, `OurResultsWidget`, shared by several roles). A
+**smoke harness** (`widgets.smoke.test.tsx`) renders every role's widgets against
+rich, loading, and empty fixtures.
+
+**Touched elsewhere.** `OfficialMatch.startTime` (optional; `ftcMatchToOfficial`
+fills it); `useEventMatches` / `useEventRankingsStatus` / `useEventTeams` return
+`error`; `useAllLibraryMatches(enabled)`; `ReliabilityPill` extracted to
+`components/analytics/reliability-pill.tsx`; the Match Scout Form page reads
+`?event=` and `?load=next`.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`
