@@ -33,6 +33,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     "/analytics/match-breakdown",
     "/analytics/team-breakdown",
     "/analytics/pick-list",
+    "/analytics/scout-status",
     "/dashboard",
     "/analytics/teams",
     "/people",

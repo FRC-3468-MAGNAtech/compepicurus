@@ -2554,3 +2554,118 @@ describe("FIX3: users/{uid}.glassLayerLevel (the layered-glass slider, saved per
     await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { glassLayerLevel: 0.7, primaryRole: "lead-scout" }));
   });
 });
+
+describe("P16: scoutTargets/{teamId}_{eventCode}", () => {
+  const LEAD_UID = "lead-scout-1"; // primary role lead-scout
+  const SECOND_LEAD_UID = "second-lead-1"; // primary match-scout, SECONDARY lead-scout
+  const OUTSIDER_UID = "st-outsider-1"; // another team's admin
+  const EVENT = "USWABON1";
+  const DOC_ID = `${TEAM_ID}_${EVENT}`;
+
+  const targets = (over: Record<string, unknown> = {}) => ({
+    teamId: TEAM_ID,
+    eventCode: EVENT,
+    ranges: { qualification: "1-10" },
+    maxOverrides: { practice: 4 },
+    individual: { [SCOUT_UID]: { qualification: 6 } },
+    extraScouts: [],
+    updatedBy: LEAD_UID,
+    updatedAt: new Date(),
+    ...over,
+  });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: false, isOwner: false, themeId: "team" };
+      await setDoc(doc(db, "users", LEAD_UID), { ...base, name: "Lead Scout", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [] });
+      await setDoc(doc(db, "users", SECOND_LEAD_UID), { ...base, name: "Second Lead", teamId: TEAM_ID, primaryRole: "match-scout", secondaryRoles: ["media", "lead-scout"] });
+      await setDoc(doc(db, "users", OUTSIDER_UID), { ...base, name: "Outsider", teamId: OTHER_TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: true });
+    });
+  });
+
+  const seed = () =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "scoutTargets", DOC_ID), targets());
+    });
+  const asLead = () => testEnv.authenticatedContext(LEAD_UID).firestore();
+
+  it("lets every teammate read the setups as a team-scoped query — including when none exist yet", async () => {
+    const q = (db: ReturnType<typeof asLead>) => getDocs(query(collection(db, "scoutTargets"), where("teamId", "==", TEAM_ID)));
+    expect((await assertSucceeds(q(testEnv.authenticatedContext(SCOUT_UID).firestore()))).size).toBe(0);
+    await seed();
+    expect((await assertSucceeds(q(testEnv.authenticatedContext(SCOUT_UID).firestore()))).size).toBe(1);
+    expect((await assertSucceeds(q(testEnv.authenticatedContext(ADMIN_UID).firestore()))).size).toBe(1);
+    await assertSucceeds(getDoc(doc(testEnv.authenticatedContext(SCOUT_UID).firestore(), "scoutTargets", DOC_ID)));
+  });
+
+  it("blocks another team's members, an unfiltered list, and signed-out users from reading", async () => {
+    await seed();
+    const outsider = testEnv.authenticatedContext(OUTSIDER_UID).firestore();
+    await assertFails(getDoc(doc(outsider, "scoutTargets", DOC_ID)));
+    await assertFails(getDocs(query(collection(outsider, "scoutTargets"), where("teamId", "==", TEAM_ID))));
+    await assertFails(getDocs(collection(testEnv.authenticatedContext(SCOUT_UID).firestore(), "scoutTargets"))); // rules aren't filters
+    await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "scoutTargets", DOC_ID)));
+  });
+
+  it("lets an admin create and update the setup", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertSucceeds(setDoc(doc(db, "scoutTargets", DOC_ID), targets({ updatedBy: ADMIN_UID })));
+    await assertSucceeds(setDoc(doc(db, "scoutTargets", DOC_ID), targets({ updatedBy: ADMIN_UID, ranges: { qualification: "2-4, 8" } })));
+  });
+
+  it("lets a Lead Scout (primary role) and a member whose SECONDARY role is Lead Scout edit it", async () => {
+    await assertSucceeds(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets()));
+    const second = testEnv.authenticatedContext(SECOND_LEAD_UID).firestore();
+    await assertSucceeds(setDoc(doc(second, "scoutTargets", DOC_ID), targets({ updatedBy: SECOND_LEAD_UID, extraScouts: [SCOUT_UID] })));
+  });
+
+  it("makes it read-only for everyone else — a Match Scout, a plain member, another team's admin", async () => {
+    await seed();
+    const scout = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(setDoc(doc(scout, "scoutTargets", DOC_ID), targets({ updatedBy: SCOUT_UID })));
+    await assertFails(updateDoc(doc(scout, "scoutTargets", DOC_ID), { ranges: { qualification: "1" } }));
+    await assertFails(setDoc(doc(scout, "scoutTargets", `${TEAM_ID}_NEWEVENT`), targets({ eventCode: "NEWEVENT", updatedBy: SCOUT_UID })));
+    await assertFails(setDoc(doc(testEnv.authenticatedContext(OUTSIDER_UID).firestore(), "scoutTargets", DOC_ID), targets({ updatedBy: OUTSIDER_UID })));
+  });
+
+  it("requires the doc id to be {teamId}_{eventCode}, and updatedBy to be the writer", async () => {
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", `${TEAM_ID}_WRONG`), targets()));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", "arbitrary-id"), targets()));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ updatedBy: ADMIN_UID })));
+  });
+
+  it("validates the shape: exact fields, the right types, bounded sizes", async () => {
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ extra: "nope" })));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ ranges: "1-10" })));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ extraScouts: "x" })));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ extraScouts: Array.from({ length: 201 }, (_, i) => `u${i}`) })));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ updatedAt: "yesterday" })));
+    const { individual, ...withoutIndividual } = targets();
+    void individual;
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), withoutIndividual));
+  });
+
+  it("blocks changing the team or event of an existing setup, and never lets anyone delete one", async () => {
+    await seed();
+    await assertFails(updateDoc(doc(asLead(), "scoutTargets", DOC_ID), { eventCode: "OTHER" }));
+    await assertFails(updateDoc(doc(asLead(), "scoutTargets", DOC_ID), { teamId: OTHER_TEAM_ID }));
+    await assertFails(deleteDoc(doc(asLead(), "scoutTargets", DOC_ID)));
+    await assertFails(deleteDoc(doc(testEnv.authenticatedContext(ADMIN_UID).firestore(), "scoutTargets", DOC_ID)));
+  });
+
+  it("accepts exactly what lib/scout-status/store.ts writes (a serverTimestamp-style Timestamp, all fields)", async () => {
+    await assertSucceeds(
+      setDoc(doc(asLead(), "scoutTargets", DOC_ID), {
+        teamId: TEAM_ID,
+        eventCode: EVENT,
+        ranges: {},
+        maxOverrides: {},
+        individual: {},
+        extraScouts: [],
+        updatedBy: LEAD_UID,
+        updatedAt: new Date(),
+      })
+    );
+  });
+});

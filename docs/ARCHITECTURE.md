@@ -1771,6 +1771,46 @@ sidebar "Online" label is gone: `lib/connection-notice.ts` (`connectionNotice(on
 `lib/use-connection-state.ts` (`useConnectionNotice()`, run once in the app shell) drive a small amber
 badge on the droplet that appears only when offline or submissions are unsynced; tapping shows the message.
 
+### `scoutTargets/{teamId}_{eventCode}` (P16)
+
+The saved setup behind the Scout Status page, one doc per event. Every team member reads it (as a
+team-scoped query); admins and Lead Scouts (primary or secondary role) write; never deleted.
+
+| Field | Type | Notes |
+|---|---|---|
+| `teamId`, `eventCode` | `string` | together = the doc id |
+| `ranges` | `{ practice?, qualification?, semi?, final?: string }` | range text per category (`2-4, 8, 10-12`); blank/absent = every match. A non-blank `final` also overrides which playoff matches are the Finals |
+| `maxOverrides` | `{ [category]: number }` | manual "max matches" per category; absent = read from the schedule |
+| `individual` | `{ [uid]: { [category]: number } }` | manual per-scout targets; absent = prefilled from Assignments (when a schedule is published) |
+| `extraScouts` | `string[]` | uids added to the targets table by hand |
+| `updatedBy` | `string` | uid |
+| `updatedAt` | `Timestamp` | |
+
+### Scout Status (P16)
+
+`/analytics/scout-status`: how each Match Scout is doing against their targets, and which robots in which
+matches were scouted. Everything is counted from `useAnalyticsEntries()` (the shared filters).
+
+**Pure modules — `lib/scout-status/` (tested).** `categories.ts` — `StatusCategory` (`practice |
+qualification | semi | final`), `classifyMatch` / `finalsMatchNumbers` (Finals = the matches sharing the highest
+playoff `series`, else the highest-numbered playoff match, or an explicit override), labels `P12 / Q12 / SF5 /
+F14`. `ranges.ts` — `parseRangeText` (`2-4, 8, 10-12`, merged; blank = all), `inRanges`, `rangeNumbers`.
+`compute.ts` — `buildEventContext` (classify + ranges + category filter for one event), `maxTargets`,
+`summarizeAssignments`, `individualTargets`, `sumTargets` (across events), `targetScouts` (who is in the
+table), `buildScoutRows` (matches scouted vs entries, per-category chips, last entry, avg accuracy, flagged,
+missing assigned, status), `scoutStatusPill`, `totalsRow`, `playedFractionOf`, `buildCoverage` (a check per
+scout per robot; upcoming matches muted). `config.ts` (`ON_TRACK_FACTOR`, caps), `form-types.ts` (registry —
+only Match Scout enabled), `permissions.ts` (`canEditScoutTargets`, also `usePermissions().can("editScoutTargets")`).
+
+**Data hooks.** `store.ts` — `useScoutTargets(teamId)` (realtime, team-scoped query), `saveScoutTargets`,
+`setupFromData`; `use-assignments.ts` — `useTeamAssignmentSlots` (every event's published slots, one query);
+`use-scout-status.ts` — `useScoutStatus(enabledCategories)` joins the entries, the schedule (FIRST API, or the
+library's matches in Practice mode), Assignments, attendance, members, and the setup.
+
+**UI — `components/scout-status/`.** `setup-panels.tsx` (`RangeEntry`, `MaxTargets`, `IndividualTargets`),
+`status-table.tsx` (sortable, searchable, expandable, totals row), `coverage-list.tsx` (grouped, "Show only
+missing", paged), and the page composes them with the form-type tabs and the category chips.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

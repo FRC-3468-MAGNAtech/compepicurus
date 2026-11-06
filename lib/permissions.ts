@@ -2,8 +2,9 @@
 
 import { useAuth } from "@/lib/auth";
 import { canEditPickList } from "@/lib/pick-list/permissions";
+import { canEditScoutTargets } from "@/lib/scout-status/permissions";
 
-export type PermissionAction = "manageTeam" | "manageScoutData" | "toggleTeamCreation" | "editPickList";
+export type PermissionAction = "manageTeam" | "manageScoutData" | "toggleTeamCreation" | "editPickList" | "editScoutTargets";
 
 /**
  * Admin-only for most actions; `toggleTeamCreation` is owner-only (P1b) —
@@ -29,6 +30,8 @@ export function usePermissions() {
         return isOwner;
       case "editPickList":
         return canEditPickList(profile);
+      case "editScoutTargets":
+        return canEditScoutTargets(profile);
       default:
         return false;
     }

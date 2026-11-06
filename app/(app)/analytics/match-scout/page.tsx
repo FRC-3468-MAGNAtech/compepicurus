@@ -46,7 +46,7 @@ export default function MatchScoutAnalyticsPage() {
   const { scope: sourceEntries, loaded } = useAnalyticsEntries(pinnedFilters, { applyAccuracy: false, includeExcluded: true });
 
   // A Team Profile "open the raw entry" link arrives as ?match=Q12&team=254 — start with that search.
-  const [search, setSearch] = useState(() => [searchParams.get("match"), searchParams.get("team")].filter(Boolean).join(" "));
+  const [search, setSearch] = useState(() => [searchParams.get("match"), searchParams.get("team"), searchParams.get("scout")].filter(Boolean).join(" "));
   const [autoExpand, setAutoExpand] = useState(false);
   const [hideNames, setHideNames] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: "match", direction: "asc" });

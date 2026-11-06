@@ -461,6 +461,52 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // P16: who may edit the Scout Status setup — admins, or members whose primary OR
+    // secondary role is Lead Scout. Mirrors lib/scout-status/permissions.ts's
+    // SCOUT_TARGET_EDITOR_ROLES: keep both in sync.
+    function canEditScoutTargets() {
+      let p = myProfile();
+      return isSignedIn() && (p.isAdmin == true || p.primaryRole == 'lead-scout' || p.secondaryRoles.hasAny(['lead-scout']));
+    }
+
+    // P16: the shape of a scoutTargets doc (lib/scout-status/store.ts is the only writer).
+    // Rules can't loop over maps, so the contents of `ranges`/`maxOverrides`/`individual`
+    // aren't type-checked — only that they're maps of a bounded size; the page validates
+    // the range text and clamps numbers, and setupFromData() drops anything malformed on read.
+    function validScoutTargets(id, d) {
+      return d.keys().hasOnly(['teamId', 'eventCode', 'ranges', 'maxOverrides', 'individual', 'extraScouts', 'updatedBy', 'updatedAt'])
+        && d.keys().hasAll(['teamId', 'eventCode', 'ranges', 'maxOverrides', 'individual', 'extraScouts', 'updatedBy', 'updatedAt'])
+        && d.teamId is string && d.eventCode is string
+        && id == d.teamId + '_' + d.eventCode
+        && d.ranges is map && d.ranges.size() <= 4
+        && d.maxOverrides is map && d.maxOverrides.size() <= 4
+        && d.individual is map && d.individual.size() <= 200
+        && d.extraScouts is list && d.extraScouts.size() <= 200
+        && d.updatedBy == request.auth.uid
+        && d.updatedAt is timestamp;
+    }
+
+    // P16: scoutTargets/{teamId}_{eventCode} — the per-event setup behind the Scout Status
+    // page: range text per category, max-match overrides, per-scout targets, and scouts added
+    // by hand. Every team member reads it (as a team-scoped query — a doc that doesn't exist
+    // yet can't be read directly, see FIX3); only admins and Lead Scouts write, as themselves,
+    // to the id their own team/event give. Never deleted.
+    match /scoutTargets/{id} {
+      allow read: if sameTeam(resource.data.teamId);
+
+      allow create: if canEditScoutTargets()
+        && sameTeam(request.resource.data.teamId)
+        && validScoutTargets(id, request.resource.data);
+
+      allow update: if canEditScoutTargets()
+        && sameTeam(resource.data.teamId)
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.eventCode == resource.data.eventCode
+        && validScoutTargets(id, request.resource.data);
+
+      allow delete: if false;
+    }
+
     // P6: assignments/{teamId}_{eventCode} — the published scouting
     // schedule, `current` + one level of `previous` for undo (see
     // lib/assignments.ts). Admin-only write (generating/publishing/manual

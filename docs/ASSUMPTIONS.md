@@ -2729,6 +2729,105 @@ the actual production database. The rule fixes are proven against the emulator w
 builders; whether your deployed project was failing for exactly these reasons depends on what rules
 it is running (FIX3-5).
 
+## P16 — Analytics: Scout Status
+
+**P16-0. No clarifying questions were asked** — nothing blocked. As in P1-1 the prompt's Vite/React
+Router wording maps to Next.js; the page is still `/analytics/scout-status` inside the Analytics
+layout, so it uses the shared filter bar and `useAnalyticsEntries`. The placeholder (mock data, banner) is gone.
+
+**P16-1. Every number follows the shared filters.** The page counts from `useAnalyticsEntries()` — the
+entries after Game, Event, Practice, Accuracy and exclusions — and never recomputes accuracy
+(`allianceAccuracy` comes from the shared engine). With an Accuracy threshold, only entries whose
+alliance accuracy is computable and at or above it count toward matches scouted, entries, last entry,
+the per-category chips **and the coverage ticks** (tested end to end with the real
+`selectAnalyticsEntries`). With several events (or All Events) the table and coverage sum across them;
+the dataset is whatever the Practice toggle chose (event schedule from the FIRST API, or the library's
+matches), never mixed.
+
+**P16-2. Finals classification — a guess I could not verify against the live API.** `classifyMatch`
+(`lib/scout-status/categories.ts`, tested for 2- and 3-match finals series) says: Practice and
+Qualification are themselves; a playoff match is **Finals** when it is in the final series, otherwise
+**Semi-Finals**. The final series is found from the FIRST API's playoff `series` numbers — the matches
+sharing the **highest** series. I added `series` to `OfficialMatch` for this (it already existed on
+`FtcMatch`). Two uncertainties: (a) I don't know whether the API gives a best-of finals one series
+number or one per match (e.g. M14 and a reset M15 as separate series) — if separate, only the last
+match would be called Finals; (b) a manual/library event has no series data, so the highest-numbered
+playoff match is guessed to be the Finals. **The Finals range box fixes both:** a non-blank Finals range
+names the finals matches (overriding detection) and limits the Finals category to them; the remaining
+playoff matches are Semi-Finals. The `F` prefix still means all playoff matches everywhere else; labels
+here are `P12`, `Q12`, `SF5`, `F14`.
+
+**P16-3. Ranges.** One text input per enabled category (`2-4, 8, 10-12`), validated as you type, overlapping
+and touching ranges merged, blank = every match. The "N matches selected" chip reports the saved range's
+effect, so it updates when the text is committed (blur or Enter) — a half-typed range never saves, and an
+unreadable one is never saved. Ranges limit max targets, individual-target defaults, the table, and coverage.
+
+**P16-4. Max targets.** The number of matches in the category within its range, read from the schedule
+("from API"); editable ("manual") with **Reset to API**. With no schedule (e.g. a manual library event)
+the box starts blank and is manual. A typed individual target is clamped to 0..that max (or 999 while the
+max is still unknown).
+
+**P16-5. Individual targets.** Rows = members whose primary **or secondary** role is Match Scout **and**
+who are marked attending for any selected event (Assignments attendance), plus anyone added by hand
+(removable). Each cell prefills from Assignments (distinct assigned matches of that category within the
+ranges) **when a published schedule exists**, else it's blank; a typed number overrides it ("manual",
+with a reset). Categories turned off are disabled. For a **practice-scouting** (library) event there is
+usually no attendance, so the table starts with just the people added by hand (and anyone with entries,
+flagged "not in targets").
+
+**P16-6. Persistence.** `scoutTargets/{teamId}_{eventCode}`: `ranges` (text per category),
+`maxOverrides`, `individual` (uid → category → number), `extraScouts[]`, `updatedBy`, `updatedAt`.
+Realtime for everyone, read as a **team-scoped query** (a doc that doesn't exist yet can't be read
+directly under the rules — the FIX3 lesson; `assignments` are read the same way here for the same reason).
+`can("editScoutTargets")` = admins + members whose primary or secondary role is **Lead Scout**
+(`lib/scout-status/permissions.ts`, mirrored in `firestore.rules`' `canEditScoutTargets()`), enforced in
+rules and tested. Saving replaces the whole event doc, so two editors changing the *same event* at once
+is last-writer-wins (different events don't collide).
+
+**P16-7. Several events.** The setup panels edit **one event at a time** via "Editing targets for"; with
+more than one event the default is "All selected events (totals, read-only)" and the three panels show
+summed totals; picking an event enables editing. With exactly one event it edits directly.
+
+**P16-8. Status pill.** Complete (entries ≥ target) · Not started (0 entries) · On track · Behind — plus
+**No target** (entries but nothing to measure against; not in the prompt). On track vs Behind compares
+the scout's progress (entries/target) with how much of the counted schedule has been played; allowed
+to trail by 20% (`ON_TRACK_FACTOR` 0.8 in `lib/scout-status/config.ts`, the one config file). When no
+schedule or results are available the progress is unknown and the pill is On track; the practice dataset
+counts everything as played. "Played" is the API's `played` flag.
+
+**P16-9. Table extras.** Per-category `P/Q/SF/F x/y` chips, last entry (relative time, exact time on hover,
+match label), average accuracy (`getPercentColor`), flagged count (undismissed auto-flags or any manual
+flag), Missing assigned (assigned robots a scout has no entry for; shown only with a published schedule),
+sortable columns, name search, a totals row, expandable per-scout entry lists with a link to Match Scout
+Analytics (new `?scout=` param seeds its search). Sticky first column, horizontal scroll on narrow screens.
+
+**P16-10. Coverage.** Collapsible groups per enabled category; each match shows its robots grouped red then
+blue with a check **per scout** (two scouts on a robot = two checks; the same scout twice = one), names on
+hover/focus and in the accessible label, `x/4 scouted`, and a **Show only missing** toggle. An unplayed
+match is muted (○, "upcoming") rather than a red ✗. **Not virtualized:** each group renders 40 matches and
+offers "Show more", which is enough for an event's schedule without a virtualization dependency.
+
+**P16-11. Form types.** `lib/scout-status/form-types.ts` registry (`scoutedUnit`, `targets`); only Match
+Scout is enabled, the others render as disabled tabs with a "Coming soon" tooltip. Nothing is built for them.
+
+**P16-12. Small changes elsewhere.** `OfficialMatch.series`; `ftcMatchToOfficial` carries it (one existing
+test updated); `"/analytics/scout-status"` joined the realized-pages list; Match Scout Analytics reads `?scout=`.
+
+### P16: verification
+
+Run and passing: `tsc`, `eslint` (0 errors, the same 2 warnings), `vitest` (784 tests; new
+`lib/scout-status` (55: finals with 2- and 3-match series and the fallbacks, ranges parse/merge,
+max targets, assignments → targets, multi-event sums and distinct-match counting, duplicate-scout checks,
+status pills, table rows, the accuracy filter, coverage, who's in the table, who can edit) and the render
+smoke tests (10)), `next build`, and the emulator suite **`npm run test:rules`: 275 tests, all passing**
+(9 new for `scoutTargets`: team read incl. none-yet, other-team/unfiltered/signed-out blocked, admin and Lead
+Scout (primary or secondary) write, everyone else read-only, id/updatedBy, shape and size limits,
+immutable team/event, no delete, and exactly what the store writes).
+
+**Not verified:** anything visual or interactive (no browser): the layout, accordions, sticky columns,
+mobile scrolling, the editing flow, and the real FIRST API's playoff `series` values and `played` flags
+(see P16-2). The store and the live hooks were not run against a real project.
+
 ## Commands to run locally
 
 ```bash
@@ -3092,6 +3191,24 @@ npm run test:rules   # needs Java + firebase-tools; 219 tests across both files,
 # with nothing pending shows no badge at all.
 firebase deploy --only firestore:rules,firestore:indexes
 npm run test:rules   # needs Java + firebase-tools; 266 tests across both files, all passing
+
+# P16 (rules changed — deploy them first; no env changes, no new indexes).
+# Analytics > Scout Status with an active event (needs FTC_API_*) and some scouted entries:
+# the page uses the same filter bar as the other Analytics pages — change the Event, turn Practice on,
+# set an Accuracy threshold, and every number follows. Only 'Match Scout' is a live tab (the rest are
+# greyed out: 'Coming soon'). Category chips: Practice / Qualifications / Semi-Finals / Finals.
+# As an admin or Lead Scout: Setup > Range entry (try 2-4, 8, 10-12 and a bad chip), Max match targets
+# (an API number with 'from API', edit it -> 'manual', 'Reset to API'), Individual scout targets (Match
+# Scouts marked attending on Assignments appear; cells prefill from a published schedule; type a number
+# -> 'manual'; 'Add team member'). As a plain member the same panels are collapsed and read-only. With two
+# events selected, 'Editing targets for' offers the totals view or one event. CHECK the Finals detection
+# at a real event with playoffs (the API's series numbers are unverified): if the wrong matches are labeled
+# SF/F, type the real finals numbers in the Finals range. The table: sort, search, expand a scout, the
+# 'Open ... in Match Scout Analytics' link; the status pill (Behind vs On track). Match coverage: a check
+# per scout per robot (two scouts = two checks), a red X for a played match with an unscouted robot, a
+# muted circle for matches not played yet, 'Show only missing'.
+firebase deploy --only firestore:rules   # scoutTargets rules
+npm run test:rules   # needs Java + firebase-tools; 275 tests across both files, all passing
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

@@ -287,6 +287,7 @@ describe("converters", () => {
       matchType: "Playoff",
       matchNumber: 7,
       played: true,
+      series: 1, // P16: the playoff series number rides along, so Scout Status can find the Finals
       startTime: null,
       red: { teams: [1, 2], score: 90, penaltyPoints: 10 },
       blue: { teams: [3, 4], score: 80, penaltyPoints: null },
