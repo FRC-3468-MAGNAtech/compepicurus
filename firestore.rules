@@ -21,6 +21,23 @@ service cloud.firestore {
       return isSignedIn() && myProfile().isAdmin == true;
     }
 
+    // FIX2: an owner is anyone whose ID token carries the `owner` custom claim
+    // OR whose own user doc says `isOwner == true`. The claim is set by
+    // app/api/auth/sync-roles and can be missing or stale (e.g. right after
+    // the owner flag was granted, until the token refreshes); the doc flag is
+    // read live, so either one is enough and a stale token can never lock the
+    // owner out. Clients can never write `isOwner` (both update rules below pin it).
+    function isOwner() {
+      return isSignedIn() && (('owner' in request.auth.token && request.auth.token.owner == true)
+        || myProfile().isOwner == true);
+    }
+
+    // FIX2: who may use the member-management powers below — admins, and owners
+    // (who are always admins in practice, but this doesn't depend on that).
+    function canManageMembers() {
+      return isAdmin() || isOwner();
+    }
+
     // FIX1: the ids in lib/roles.ts's ROLES — keep in sync when a role is added.
     function validRoleIds() {
       return ['match-scout', 'pit-scout', 'pit-team', 'drive-team', 'lead-scout',
@@ -97,25 +114,23 @@ service cloud.firestore {
         && request.resource.data.isAdmin == resource.data.isAdmin
         && request.resource.data.isOwner == resource.data.isOwner;
 
-      // Admins of the same team can change anyone's roles/admin status —
-      // except an owner's. isOwner itself can never be changed by a client
-      // either way (only app/api/auth/sync-roles, via the Admin SDK, which
-      // bypasses these rules). P1b: "nobody, including other admins" can
-      // edit an owner's row — see docs/ASSUMPTIONS.md.
-      //
-      // FIX1 tightened this three ways:
-      //  - the roles written must be real role ids (a primary, plus a list
-      //    of secondaries) and isAdmin a boolean — Team Management's role
-      //    editor is the only writer;
-      //  - teamId can't be moved (previously only the self-update rule
-      //    pinned it);
-      //  - last-admin safeguard: an admin can't remove their *own* admin
-      //    flag. Rules can't count admins, but this is equivalent and
-      //    race-free — the last admin can only be demoted by themself, and
-      //    two admins demoting each other at once fail because the second
-      //    write no longer passes isAdmin(). To step down, ask another admin.
-      allow update: if sameTeam(resource.data.teamId) && isAdmin()
-        && resource.data.isOwner != true
+      // Team Management's role editor — the matrix is mirrored by canEditMember()
+      // in lib/member-access.ts, so keep the two in sync:
+      //  - Admins (and the owner) edit the roles of any NON-owner member, other
+      //    admins and themselves included, and grant/revoke admin for them.
+      //  - An owner's row can be edited only by that owner — never by another
+      //    admin (FIX2; before this the owner was locked out of their own row too).
+      //    The owner's admin flag must stay true: owner access can't be removed.
+      //  - isOwner is never writable by a client; the sync route sets it (Admin SDK).
+      //  - teamId can't be moved, so nobody can remove a member from the team.
+      //  - Last-admin safeguard: an admin can't remove their *own* admin flag.
+      //    Rules can't count admins, but this is equivalent and race-free — the
+      //    last admin can only be demoted by themself (blocked here), and two
+      //    admins demoting each other at once fail because the second write no
+      //    longer passes isAdmin(). It only ever blocks removing admin status, never
+      //    a role edit. To step down, ask another admin.
+      //  - the roles written must be real role ids and isAdmin a boolean.
+      allow update: if sameTeam(resource.data.teamId) && canManageMembers()
         && request.resource.data.isOwner == resource.data.isOwner
         && request.resource.data.teamId == resource.data.teamId
         && request.resource.data.isAdmin is bool
@@ -123,7 +138,9 @@ service cloud.firestore {
         && request.resource.data.secondaryRoles is list
         && request.resource.data.secondaryRoles.size() <= 9
         && request.resource.data.secondaryRoles.hasOnly(validRoleIds())
-        && (request.auth.uid != uid || request.resource.data.isAdmin == true);
+        && (resource.data.isOwner == true
+          ? (request.auth.uid == uid && isOwner() && request.resource.data.isAdmin == true)
+          : (request.auth.uid != uid || request.resource.data.isAdmin == true));
 
       allow delete: if false;
     }
@@ -190,14 +207,113 @@ service cloud.firestore {
       );
     }
 
+    // P15: a library match's origin. A doc written before P15 has no `origin`
+    // field and came from the API, so every check reads it with a default.
+    function libOrigin(d) {
+      return d.get('origin', 'api');
+    }
+
+    // P15: the doc id of a library match is `${eventCode}_${P|Q|F}${matchNumber}`
+    // (lib/library/ids.ts's libraryMatchId); this recomputes it from the doc's own fields.
+    function libMatchIdFor(d) {
+      return d.eventCode + '_'
+        + (d.matchType == 'Practice' ? 'P' : (d.matchType == 'Qualification' ? 'Q' : 'F'))
+        + string(d.matchNumber);
+    }
+
+    function validLibAlliance(a) {
+      return a.teams is list && a.teams.size() == 2
+        && a.score is int && a.score >= 0 && a.score <= 9999
+        && a.penaltyPoints is int && a.penaltyPoints >= 0 && a.penaltyPoints <= a.score
+        && a.difficulty in ['easy', 'medium', 'hard'];
+    }
+
+    // P15: a hand-entered match. It may only live under a *manual* event (so it can
+    // never sit under an API event's code), its id must be the one its fields give,
+    // and its alliance numbers must make sense. Rules can't loop, so the two team
+    // numbers inside `teams` aren't type-checked — lib/library/manual-match.ts
+    // validates them before the write.
+    function validManualMatch(matchId, d) {
+      return d.origin == 'manual'
+        && d.published is bool
+        && d.eventCode is string
+        && exists(/databases/$(database)/documents/libraryEvents/$(d.eventCode))
+        && get(/databases/$(database)/documents/libraryEvents/$(d.eventCode)).data.origin == 'manual'
+        && d.matchType in ['Practice', 'Qualification', 'Playoff']
+        && d.matchNumber is int && d.matchNumber >= 1 && d.matchNumber <= 9999
+        && matchId == libMatchIdFor(d)
+        && validLibAlliance(d.alliances.red)
+        && validLibAlliance(d.alliances.blue)
+        && d.createdBy is string
+        && d.updatedAt is string
+        && (!('notes' in d) || (d.notes is string && d.notes.size() <= 500))
+        && (!('needsReview' in d) || d.needsReview is bool);
+    }
+
     // P3: libraryMatches/{matchId} — deliberately NOT teamId-scoped. This is
     // public, real FTC competition data (the same for every team), not this
     // team's own scouting data — see docs/ASSUMPTIONS.md for the resulting
     // trade-off (any team's admin can write any match in the shared
     // library, acceptable while the app is realistically single-team).
+    //
+    // P15 adds hand-entered ("manual") matches to the same collection:
+    //  - `published`: members read only matches with `published == true`; admins read
+    //    all. Rules aren't filters, so a non-admin's *query* must itself ask for
+    //    `published == true` (lib/match-library.ts does) — an unfiltered list is
+    //    rejected. The field is read strictly on purpose: `resource.data.get('published',
+    //    true)` would also let an unfiltered query through (the default makes it
+    //    provable — caught by the emulator tests) and expose unpublished matches. The
+    //    cost: a pre-P15 doc has no `published` field, so it stays admin-only until the
+    //    one-time backfill (lib/library/store.ts) stamps it.
+    //  - `origin` can never change on an existing doc, so an API import/refresh can't
+    //    overwrite a manual match and a manual write can't overwrite an API match —
+    //    even if a client tries to (lib/library/ids.ts's decideMatchWrite skips them first).
+    //  - API-origin writes can't land under a manual event's code.
+    //  - Only manual matches can be deleted.
     match /libraryMatches/{matchId} {
+      allow read: if isSignedIn() && (resource.data.published == true || isAdmin());
+
+      allow create: if isAdmin() && (
+        (libOrigin(request.resource.data) == 'api'
+          && request.resource.data.get('published', true) is bool
+          && (!exists(/databases/$(database)/documents/libraryEvents/$(request.resource.data.eventCode))
+              || get(/databases/$(database)/documents/libraryEvents/$(request.resource.data.eventCode)).data.origin == 'api'))
+        || validManualMatch(matchId, request.resource.data)
+      );
+
+      allow update: if isAdmin()
+        && libOrigin(request.resource.data) == libOrigin(resource.data)
+        && request.resource.data.eventCode == resource.data.eventCode
+        && request.resource.data.get('published', true) is bool
+        && (libOrigin(request.resource.data) == 'api' || validManualMatch(matchId, request.resource.data));
+
+      allow delete: if isAdmin() && libOrigin(resource.data) == 'manual';
+    }
+
+    // P15: libraryEvents/{eventCode} — one doc per imported or hand-made event
+    // (`origin`, `eventName`, `seasonId`, optional `date`, `sourceUrl`,
+    // `defaultVideoUrl`). Every member reads; admins write. `origin` is fixed at
+    // creation, so a manual event's code can never be taken over by an API import
+    // (or the reverse). Only a manual event can be deleted.
+    match /libraryEvents/{eventCode} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.origin in ['api', 'manual']
+        && request.resource.data.eventCode == eventCode
+        && request.resource.data.eventName is string && request.resource.data.eventName.size() > 0 && request.resource.data.eventName.size() <= 120
+        && request.resource.data.seasonId is string
+        && request.resource.data.createdBy == request.auth.uid
+        && (request.resource.data.origin == 'api' || (
+          eventCode.matches('^[A-Z0-9-]{3,24}$')
+          && (!('date' in request.resource.data) || request.resource.data.date == null || request.resource.data.date is string)
+          && (!('sourceUrl' in request.resource.data) || request.resource.data.sourceUrl == null || request.resource.data.sourceUrl is string)
+          && (!('defaultVideoUrl' in request.resource.data) || request.resource.data.defaultVideoUrl == null || request.resource.data.defaultVideoUrl is string)));
+      allow update: if isAdmin()
+        && request.resource.data.origin == resource.data.origin
+        && request.resource.data.eventCode == resource.data.eventCode
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.eventName is string && request.resource.data.eventName.size() > 0 && request.resource.data.eventName.size() <= 120;
+      allow delete: if isAdmin() && resource.data.origin == 'manual';
     }
 
     // P6: eventAttendance/{teamId}_{eventCode} — one doc per (team, event),
@@ -262,6 +378,76 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.updatedByName is string;
 
+      allow delete: if false;
+    }
+
+    // P14: the shape of a changelog entry — keep in sync with lib/changelog/
+    // index.ts (limits) and store.ts (the only writer). Rules can't loop over
+    // `changes`, so its elements aren't type-checked here (the editor validates
+    // them and entryFromData() drops anything malformed on read); only that it's
+    // a list of 1-40. A published entry carries the time it went live in
+    // `publishedAt` (drives the unread dot); a draft has it null.
+    function validChangelog(d) {
+      return d.keys().hasOnly(['teamId', 'version', 'title', 'date', 'summary', 'changes', 'status', 'pinned', 'createdBy', 'createdAt', 'updatedAt', 'publishedAt'])
+        && d.keys().hasAll(['teamId', 'version', 'title', 'date', 'summary', 'changes', 'status', 'pinned', 'createdBy', 'createdAt', 'updatedAt', 'publishedAt'])
+        && d.version is string && d.version.size() > 0 && d.version.size() <= 40
+        && d.title is string && d.title.size() > 0 && d.title.size() <= 120
+        && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.summary is string && d.summary.size() <= 1000
+        && d.changes is list && d.changes.size() >= 1 && d.changes.size() <= 40
+        && d.status in ['draft', 'published']
+        && d.pinned is bool
+        && d.createdBy is string
+        && d.createdAt is timestamp
+        && d.updatedAt is timestamp
+        && (d.status == 'published' ? d.publishedAt is timestamp : d.publishedAt == null);
+    }
+
+    // P14: changelog/{id} — admin-edited release notes. Members read *published*
+    // entries only; drafts are admin-only. Rules aren't filters, so a member's
+    // list query must itself ask for `status == "published"` (lib/changelog/
+    // store.ts does) — an unfiltered list is rejected, not silently trimmed.
+    // Admins of the team read and write everything. A published entry keeps its
+    // original `publishedAt` through edits, so fixing a typo doesn't re-light
+    // everyone's unread dot.
+    match /changelog/{id} {
+      allow read: if sameTeam(resource.data.teamId) && (resource.data.status == 'published' || isAdmin());
+
+      allow create: if isAdmin()
+        && sameTeam(request.resource.data.teamId)
+        && request.resource.data.createdBy == request.auth.uid
+        && validChangelog(request.resource.data);
+
+      allow update: if isAdmin()
+        && sameTeam(resource.data.teamId)
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validChangelog(request.resource.data)
+        && (resource.data.status != 'published' || request.resource.data.status != 'published'
+            || request.resource.data.publishedAt == resource.data.publishedAt);
+
+      allow delete: if isAdmin() && sameTeam(resource.data.teamId);
+    }
+
+    // P14: credits/{teamId} — the single, admin-edited Credits page: ordered
+    // `sections`, each with ordered `entries`. Every member reads it (the id
+    // is the team id, so a page that hasn't been saved yet still reads as
+    // "missing", not "denied"); only admins write, always as themselves,
+    // through the transaction in lib/credits/store.ts. Rules can't loop, so
+    // the sections' contents aren't type-checked — only that it's a list of at
+    // most 20; the editors enforce https-only links and lib/credits/ops.ts
+    // sanitizeSections() discards anything malformed on read.
+    match /credits/{id} {
+      allow read: if sameTeam(id);
+      allow create, update: if isAdmin()
+        && sameTeam(id)
+        && request.resource.data.teamId == id
+        && request.resource.data.sections is list
+        && request.resource.data.sections.size() <= 20
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedByName is string
+        && request.resource.data.updatedAt is timestamp;
       allow delete: if false;
     }
 

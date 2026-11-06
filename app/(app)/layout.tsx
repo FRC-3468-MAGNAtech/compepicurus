@@ -7,6 +7,8 @@ import { Topbar } from "@/components/layout/topbar";
 import { PageTransition } from "@/components/layout/page-transition";
 import { PlaceholderBanner } from "@/components/ui/placeholder-banner";
 import { VerifyEmailBanner } from "@/components/layout/verify-email-banner";
+import { LibraryBackfill } from "@/components/admin/library-backfill";
+import { SiteFooter } from "@/components/layout/site-footer";
 import { LiveMatchPill } from "@/components/layout/live-match-pill";
 import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
 import { useAuth } from "@/lib/auth";
@@ -38,6 +40,8 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     "/scout-accuracy",
     "/my-scouting",
     "/assignments",
+    "/changelog",
+    "/credits",
   ];
   const isPlaceholderPage = !REALIZED_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
@@ -68,8 +72,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
           <LiveMatchPill />
           <PageTransition>{children}</PageTransition>
         </main>
+        <SiteFooter className="mt-10" />
       </div>
       <ScoresReadyWatcher />
+      {profile.isAdmin && <LibraryBackfill />}
     </div>
   );
 }

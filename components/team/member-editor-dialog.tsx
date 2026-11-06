@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Check, ShieldCheck } from "lucide-react";
+import { Check, Lock, ShieldCheck } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 import type { TeamMember } from "@/lib/team-members";
 
 /**
- * Admin-only role editor (FIX1-3): primary role (single select, shown as a
+ * Admin/owner role editor (FIX1-3; FIX2 lets an owner edit their own row, with Admin locked on): primary role (single select, shown as a
  * coloured pill), secondary roles (multi-select, uncoloured pills), and the
  * admin switch, with Save/Cancel. Mount it with a fresh `key` each time it
  * opens so the draft always starts from the member's current values.
@@ -40,7 +41,8 @@ export function MemberEditorDialog({
   const [draft, setDraft] = useState<MemberAccess>({
     primaryRole: member.primaryRole,
     secondaryRoles: normalizeSecondaryRoles(member.secondaryRoles, member.primaryRole),
-    isAdmin: member.isAdmin,
+    // An owner is always an admin; showing it on (locked) also repairs a doc whose flag had drifted off.
+    isAdmin: member.isOwner ? true : member.isAdmin,
   });
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
@@ -153,12 +155,17 @@ export function MemberEditorDialog({
                     : "Admins manage events, assignments, roles, and scout data."}
                 </p>
               </div>
-              <Switch
-                checked={draft.isAdmin}
-                onCheckedChange={(v) => setDraft((d) => ({ ...d, isAdmin: v }))}
-                disabled={busy || adminToggleBlock !== null}
-                aria-label="Admin access"
-              />
+              {adminToggleBlock ? (
+                // Shown locked, never hidden: the lock + tooltip say why.
+                <HoverTip content={ADMIN_TOGGLE_BLOCK_REASONS[adminToggleBlock]} align="end">
+                  <span className="flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-[var(--muted-foreground)]" aria-hidden />
+                    <Switch checked={draft.isAdmin} disabled aria-label={`Admin access (locked: ${ADMIN_TOGGLE_BLOCK_REASONS[adminToggleBlock]})`} />
+                  </span>
+                </HoverTip>
+              ) : (
+                <Switch checked={draft.isAdmin} onCheckedChange={(v) => setDraft((d) => ({ ...d, isAdmin: v }))} disabled={busy} aria-label="Admin access" />
+              )}
             </div>
           </div>
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight, Shuffle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { ChipSummary } from "@/components/practice/chip-summary";
@@ -51,7 +52,14 @@ export function ResultsScreen({
 
   return (
     <div className="flex flex-col gap-4">
-      <ChipSummary seasonName={season.name} mode={session.mode} difficulty={session.difficulty} />
+      <div className="flex flex-wrap items-center gap-2">
+        <ChipSummary seasonName={season.name} mode={session.mode} difficulty={session.difficulty} />
+        {libraryMatch.origin === "manual" && (
+          <Badge variant="outline" className="text-[10px]" title="Entered by hand — this event's scores aren't in the FIRST API">
+            Manual
+          </Badge>
+        )}
+      </div>
 
       <motion.div variants={cardEntranceVariants} initial="hidden" animate="show">
         <GlassPanel strong className="flex flex-col items-center gap-2 py-10 text-center">

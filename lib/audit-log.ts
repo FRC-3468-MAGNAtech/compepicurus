@@ -22,7 +22,12 @@ export type AuditAction =
   | "refresh-official-scores"
   | "export-backup"
   | "edit-member-roles"
-  | "edit-pick-list";
+  | "edit-pick-list"
+  | "create-changelog-entry"
+  | "edit-changelog-entry"
+  | "delete-changelog-entry"
+  | "edit-credits"
+  | "edit-match-library";
 
 export type AuditLogEntry = {
   id: string;

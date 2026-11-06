@@ -1,10 +1,11 @@
 "use client";
 
-import { Lock, Pencil, ShieldCheck } from "lucide-react";
+import { Pencil, ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { getRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
@@ -16,7 +17,9 @@ import type { TeamMember } from "@/lib/team-members";
  * coloured pill, secondary roles as uncoloured pills — and editing happens in
  * the member editor dialog (components/team/member-editor-dialog.tsx), opened
  * from the Edit button. `editState` comes from lib/member-access.ts so the
- * button mirrors what firestore.rules will actually allow.
+ * button mirrors what firestore.rules will actually allow. A row the viewer
+ * can't edit shows a disabled Edit button whose tooltip says why — the control
+ * is never silently missing (FIX2).
  */
 export function MemberRow({
   member,
@@ -25,8 +28,7 @@ export function MemberRow({
   onEdit,
 }: {
   member: TeamMember;
-  /** Omit for a read-only roster (non-admins) — no Edit button is shown at all. */
-  editState?: MemberEditState;
+  editState: MemberEditState;
   /** Pulses the theme glow once — set briefly after this member was saved. */
   highlight?: boolean;
   onEdit?: () => void;
@@ -50,12 +52,12 @@ export function MemberRow({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">{member.name}</span>
             {member.isOwner && (
-              <Badge variant="glass" className="gap-1 text-[10px]">
+              <Badge variant="glass" className="shrink-0 gap-1 text-[10px]">
                 <ShieldCheck className="h-3 w-3" /> Owner
               </Badge>
             )}
             {member.isAdmin && !member.isOwner && (
-              <Badge variant="glass" className="gap-1 text-[10px]">
+              <Badge variant="glass" className="shrink-0 gap-1 text-[10px]">
                 <ShieldCheck className="h-3 w-3" /> Admin
               </Badge>
             )}
@@ -72,19 +74,17 @@ export function MemberRow({
           </Badge>
         ))}
 
-        {editState &&
-          (editState.canEdit ? (
-            <Button size="sm" variant="glass" className="gap-1.5" onClick={onEdit} aria-label={`Edit ${member.name}`}>
+        {editState.canEdit ? (
+          <Button size="sm" variant="glass" className="gap-1.5" onClick={onEdit} aria-label={`Edit ${member.name}`}>
+            <Pencil className="h-3.5 w-3.5" /> Edit
+          </Button>
+        ) : (
+          <HoverTip content={editState.lockedReason ?? "You can't edit this member."} align="end">
+            <Button size="sm" variant="glass" className="gap-1.5" disabled aria-label={`Edit ${member.name} (not available)`}>
               <Pencil className="h-3.5 w-3.5" /> Edit
             </Button>
-          ) : (
-            <span
-              className="flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-[var(--muted-foreground)]"
-              title={editState.lockedReason ?? undefined}
-            >
-              <Lock className="h-3.5 w-3.5" /> Locked
-            </span>
-          ))}
+          </HoverTip>
+        )}
       </div>
     </motion.div>
   );

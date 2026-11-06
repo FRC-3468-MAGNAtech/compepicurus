@@ -102,6 +102,11 @@ export function MatchSelect({
                   {row.alliance}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{row.teams.join(" & ")}</span>
+                {row.manual && (
+                  <Badge variant="outline" className="shrink-0 text-[10px]" title="Entered by hand — this event's scores aren't in the FIRST API">
+                    Manual
+                  </Badge>
+                )}
                 <Badge className={DIFFICULTY_CLASSNAMES[row.difficulty]}>{DIFFICULTY_LABELS[row.difficulty]}</Badge>
                 <Badge className={status.className}>
                   {status.label}

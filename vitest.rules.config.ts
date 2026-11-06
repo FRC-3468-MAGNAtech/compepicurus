@@ -16,6 +16,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["firestore.rules.test.ts", "api-routes.emulator.test.ts"],
+    // One file at a time: both talk to the same emulators, and the API-route tests wipe Auth/Firestore
+    // between cases while the rules tests run heavily concurrent transactions (the P12 pick-list ones),
+    // which starved each other when the two files ran in parallel (FIX2).
+    fileParallelism: false,
     testTimeout: 20000,
     hookTimeout: 20000,
   },

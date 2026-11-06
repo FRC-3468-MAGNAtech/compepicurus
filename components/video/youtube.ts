@@ -1,5 +1,7 @@
 "use client";
 
+import { parseYouTubeUrl } from "@/lib/library/youtube-url";
+
 // Minimal local typings for the bits of the YouTube IFrame API this app
 // uses — not worth adding a dependency for. See
 // https://developers.google.com/youtube/iframe_api_reference.
@@ -53,17 +55,7 @@ export function loadYouTubeIframeAPI(): Promise<YTNamespace> {
   return apiPromise;
 }
 
-/** Handles watch?v=, youtu.be/, and /embed/ URL shapes. Returns null for anything else. */
+/** Any link form the admin helper accepts (watch, youtu.be, embed, shorts, live, with extra params) — see lib/library/youtube-url.ts. Returns null for anything else. */
 export function extractYouTubeId(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.includes("youtu.be")) return parsed.pathname.slice(1) || null;
-    const vParam = parsed.searchParams.get("v");
-    if (vParam) return vParam;
-    const embedMatch = parsed.pathname.match(/\/embed\/([^/?]+)/);
-    if (embedMatch) return embedMatch[1];
-    return null;
-  } catch {
-    return null;
-  }
+  return parseYouTubeUrl(url)?.videoId ?? null;
 }

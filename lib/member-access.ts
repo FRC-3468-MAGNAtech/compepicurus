@@ -1,9 +1,23 @@
 import { ROLES, type RoleId } from "@/lib/roles";
 
 // Pure rules for who may edit whose roles/admin status in Team Management
-// (FIX1-3). These mirror `firestore.rules`' `users/{uid}` update rules so the
-// UI never offers something the rules would reject; the rules remain the
-// actual enforcement (and are covered by emulator tests).
+// (FIX1-3, reworked in FIX2). These mirror `firestore.rules`' `users/{uid}` update
+// rule (`canManageMembers()` / `isOwner()`) so the UI never offers something the
+// rules would reject; the rules remain the actual enforcement (and are covered by
+// emulator tests).
+//
+// The matrix (FIX2):
+//
+//   Actor              | edits roles of              | changes the admin flag of
+//   -------------------+-----------------------------+--------------------------------
+//   Owner              | their own row + any         | any non-owner member (never
+//                      | non-owner member            | their own: owner access stays)
+//   Admin (not owner)  | any non-owner member,       | any non-owner member (never
+//                      | themselves included         | their own)
+//   Everyone else      | nobody                      | nobody
+//
+// An owner's row is editable only by that owner — another admin (or a second
+// owner) can't touch it. Nobody can change `isOwner` or move a member off the team.
 
 export type MemberAccess = {
   primaryRole: RoleId;
@@ -12,7 +26,7 @@ export type MemberAccess = {
 };
 
 type Member = MemberAccess & { uid: string; isOwner: boolean };
-type Actor = { uid: string; isAdmin: boolean };
+export type MemberActor = { uid: string; isAdmin: boolean; isOwner: boolean };
 
 /** Why the admin switch can't be flipped for this member, or `null` when it can. */
 export type AdminToggleBlock = "owner" | "self" | "last-admin" | null;
@@ -27,26 +41,37 @@ export type MemberEditState = {
 };
 
 export const ADMIN_TOGGLE_BLOCK_REASONS: Record<Exclude<AdminToggleBlock, null>, string> = {
-  owner: "Owner status can't be changed here.",
+  owner: "Owner access can't be removed.",
   self: "Ask another admin to change your admin access — that way the team can never end up with none.",
   "last-admin": "At least one admin is required.",
 };
 
 /**
- * - non-admins edit nothing (their own row included);
- * - an owner's row is locked for everyone, the owner too;
- * - an admin may edit their own roles, but not remove their own admin flag
- *   (the rules' last-admin safeguard), and the sole admin can't be demoted.
+ * The single "may this actor edit this member?" check (the TypeScript twin of
+ * firestore.rules' users/{uid} update rule). `reason` is a tooltip-ready
+ * explanation when not allowed.
  */
-export function getMemberEditState(actor: Actor, member: Member, adminCount: number): MemberEditState {
-  if (!actor.isAdmin) {
-    return { canEdit: false, lockedReason: "Only admins can edit roles.", adminToggleBlock: "self" };
+export function canEditMember(actor: MemberActor, target: Pick<Member, "uid" | "isOwner">): { allowed: boolean; reason: string | null } {
+  if (!actor.isAdmin && !actor.isOwner) return { allowed: false, reason: "Only admins can edit roles." };
+  if (target.isOwner) {
+    if (actor.isOwner && actor.uid === target.uid) return { allowed: true, reason: null };
+    return { allowed: false, reason: actor.isOwner ? "Only this owner can edit their own roles." : "Only the owner can edit this member." };
   }
-  if (member.isOwner) {
-    return { canEdit: false, lockedReason: "An owner's roles and admin status can't be changed.", adminToggleBlock: "owner" };
-  }
+  return { allowed: true, reason: null };
+}
+
+/**
+ * Edit button state plus the admin switch's block inside the editor. The
+ * last-admin safeguard here only ever affects the admin switch — it never
+ * blocks a role edit.
+ */
+export function getMemberEditState(actor: MemberActor, member: Member, adminCount: number): MemberEditState {
+  const { allowed, reason } = canEditMember(actor, member);
+  if (!allowed) return { canEdit: false, lockedReason: reason, adminToggleBlock: member.isOwner ? "owner" : "self" };
+
   let adminToggleBlock: AdminToggleBlock = null;
-  if (member.isAdmin && member.uid === actor.uid) adminToggleBlock = "self";
+  if (member.isOwner) adminToggleBlock = "owner"; // the owner's own row: admin stays on
+  else if (member.isAdmin && member.uid === actor.uid) adminToggleBlock = "self";
   else if (member.isAdmin && adminCount <= 1) adminToggleBlock = "last-admin";
   return { canEdit: true, lockedReason: null, adminToggleBlock };
 }

@@ -13,7 +13,8 @@ export function serializeCsv(rows: string[][]): string {
   return rows.map((row) => row.map(csvEscape).join(",")).join("\r\n");
 }
 
-export function parseCsv(text: string): string[][] {
+/** `delimiter` is a comma by default; pass "	" for text pasted from a spreadsheet (P15). Quoting works the same either way. */
+export function parseCsv(text: string, delimiter: string = ","): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -41,7 +42,7 @@ export function parseCsv(text: string): string[][] {
       i++;
       continue;
     }
-    if (char === ",") {
+    if (char === delimiter) {
       row.push(field);
       field = "";
       i++;

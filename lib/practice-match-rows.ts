@@ -14,6 +14,8 @@ export type MatchRow = {
   teams: number[];
   difficulty: Difficulty;
   hasVideo: boolean;
+  /** P15: hand-entered rather than imported from the FIRST API — shown as a small "Manual" tag. */
+  manual?: boolean;
   status: MatchRowStatus;
   /** True when the most relevant session (the completed one, or an open one) belongs to the viewer. */
   byYou: boolean;
@@ -66,6 +68,7 @@ export function buildMatchRows(
         teams: side.teams,
         difficulty: side.difficulty,
         hasVideo: match.video !== null,
+        manual: match.origin === "manual",
         status,
         byYou,
       });

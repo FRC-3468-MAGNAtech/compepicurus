@@ -36,6 +36,11 @@ export async function exportAllDataJson(teamId: string, actorUid: string, actorN
   collections.libraryMatches = libSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   summary.push({ collection: "libraryMatches", count: collections.libraryMatches.length });
 
+  // P15: hand-typed (manual) matches exist nowhere else, so the library's events — and any unpublished matches, which an admin reads in full above — are part of the backup.
+  const eventSnap = await getDocs(collection(db, "libraryEvents"));
+  collections.libraryEvents = eventSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  summary.push({ collection: "libraryEvents", count: collections.libraryEvents.length });
+
   const teamSnap = await getDoc(doc(db, "teams", teamId));
   collections.teams = teamSnap.exists() ? [{ id: teamSnap.id, ...teamSnap.data() }] : [];
   summary.push({ collection: "teams", count: collections.teams.length });

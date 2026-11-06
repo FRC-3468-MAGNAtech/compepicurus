@@ -2,13 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { collection, doc, getDoc, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
-import { db, isFirebaseConfigured } from "@/lib/firebase/client";
+import { auth, db, isFirebaseConfigured } from "@/lib/firebase/client";
 import { getEvent, getMatchesForEvent } from "@/lib/ftc/actions";
-import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
 import { parseCsv } from "@/lib/analytics/csv";
 import { getDifficulty, type Difficulty } from "@/lib/difficulty";
+import { decideMatchWrite, libraryMatchId, originOf, type LibraryOrigin } from "@/lib/library/ids";
 import { getSeason } from "@/lib/seasons";
 import type { MatchType } from "@/lib/ftc/types";
+
+// The id format lives in lib/library/ids.ts (pure, so tests and the manual-entry
+// code can use it without Firebase); re-exported here so existing imports keep working.
+export { libraryMatchId };
+export type { LibraryOrigin };
 
 /**
  * Deliberately NOT teamId-scoped — this is public, real FTC competition
@@ -39,15 +44,30 @@ export type LibraryMatch = {
   importedAt: string;
   /** ISO. Updated every time scores are (re-)imported. */
   scoresUpdatedAt: string;
+  /** P15: where the match came from. Absent on a pre-P15 doc, which is an API match (`originOf()`). Never changes after creation. */
+  origin?: LibraryOrigin;
+  /** P15: unpublished matches are hidden from everyone but admins. Absent on a pre-P15 doc until the one-time backfill. */
+  published?: boolean;
+  /** P15, manual matches imported from CSV/paste: awaiting an admin's review before publishing. */
+  needsReview?: boolean;
+  /** P15, manual matches only. */
+  createdBy?: string;
+  /** P15, manual matches only (ISO). */
+  updatedAt?: string;
+  /** P15, manual matches only. */
+  notes?: string;
 };
 
 const COLLECTION = "libraryMatches";
+const EVENTS = "libraryEvents";
 
-export function libraryMatchId(eventCode: string, matchType: MatchType, matchNumber: number): string {
-  return `${eventCode}_${MATCH_TYPE_PREFIX[matchType]}${matchNumber}`;
-}
-
-export type ImportSummary = { eventName: string; imported: number; skipped: number };
+export type ImportSummary = {
+  eventName: string;
+  imported: number;
+  skipped: number;
+  /** P15: ids left untouched because a manual match with the same id exists — an API import never overwrites one. */
+  skippedManual: string[];
+};
 
 /**
  * Imports every scored match for an event into the library — and doubles as
@@ -60,13 +80,41 @@ export type ImportSummary = { eventName: string; imported: number; skipped: numb
  */
 export async function importLibraryEvent(seasonId: string, eventCode: string): Promise<ImportSummary> {
   const season = getSeason(seasonId);
+
+  // P15: a code that belongs to a manual event can never be imported from the API.
+  const eventRef = doc(db, EVENTS, eventCode);
+  const existingEvent = await getDoc(eventRef);
+  if (existingEvent.exists() && originOf(existingEvent.data()) === "manual") {
+    throw new Error(`${eventCode} is a manual event — it can't be imported from the FIRST API, and nothing in it will be overwritten.`);
+  }
+
   const eventResult = await getEvent(eventCode, season.apiSeason);
   if (!eventResult.ok) throw new Error(eventResult.error.message);
   if (!eventResult.data) throw new Error(`No event found with code "${eventCode}" for the ${season.apiSeason} season.`);
   const eventName = eventResult.data.name;
 
+  // P15: every imported event gets a libraryEvents doc too (origin 'api'), so event codes can be checked for collisions.
+  const nowIso = new Date().toISOString();
+  if (existingEvent.exists()) {
+    await updateDoc(eventRef, { eventName, updatedAt: nowIso });
+  } else {
+    await setDoc(eventRef, {
+      eventCode,
+      eventName,
+      seasonId,
+      origin: "api",
+      date: null,
+      sourceUrl: null,
+      defaultVideoUrl: null,
+      createdBy: auth.currentUser?.uid ?? "",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+  }
+
   let imported = 0;
   let skipped = 0;
+  const skippedManual: string[] = [];
   const types: MatchType[] = ["Practice", "Qualification", "Playoff"];
   for (const matchType of types) {
     const res = await getMatchesForEvent(eventCode, matchType, season.apiSeason);
@@ -83,6 +131,11 @@ export async function importLibraryEvent(seasonId: string, eventCode: string): P
       const id = libraryMatchId(eventCode, matchType, match.matchNumber);
       const ref = doc(db, COLLECTION, id);
       const existing = await getDoc(ref);
+      // P15: never overwrite a manual match (firestore.rules refuses it too: `origin` is fixed).
+      if (decideMatchWrite(existing.exists() ? existing.data() : null, "api") === "skip-other-origin") {
+        skippedManual.push(id);
+        continue;
+      }
       const now = new Date().toISOString();
       await setDoc(
         ref,
@@ -107,18 +160,28 @@ export async function importLibraryEvent(seasonId: string, eventCode: string): P
             },
           },
           scoresUpdatedAt: now,
-          ...(existing.exists() ? {} : { video: null, importedAt: now }),
+          origin: "api",
+          // A new match is published; an existing one keeps whatever the admin chose, except a pre-P15 doc with no field yet.
+          ...(existing.exists() ? (existing.data().published === undefined ? { published: true } : {}) : { video: null, importedAt: now, published: true }),
         },
         { merge: true }
       );
       imported++;
     }
   }
-  return { eventName, imported, skipped };
+  return { eventName, imported, skipped, skippedManual };
 }
 
-/** Realtime subscription to one event's library matches, sorted by match type then number. */
-export function useLibraryMatches(eventCode: string | null) {
+/**
+ * Realtime subscription to one event's library matches, sorted by match type then number.
+ *
+ * P15: by default only **published** matches (what scouts and every practice flow may
+ * see). `includeUnpublished` is for the Admin Panel's tables — it reads everything,
+ * which firestore.rules only allows for admins. Rules aren't filters, so the published
+ * filter has to be part of the query itself.
+ */
+export function useLibraryMatches(eventCode: string | null, options: { includeUnpublished?: boolean } = {}) {
+  const includeUnpublished = options.includeUnpublished ?? false;
   const [matches, setMatches] = useState<LibraryMatch[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
 
@@ -129,7 +192,8 @@ export function useLibraryMatches(eventCode: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collection(db, COLLECTION), where("eventCode", "==", eventCode));
+    const base = collection(db, COLLECTION);
+    const q = includeUnpublished ? query(base, where("eventCode", "==", eventCode)) : query(base, where("eventCode", "==", eventCode), where("published", "==", true));
     const unsubscribe = onSnapshot(
       q,
       (snap) => {
@@ -145,7 +209,7 @@ export function useLibraryMatches(eventCode: string | null) {
       }
     );
     return unsubscribe;
-  }, [eventCode]);
+  }, [eventCode, includeUnpublished]);
 
   return { matches, loaded };
 }
@@ -168,7 +232,8 @@ export function useLibraryMatchesBySeason(seasonId: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collection(db, COLLECTION), where("seasonId", "==", seasonId));
+    // P15: only published matches ever show up in a scout's match list — admins included.
+    const q = query(collection(db, COLLECTION), where("seasonId", "==", seasonId), where("published", "==", true));
     const unsubscribe = onSnapshot(
       q,
       (snap) => {
@@ -197,7 +262,9 @@ export function useLibraryMatchesBySeason(seasonId: string | null) {
  * (one imported event's worth of matches today), so one unfiltered
  * subscription is simplest.
  */
-export function useAllLibraryMatches(enabled: boolean = true) {
+export function useAllLibraryMatches(enabled: boolean = true, options: { includeUnpublished?: boolean } = {}) {
+  // P15: published matches only, unless an admin-only screen (Rescore) needs the drafts too.
+  const includeUnpublished = options.includeUnpublished ?? false;
   const [matches, setMatches] = useState<LibraryMatch[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
 
@@ -209,8 +276,9 @@ export function useAllLibraryMatches(enabled: boolean = true) {
       setLoaded(true);
       return;
     }
+    const base = collection(db, COLLECTION);
     const unsubscribe = onSnapshot(
-      collection(db, COLLECTION),
+      includeUnpublished ? base : query(base, where("published", "==", true)),
       (snap) => {
         setMatches(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch));
         setLoaded(true);
@@ -222,7 +290,7 @@ export function useAllLibraryMatches(enabled: boolean = true) {
       }
     );
     return unsubscribe;
-  }, [enabled]);
+  }, [enabled, includeUnpublished]);
 
   return { matches, loaded };
 }

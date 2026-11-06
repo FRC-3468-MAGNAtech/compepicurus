@@ -54,56 +54,6 @@ export const matches: MatchEntry[] = [
   { id: "m4", matchNumber: 15, redAlliance: [254, 8110, 118], blueAlliance: [3468, 1114, 6672], redScore: 159, blueScore: 190, scout: "Kai Fujimoto", time: "9:50 AM" },
 ];
 
-export type ChangelogEntry = {
-  version: string;
-  date: string;
-  title: string;
-  tag: "feature" | "fix" | "improvement";
-  notes: string[];
-};
-
-export const changelog: ChangelogEntry[] = [
-  {
-    version: "0.4.0",
-    date: "2026-09-10",
-    title: "Bouncy Glass redesign",
-    tag: "feature",
-    notes: [
-      "Introduced the glassmorphic design system with theme switching",
-      "Added Team Colors and BIOBUZZ palettes",
-      "Rebuilt navigation with a collapsible glass sidebar",
-    ],
-  },
-  {
-    version: "0.3.1",
-    date: "2026-08-22",
-    title: "Scout accuracy tracking",
-    tag: "improvement",
-    notes: ["Added per-scout consistency scoring", "Fixed rounding error in team averages"],
-  },
-  {
-    version: "0.3.0",
-    date: "2026-08-05",
-    title: "Pick list & rankings",
-    tag: "feature",
-    notes: ["New pick list builder for alliance selection", "Live rankings table"],
-  },
-  {
-    version: "0.2.0",
-    date: "2026-07-18",
-    title: "Practice scouting sandbox",
-    tag: "feature",
-    notes: ["Practice mode no longer writes to real match data"],
-  },
-  {
-    version: "0.1.0",
-    date: "2026-06-30",
-    title: "Initial scaffold",
-    tag: "fix",
-    notes: ["Project bootstrapped"],
-  },
-];
-
 export type PickListEntry = {
   rank: number;
   teamNumber: number;

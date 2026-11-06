@@ -15,7 +15,7 @@ import { getMemberEditState, type MemberAccess } from "@/lib/member-access";
 export default function TeamManagementPage() {
   const { user, profile } = useAuth();
   const { team, loaded: teamLoaded } = useTeamDoc(profile?.teamId ?? null);
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isOwner } = usePermissions();
   const { members, loaded: membersLoaded } = useTeamMembers(profile?.teamId ?? null);
   const [showJoinCode, setShowJoinCode] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -38,7 +38,7 @@ export default function TeamManagementPage() {
     }
   };
 
-  const actor = { uid: user?.uid ?? "", isAdmin };
+  const actor = { uid: user?.uid ?? "", isAdmin, isOwner };
   // The roster is realtime: guard and block-reasons use the member's *current* row, while the editor's draft keeps the values it opened with.
   const liveEditing = editing ? (members.find((m) => m.uid === editing.uid) ?? editing) : null;
   const editState = (m: TeamMember) => getMemberEditState(actor, m, adminCount);
@@ -107,7 +107,7 @@ export default function TeamManagementPage() {
               <MemberRow
                 key={m.uid}
                 member={m}
-                editState={isAdmin ? editState(m) : undefined}
+                editState={editState(m)}
                 highlight={savedUid === m.uid}
                 onEdit={() => openEditor(m)}
               />

@@ -29,6 +29,10 @@ export type TeamDoc = {
   activeEvents?: FtcEvent[];
   /** P3: admin-set in Match Library. Optional — absent on teams created before this field existed, treat as `false`. */
   usePlaceholderVideo?: boolean;
+  /** P14: set (in the same transaction that creates them) once the starter changelog drafts have been seeded, so they're never recreated after an admin deletes them. */
+  changelogSeeded?: boolean;
+  /** P15: set once this team's admin has stamped the pre-P15 library docs with `origin`/`published` (lib/library/store.ts backfillLibraryMetadata), so it isn't re-run on every login. */
+  libraryBackfilled?: boolean;
 };
 
 /**

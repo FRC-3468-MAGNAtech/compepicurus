@@ -69,6 +69,8 @@ export type UserDoc = {
   /** Set only by app/api/auth/sync-roles (Admin SDK) — see docs/ASSUMPTIONS.md (P1b). Clients can never write this (firestore.rules). */
   isOwner: boolean;
   themeId: string;
+  /** P14: when the user last opened the Changelog (a Firestore Timestamp; absent until they first do) — drives the unread dot on its nav item. */
+  lastSeenChangelogAt?: unknown;
 };
 
 export type GoogleLinkPrompt = { email: string };
@@ -91,6 +93,10 @@ type AuthContextValue = {
   changePassword: (newPassword: string) => Promise<void>;
   updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId">>) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
+  /** FIX2: this account's email is in OWNER_EMAILS but isn't verified yet, so owner access hasn't been applied. Drives the "Verify your email to activate owner access" notice. */
+  ownerPendingVerification: boolean;
+  /** After the user clicks the verification link: reloads the account, refreshes the ID token, and re-runs the owner/admin sync, without a sign-out. */
+  recheckOwnerAccess: () => Promise<void>;
   /** Set when a Google sign-in/link hits auth/account-exists-with-different-credential — the email already has a password account. Resolve it with completeGoogleLink(). */
   pendingGoogleLink: GoogleLinkPrompt | null;
   /** Signs in with the given password for pendingGoogleLink's email, then links the Google credential that triggered it. Clears pendingGoogleLink on success or failure. */
@@ -111,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [linkedProviders, setLinkedProviders] = useState<string[]>([]);
   const [pendingGoogleLink, setPendingGoogleLink] = useState<GoogleLinkPrompt | null>(null);
   const pendingGoogleCredential = useRef<AuthCredential | null>(null);
+  const [ownerPendingVerification, setOwnerPendingVerification] = useState(false);
 
   const onSignedIn = async (signedInUser: FirebaseUser) => {
     setLinkedProviders(signedInUser.providerData.map((p) => p.providerId));
@@ -118,7 +125,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Grants owner/admin (from OWNER_EMAILS/ADMIN_EMAILS) idempotently on
     // every sign-in. If it actually changed anything, the custom claims on
     // this session are stale until the token is force-refreshed.
-    const { changed } = await syncRoles();
+    const { changed, ownerPendingVerification: pending } = await syncRoles();
+    setOwnerPendingVerification(pending);
     if (changed) {
       await signedInUser.getIdToken(true);
       await syncServerSession(signedInUser);
@@ -147,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
         setProfileLoaded(true);
         setLinkedProviders([]);
+        setOwnerPendingVerification(false);
         void syncServerSession(null);
         return;
       }
@@ -297,6 +306,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendEmailVerification(auth.currentUser);
   };
 
+  const recheckOwnerAccess = async () => {
+    const current = auth.currentUser;
+    if (!current) return;
+    // The cached ID token still says "unverified" until it's re-fetched, which would make the sync refuse again.
+    await current.reload();
+    await current.getIdToken(true);
+    await onSignedIn(current);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -314,6 +332,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         changePassword,
         updateUserProfile,
         resendVerificationEmail,
+        ownerPendingVerification,
+        recheckOwnerAccess,
         pendingGoogleLink,
         completeGoogleLink,
         dismissGoogleLinkPrompt,

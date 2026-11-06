@@ -14,17 +14,21 @@ import { ConnectionStatus } from "@/components/layout/connection-status";
 import { Avatar } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth";
 import { getRole } from "@/lib/roles";
+import { useChangelogUnread } from "@/lib/changelog/store";
 
 function NavLink({
   item,
   collapsed,
   onNavigate,
   scope,
+  unread = false,
 }: {
   item: NavItem;
   collapsed: boolean;
   onNavigate?: () => void;
   scope: string;
+  /** P14: show the "something new" dot (Changelog). Hidden while you're on the page itself. */
+  unread?: boolean;
 }) {
   const pathname = usePathname();
   const active = item.matchPrefix ? pathname.startsWith(item.href) : pathname === item.href;
@@ -53,10 +57,22 @@ function NavLink({
             }}
           />
         )}
-        <Icon className="h-[18px] w-[18px] shrink-0" />
+        <span className="relative shrink-0">
+          <Icon className="h-[18px] w-[18px]" />
+          {unread && !active && collapsed && <UnreadDot className="absolute -right-1 -top-1" />}
+        </span>
         {!collapsed && <span className="truncate">{item.label}</span>}
+        {unread && !active && !collapsed && <UnreadDot className="ml-auto" />}
       </motion.div>
     </Link>
+  );
+}
+
+function UnreadDot({ className }: { className?: string }) {
+  return (
+    <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--color-accent)] shadow-[0_0_10px_2px_rgba(var(--glow),0.7)]", className)}>
+      <span className="sr-only">New updates</span>
+    </span>
   );
 }
 
@@ -67,6 +83,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
   const name = profile?.name ?? "";
   const isAdmin = profile?.isAdmin ?? false;
   const visibleSecondaryNav = secondaryNav.filter((item) => item.href !== "/admin" || isAdmin);
+  const changelogUnread = useChangelogUnread(profile?.teamId ?? null, profile?.lastSeenChangelogAt);
 
   const handleLogout = () => {
     void logout();
@@ -87,6 +104,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
           name={name}
           primaryRole={profile?.primaryRole}
           navItems={visibleSecondaryNav}
+          changelogUnread={changelogUnread}
           onLogout={handleLogout}
           scope="desktop"
         />
@@ -122,6 +140,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
                 name={name}
                 primaryRole={profile?.primaryRole}
                 navItems={visibleSecondaryNav}
+          changelogUnread={changelogUnread}
                 onLogout={handleLogout}
                 onNavigate={onClose}
                 scope="mobile"
@@ -139,6 +158,7 @@ function SidebarInner({
   name,
   primaryRole,
   navItems,
+  changelogUnread,
   onLogout,
   onNavigate,
   scope,
@@ -147,6 +167,7 @@ function SidebarInner({
   name: string;
   primaryRole?: string;
   navItems: NavItem[];
+  changelogUnread: boolean;
   onLogout: () => void;
   onNavigate?: () => void;
   scope: string;
@@ -175,7 +196,7 @@ function SidebarInner({
         ))}
         <div className="my-2 h-px bg-[var(--glass-border)]" />
         {navItems.map((item) => (
-          <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} />
+          <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} unread={item.href === "/changelog" && changelogUnread} />
         ))}
       </nav>
 

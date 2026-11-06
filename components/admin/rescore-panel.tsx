@@ -160,7 +160,8 @@ function EventRescore({ teamId, actorUid, actorName }: { teamId: string; actorUi
 function SessionRescore({ teamId, actorUid, actorName }: { teamId: string; actorUid: string; actorName: string }) {
   const { sessions } = useAllTeamPracticeSessions(teamId);
   const { entries } = useTeamScoutEntries(teamId);
-  const { matches: libraryMatches } = useAllLibraryMatches();
+  // P15: Rescore also covers matches that aren't published yet (admin-only screen).
+  const { matches: libraryMatches } = useAllLibraryMatches(true, { includeUnpublished: true });
 
   const [seasonId, setSeasonId] = useState<string>("all");
   const [eventCode, setEventCode] = useState("");
@@ -187,7 +188,10 @@ function SessionRescore({ teamId, actorUid, actorName }: { teamId: string; actor
     setRefreshResult(null);
     try {
       const summary = await importLibraryEvent(refreshSeasonId, refreshEventCode.trim());
-      setRefreshResult(`${summary.eventName}: refreshed ${summary.imported} matches, skipped ${summary.skipped}.`);
+      setRefreshResult(
+        `${summary.eventName}: refreshed ${summary.imported} matches, skipped ${summary.skipped}.` +
+          (summary.skippedManual.length > 0 ? ` Left ${summary.skippedManual.length} manual match${summary.skippedManual.length === 1 ? "" : "es"} untouched (${summary.skippedManual.join(", ")}).` : "")
+      );
       await logAuditEvent(teamId, actorUid, actorName, "refresh-official-scores", { eventCode: refreshEventCode.trim() }, null, summary);
     } catch (err) {
       setRefreshResult(err instanceof Error ? err.message : "Couldn't refresh scores.");

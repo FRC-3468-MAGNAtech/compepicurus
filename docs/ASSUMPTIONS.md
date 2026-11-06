@@ -291,7 +291,8 @@ server-side (an Admin SDK query, immune to the now-much-stricter
 `users/{uid}` create rule becomes a flat `allow create: if false`, since
 every legitimate path is now server-side.
 
-**P1b-3. Owner rows are locked for *everyone*, including the owner's own
+**P1b-3. (Superseded by FIX2 — the owner can now edit their own row; see FIX2.)
+Owner rows are locked for *everyone*, including the owner's own
 edits to themself, in Team Management/People.** The prompt says both "The
 toggle controls for an owner row are hidden or disabled for everyone except
 the owner themself" and, two sentences later, "Nobody (including other
@@ -2094,6 +2095,454 @@ content/states are right, but not layout, spacing, shift, animation, or the real
 FIRST API's time format and payloads; and no browser session of the role switcher,
 event switcher, or admin strip.
 
+## P14 — Changelog & Credits
+
+**P14-0. No clarifying questions were asked** — nothing blocked. As in P1-1 the
+prompt's Vite/React Router wording maps to Next.js: the pages are still
+`/changelog` and `/credits`, and both placeholder banners are gone (the app
+shell's `REALIZED_PAGES` now lists them; the marketing layout's stale
+`PLACEHOLDER_PAGES` check is removed).
+
+### Changelog
+
+**P14-1. A separate `publishedAt` field.** The prompt's data model lists
+`createdAt` / `updatedAt`. The unread dot needs "when did this go live", which is
+neither: an old entry that gets published today, or a typo fix on a published one,
+would otherwise look "new" (or not) for the wrong reason. `publishedAt` is set when
+an entry goes from draft to published, kept through edits, and cleared on
+unpublish. Unpublishing and republishing counts as new and lights the dot again.
+
+**P14-2. Unread semantics.** "Unread" = some published entry has
+`publishedAt > users/{uid}.lastSeenChangelogAt`. A user who has never opened the
+page has no `lastSeenChangelogAt`, so everything published counts as unread and
+they see the dot once, until they open it. An entry whose server timestamp is still
+pending (an admin's own just-published write) is ignored, so admins don't get a
+dot for their own publish. The page stamps `lastSeenChangelogAt` on open and again
+if something is published while it's open. It's per user (their doc), so it follows
+them across browsers and devices.
+
+**P14-3. Non-admin queries filter on `status == "published"`.** Firestore rules
+aren't filters, so an unfiltered list from a member would be *rejected*, not
+silently trimmed. `useChangelog` and the unread hook add the filter for everyone
+who isn't an admin (equality-only, so no composite index is needed). Tested: the
+unfiltered list is denied for a member.
+
+**P14-4. Draft/published is visible to admins only.** Drafts are dashed, labeled
+"Draft · only admins can see this", and counted in a line under the filters. An
+admin can Publish / Unpublish from the card without opening the editor.
+
+**P14-5. Starter entries are created as drafts, once.** The prompt asks for
+starter entries "describing features that really exist, created as drafts". The
+five in `lib/changelog/seed.ts` describe what's actually built (checked against
+`docs/ARCHITECTURE.md`); the dates are the real dates the work landed in git
+history, and the version numbers (v0.1.0 to v0.5.0) are only a suggested labeling
+an admin can change. They are created the first time an admin opens the Changelog,
+in one transaction that also sets `teams.changelogSeeded`, so (a) two admins
+opening it at once seed once (deterministic doc ids too) and (b) they don't return
+after being deleted. A team that already has its own entries is not an issue —
+seeding only ever adds drafts. If you'd rather not have them at all, delete them,
+or set `changelogSeeded: true` on the team doc before the first admin visit.
+
+**P14-6. Safe markup, not HTML.** The prompt allows "bold/italic/links rendered
+via a sanitizer, never raw HTML". I went one step stricter: text is parsed into a
+four-node whitelist tree and rendered as React elements, so there is no HTML
+string and no sanitizer to get wrong. Supported: `**bold**`, `*italic*` /
+`_italic_`, `[label](https://…)`, and backslash escapes. A link must be a
+canonical `https://` URL with a host, no credentials, no whitespace, ≤ 2048
+chars. Anything else (including `javascript:` / `data:` / `http:`) stays visible
+text, and the editor refuses to save one so it can't be silently inert. Not
+supported on purpose: headings, lists, images, code, and nested links.
+
+**P14-7. Limits.** version ≤ 40, title ≤ 120, summary ≤ 1000, each change ≤ 400,
+at most 40 changes per entry — enforced in the editor and (as far as rules can
+express it) in `firestore.rules`.
+
+**P14-8. Collapse behavior.** The newest two entries in the displayed list start
+expanded and older ones collapsed. While a filter or search is active every match
+is expanded so the hit is visible. Expand all / Collapse all and each card's own
+toggle override that for the session; the choice is not remembered across visits.
+Pinned entries count as "newest" for this since they're first in the list.
+
+**P14-9. Type filter semantics.** Selecting types keeps entries that have at least
+one change of those types and, inside each, shows *only* those changes. Chip counts
+are "entries with at least one change of this type". Multiple types are OR.
+
+**P14-10. Editor is a dialog, not a drawer.** The prompt allows either; it reuses
+the app's glass `Dialog` (focus trap, Esc, exit animation). Change rows use a
+native `<select>` for the type (an accessible, simple control that behaves inside
+a dialog) rather than the Radix select.
+
+**P14-11. Edit conflicts are last-writer-wins.** Saving an entry replaces its
+content from the editor. Quick toggles (pin, publish) go through `patchEntry`, which
+re-reads the latest stored entry in a transaction, so a toggle never reverts text
+someone else just changed. Two admins editing the *same entry's text* at the same
+time is not merged — the last save wins. (The audit log records both.)
+
+**P14-12. Audit.** One `auditLog` entry per create, edit (including pin and
+publish toggles), and delete, written in the same transaction as the change. The
+seeding transaction writes one entry too. These use new `AuditAction` values; the
+auditLog rule doesn't restrict `action`, so no rules change was needed for them.
+
+### Credits
+
+**P14-13. Defaults are shown, not stored, until the first edit.** `credits/{teamId}`
+doesn't exist for a team that has never edited it; the page then shows
+`DEFAULT_CREDITS` (Built with AI, Team, Built with, Data) and tells admins it's the
+starter list. The first edit materializes the defaults plus that edit into the doc.
+Their ids are fixed so an edit replays correctly. (No seeding write on page open, so
+a non-admin visiting first can't be affected and nothing needs an admin present.)
+
+**P14-14. "Built with" lists Next.js, not Vite.** The prompt lists React, Vite,
+Tailwind CSS, Framer Motion, Firebase, and Vercel. This app is **Next.js**, not
+Vite (see P1-1), so the seed names Next.js instead. An admin can edit it. Each
+seeded link points at the project's home page; the Data entry links to the FTC
+Events API documentation. I didn't verify those URLs resolve (no network access in
+the build environment) — please click through them once.
+
+**P14-15. Team section is placeholders.** Three "Team member name" entries with a
+role placeholder, as the prompt asked. The AI collaborator entry reads "Claude
+(Anthropic)" and links to anthropic.com/claude.
+
+**P14-16. Avatar/logo is an https image URL, not an upload.** There's no file
+storage in this app, so an entry's image is a link (https-only, validated). If the
+image fails to load, the entry falls back to initials. Images are loaded with
+`referrerPolicy="no-referrer"`. Because the host is arbitrary, it's a plain `<img>`
+rather than `next/image` (which would need every host allow-listed).
+
+**P14-17. One whole-doc credits record, edited by ops in a transaction.** A single
+`credits/{teamId}` doc, as specified. Every edit is a `CreditsOp` re-applied to the
+latest stored sections inside a transaction (the pick-list pattern), so two admins
+editing at once compose. Limits: 20 sections, 60 entries per section, names ≤ 80,
+descriptions ≤ 300, section titles ≤ 80 — about 700 KB worst case, under
+Firestore's 1 MB document limit.
+
+**P14-18. Drag and drop is within a list; use the editor to change sections.**
+Sections drag among sections, and entries drag within their own section — each with
+a grip handle (mouse, touch long-press, keyboard) and up / down buttons. Dragging an
+entry *between* sections isn't offered (the op exists in `applyCreditsOp`, but the UI
+doesn't expose it); to move one, add it to the other section and delete the original.
+
+**P14-19. A link wraps the entry's name, not the whole tile.** A description can
+contain its own links (the safe markup), and a link nested inside a link is invalid
+HTML, so only the name (with an external-link icon) is the entry's link.
+
+**P14-20. Footer.** `components/layout/site-footer.tsx` — a copyright line and
+Credits / Changelog links — is on the app shell (signed-in pages) and replaces the
+marketing layout's hand-written footer. The Credits and Changelog pages themselves
+live behind sign-in (they were already in the signed-in shell), so those two links
+send a signed-out visitor to the login page.
+
+### Side changes
+
+- Removed the now-unused mock `changelog` data from `lib/mock-data.ts`.
+- Added `lastSeenChangelogAt?` to `UserDoc` and `changelogSeeded?` to `TeamDoc`.
+- Four new `AuditAction`s with labels in the Admin Panel's audit log tab.
+
+### P14: verification
+
+Run and passing: `tsc`, `eslint` on everything touched, `vitest` — new:
+`lib/rich-text` (17: URL acceptance/rejection incl. scheme and whitespace tricks,
+parsing, nesting, "never produces HTML", pathological input),
+`lib/changelog` (32: ordering, filtering/search, grouping, unread rule, validation,
+defensive read, dates, starter entries are valid), `lib/credits` (24: every op,
+stale ops, two-admin composition, sanitize-on-read, validation, defaults) — 594
+tests in all — and `next build`. **Emulator rules tests: 148 passing in
+`firestore.rules.test.ts`** (114 before; 34 new: member/admin/other-team/anonymous
+reads incl. the rejected unfiltered list, drafts hidden, admin create/edit/pin/
+publish/unpublish/delete, `publishedAt` fixed while published, immutable fields,
+shape and limit validation, the save and seed transactions with their audit
+entries, `lastSeenChangelogAt` self-update without a role smuggle, and credits
+read/write/limits/transaction).
+
+**Not verified:** anything visual or interactive. I had no browser, so the
+timeline, collapse animation, no-shift loading, the glass dialogs, the unread dot's
+placement in the collapsed and expanded sidebar, dnd-kit dragging, and the footer
+have not been seen. The unread dot is also untested end to end (it needs a second
+account in a live Firebase project).
+
+**Known failing, not caused by P14:** `api-routes.emulator.test.ts` (11 of its 12
+tests) fails identically on the P13 commit with my changes stashed
+(`auth/email-already-in-use` / "no user record" from the Auth emulator). It's an
+existing problem with that file's setup in this environment; I left it alone.
+`npm run test:rules` therefore reports 12 failures overall until it's fixed;
+`firestore.rules.test.ts` on its own is fully green.
+
+## FIX2 — Owner Can Edit Roles (Including Their Own and Other Admins')
+
+**FIX2-0. No clarifying questions were asked** — nothing truly blocked. As in P1-1
+the prompt's Vite wording maps to Next.js. **FIX2 supersedes P1b-3 and the owner
+parts of FIX1-3** ("owner rows are locked for everyone, the owner too"): that
+reading of the P1b prompt is what locked the sole owner out.
+
+### Root cause
+
+I reproduced it as a sole owner with the emulators (the new tests in
+`firestore.rules.test.ts`, group "the sole owner"): before the fix, a sole owner's
+own primary-role, secondary-role, and admin writes were all denied. The causes,
+checked in the order the prompt gave:
+
+1. **UI gating — wrong (a real cause).** `getMemberEditState()`
+   (`lib/member-access.ts`) returned `canEdit: false` for *any* row with
+   `isOwner`, whoever the viewer was, so the owner's own row showed a "Locked" marker
+   and no Edit button. That is the "can't edit an owner" rule applied to the owner
+   too. (It also meant a non-admin viewer got no Edit button at all, with no reason.)
+2. **Security rules — wrong (a real cause).** The `users/{uid}` admin-update rule
+   required `resource.data.isOwner != true` and the self-update rule pins `primaryRole`,
+   `secondaryRoles`, and `isAdmin`, so *nothing* allowed an owner to change their own
+   roles; the two rules together locked the owner out even if the UI had offered the
+   button.
+3. **Stale or missing custom claims — not the cause of this lockout, but a gap.**
+   `firestore.rules` never read the `owner` claim, only the caller's own `users` doc
+   (via `get()`), so a stale or missing token couldn't have caused it — but the
+   prompt wants the rules to accept either source, and the rules had no owner notion
+   at all. Added `isOwner()` = the `owner` claim **or** the caller's own doc
+   `isOwner == true`; the claim is checked as `'owner' in request.auth.token && …`
+   so a token with no claims at all doesn't error. See FIX2-3 for the one trade-off.
+4. **Last-admin safeguard — not broken.** It never blocked a role edit: the rules'
+   only clause is "an admin can't remove their *own* admin flag", and the UI's
+   `last-admin` / `self` blocks only ever disable the **admin switch**. Confirmed with
+   tests (a sole non-owner admin edits their own roles freely; only dropping their own
+   admin flag fails). Left as is.
+5. **Unverified email — a real gap.** `app/api/auth/sync-roles` returns early,
+   silently, for an unverified email, so an owner who hasn't verified is simply "just an
+   admin" with no explanation. It now reports `ownerPendingVerification` (see FIX2-4).
+
+**A separate, pre-existing test bug found on the way:** `api-routes.emulator.test.ts`
+(11 of 12 tests) had been failing since P1b — the test hardcoded the project id
+`compepicurus-api-test`, but `firebase emulators:exec` runs the Auth emulator under the
+`.firebaserc` project (`compepicurus`) and mints ID tokens with *that* audience, so the
+Admin SDK rejected every token (`incorrect "aud"`). The test now uses
+`process.env.GCLOUD_PROJECT`. One test that expected owner claims for a verified owner
+with no profile and no team was changed to the real sole-owner path (the owner creates
+the team, then syncs); the route's "do nothing for a profile-less owner" behavior is
+unchanged. This is why `npm run test:rules` was reporting 11 failures before.
+
+### The matrix (one helper, mirrored in rules)
+
+`canEditMember(actor, target)` in `lib/member-access.ts` (the TypeScript twin of
+the `users/{uid}` update rule, using `canManageMembers()` / `isOwner()`):
+
+| Actor | Edits roles of | Changes the admin flag of |
+|---|---|---|
+| Owner | their own row, and every non-owner member (other admins included) | any non-owner member; never their own (owner access stays) |
+| Admin (not owner) | any non-owner member, themselves included | any non-owner member; never their own |
+| Everyone else | nobody | nobody |
+
+Always: nobody writes `isOwner` from a client; nobody removes an owner's admin status
+or moves a member off the team (`teamId` is immutable); the last-admin safeguard only
+stops an admin dropping *their own* admin flag.
+
+**FIX2-1. A second owner is treated like any owner row.** `OWNER_EMAILS` can list
+several emails. The prompt says "other admins cannot edit an owner's roles … only the
+owner can edit their own", so owner A cannot edit owner B either — only B can. The
+tooltip says "Only this owner can edit their own roles."
+
+**FIX2-2. An owner's own Admin switch is shown locked on**, with a lock icon and the
+tooltip "Owner access can't be removed." The editor opens an owner's draft with
+`isAdmin: true` regardless of the stored value, and the rule requires `isAdmin == true`
+on an owner's row — so a doc whose admin flag had drifted off can be repaired by
+saving any edit, and can never be turned off.
+
+**FIX2-3. The claim fallback is deliberately permissive.** A user whose token says
+`owner: true` is treated as an owner for *managing other members* even if their doc
+flag hasn't caught up (the prompt asked for "either"). The cost: if the owner flag is
+revoked (the email leaves `OWNER_EMAILS`), a stale token keeps owner powers until it
+refreshes (≤ 1 hour). Mitigations: it only applies within the caller's own team
+(`sameTeam`), `sync-roles` force-refreshes the token on any change, and the claim can
+never be used to edit another owner's row or write `isOwner` (tested). A claim from
+another team's owner grants nothing (tested).
+
+**FIX2-4. Unverified owner email.** `sync-roles` now computes whether the caller's
+email matches `OWNER_EMAILS` *before* the verification check and returns
+`ownerPendingVerification: true` when it matches but the email is unverified; nothing
+else changes (still nothing granted). `lib/auth.tsx` exposes it as
+`ownerPendingVerification` plus `recheckOwnerAccess()` (reload the account, force a
+token refresh, re-run the sync — no sign-out needed). The existing verify-email
+banner shows "Verify your email to activate owner access." with **Resend email** and
+**I've verified — refresh**; it now also appears for a non-password account in that
+state. Disclosure trade-off: the hint tells *the person who typed that email* that it's
+an owner address; the address is already visible to every team member in Team
+Management, and the unverified account gains nothing.
+
+**FIX2-5. Disabled controls everywhere, for everyone.** Team Management now shows
+every row an Edit button; a row the viewer can't edit gets it **disabled with a
+tooltip** (`HoverTip`) saying why: "Only admins can edit roles." for a non-admin
+viewer (every row, their own too), "Only the owner can edit this member." for an admin
+looking at an owner. Previously non-admins saw no Edit button and owners showed
+"Locked". (Slightly more visual noise for plain members; it is what the prompt asks:
+"never silently missing controls".) The save handler re-checks `canEditMember` against
+the live roster. The Owner badge was already next to the owner's name; it's now
+`shrink-0` so a long name can't push it out of view.
+
+**FIX2-6. Audit.** Unchanged and already atomic: `updateMemberAccess` writes the
+`edit-member-roles` entry (who, whom, before, after) in the same batch as the change —
+now also for an owner editing their own row (tested, with the "rejected batch leaves no
+orphan audit entry" case for an admin targeting the owner).
+
+**FIX2-7. `npm run test:rules` now runs the two test files one after the other**
+(`fileParallelism: false` in `vitest.rules.config.ts`). With the API tests no longer
+failing fast, both files hammered the same emulators concurrently — the API tests wipe
+data between cases and the P12 pick-list tests fire many simultaneous transactions —
+and the latter timed out once. Sequential runs were stable on repeat.
+
+### FIX2: verification
+
+Run and passing: `tsc`, `eslint`, `vitest` (21 tests for `lib/member-access`, 10 more
+than before: the matrix, the sole-owner case, last-admin affecting only the switch),
+`next build`, and the emulator suite **`npm run test:rules`: 187 tests in both files**
+— 173 in `firestore.rules.test.ts` (25 new/changed for FIX2: sole owner edits own
+primary/secondary roles and can't drop admin/owner; owner edits and (de)promotes other
+admins; non-owner admin can't touch an owner but can edit others and themself; a
+non-admin edits nobody; no client writes `isOwner`; no claims / stale claims / claim-only
+all work; another team's claim is useless; last-admin; atomic role + audit batch) and
+14 in `api-routes.emulator.test.ts` (all passing again; 2 new for the verified/unverified
+owner hint). The two older tests that asserted the owner lockout were rewritten.
+
+**Not verified:** anything visual — the disabled Edit buttons and their tooltips, the
+locked admin switch with its lock icon, the banner. The verification-email round trip
+needs a real Firebase project (`recheckOwnerAccess` is covered only by its pieces: the
+route test shows a refreshed token flips the result).
+
+## P15 — Manual Library Matches (Events Whose Scores Aren't in the API)
+
+**P15-0. No clarifying questions were asked** — nothing blocked. As in P1-1 the prompt's
+Vite/React Router/`/api` wording maps to Next.js (client Firestore calls + the existing
+Server Actions); I also noted the project builds on P3's library, not a new one.
+
+**P15-1. One collection, with `origin`.** Manual matches live in `libraryMatches` next to
+API ones (as the prompt specifies), distinguished by `origin`. That is what makes them work
+"everywhere an imported match does" — every reader already queries that collection. Pre-P15
+docs have no `origin`; the code reads that as `'api'` (`originOf`), the rules read it with
+a default, and a one-time backfill (P15-3) writes it.
+
+**P15-2. API and manual data can never overwrite each other — enforced three ways.**
+(1) The shared pure rule `decideMatchWrite()` runs first in both paths: the API import skips
+a manual match and reports it ("Left N manual matches untouched"); manual entry skips an API
+match and reports it. (2) `firestore.rules` fixes `origin` on an existing doc, so even a buggy
+or hostile client write fails. (3) A manual event's code is also protected: an API import
+refuses a code that belongs to a manual event, and an API-origin match can't be created under
+one. Tested at all three levels.
+
+**P15-3. Members read only `published == true` — and that needed a backfill.** The prompt asks
+for rules that hide unpublished matches from non-admins. Two things followed, found while testing
+against the emulator:
+- Rules aren't filters: a member's *query* must itself include `where("published", "==", true)`.
+  `useLibraryMatches`, `useLibraryMatchesBySeason`, and `useAllLibraryMatches` all do now, so
+  every scout-facing list is published-only (admins included — "Unpublished matches never
+  appear in scouts' match lists"). The Admin Panel tables and the Rescore tab pass
+  `includeUnpublished`.
+- **A first draft of the rule read `resource.data.get('published', true)` so that old docs
+  (no field) counted as published. The emulator showed that lets a member's *unfiltered*
+  query through (the default makes it provable), which would expose unpublished matches.**
+  The rule reads the field strictly. The cost: a pre-P15 doc has no `published` field and
+  would disappear from scouts' lists. So `backfillLibraryMetadata` stamps every such doc
+  `origin: 'api'`, `published: true` (and creates the missing `libraryEvents` docs). It runs
+  automatically the first time an **admin** has the app open after this ships
+  (`components/admin/library-backfill.tsx`, flagged once per team as
+  `teams/{teamId}.libraryBackfilled`). **Until that has happened, scouts see an empty practice
+  match list** — see "Commands" below.
+
+**P15-4. Events: `libraryEvents`, for API events too.** The prompt describes the collection for
+manual events. I also write a doc for each API event (`origin: 'api'`) on import (and via the
+backfill) so one list holds every event code and a manual code can be checked against all of
+them. An admin-typed code is additionally checked against matches that already exist under it
+and against the FIRST API itself (a positive hit blocks it; if the API call fails the check is
+skipped — the rules and the existing-code checks still apply). A generated code is `MAN-` + up
+to 10 characters of the name, with `-2`, `-3`… on a clash; it can't equal a real FTC code (they
+have no hyphen and aren't prefixed `MAN-`). Codes can't contain underscores (they'd make
+`${eventCode}_${type}${number}` ambiguous). I added `defaultVideoUrl` to the event doc for the
+"Default video for this event" field.
+
+**P15-5. Bulk imports: Needs review is a separate flag.** The prompt says CSV/paste matches start
+`published: false` with a "Needs review" badge. I stored the badge as its own `needsReview`
+boolean rather than inferring it from `published: false`, so a match an admin deliberately
+**un**publishes later reads "Unpublished", not "Needs review". Publishing (single, selected, or
+Publish all) clears it. Re-importing a corrected file **updates** an existing manual match and
+keeps whatever published/review state it already had (it does not send a published match back
+to review). A match that appears twice in one file: the later row wins and the earlier one is
+flagged in the preview.
+
+**P15-6. Penalty points and "same team in two alliances".** The prompt makes "all four teams
+distinct" a validation rule and also lists "a team repeated in two alliances of the same match"
+as a *non-blocking* warning. Those can't both hold; I made it the **blocking error** (the
+stricter, validation-rule reading) — the form says which team is repeated — and the
+non-blocking warnings are: scores far from the event's other manual matches (Tukey fences with
+a 40-point floor, needing ≥ 4 other scores), the same match number already existing (saving
+replaces it), and a clip longer than 10 minutes. Penalty points must be whole numbers ≥ 0 and
+no larger than **that alliance's own** score (they're already included in it); a blank cell is 0.
+
+**P15-7. Video.** Links of every YouTube form are accepted and stored in one canonical form, so a
+CSV pasted with `?si=…&t=90` and a bare video id both work; a `t=` value pre-fills the start
+time when the start box is empty. Times accept `90`, `1:30`, `1:02:30` (and the YouTube
+`1m30s` forms). A match with a link needs start and end (start < end); a match with **no** link
+is allowed (the table flags "missing video", practice flows already treat that as unavailable
+unless placeholder video is on). The built-in preview is the P3 `VideoPlayer`; **Set start
+here / Set end here** read the player's current time. The preview plays freely (not limited to
+the start/end window) because its job is finding the window, and it never reloads when a time is set.
+Bulk **Set video link** keeps each match's own times; a match with no times yet gets a
+placeholder 0:00–2:30 (an FTC match's length) and the confirmation says how many did.
+
+**P15-8. Renumbering.** Match type and number are locked while editing (the id is built from
+them). To renumber, duplicate the match (the number pre-fills as the next free one) and delete
+the original.
+
+**P15-9. Editing scores later.** The edit dialog counts the team's **completed** practice
+sessions already scored against that match and, if any, shows the count with a button to the
+Rescore tab. The scores themselves are saved immediately; the existing sessions keep their old
+accuracy until an admin runs Rescore (P9), which already reads the library's current numbers
+(it now also reads unpublished matches). Live and lobby sessions on a manual match are covered
+the same way, as the count is by `libraryMatchId`.
+
+**P15-10. Team names.** Practice match lists in this app only ever show team *numbers*
+(`MatchRow.teams`), so for manual events "numbers only" is already what happens — no FIRST API
+name lookup was added.
+
+**P15-11. Audit.** One new action, `edit-match-library`, one entry per admin operation (create /
+edit / delete event, upsert, publish, unpublish, set video, delete matches), written in the same
+batch as the change. Bulk operations log a summary (count, and up to 50 match ids), not one
+entry per match. Not in the prompt; consistent with every other admin write.
+
+**P15-12. Backups include `libraryEvents`**, and `libraryMatches` was already exported in full
+(unpublished manual matches included, since the exporter is an admin). Manual matches exist
+nowhere else, so they matter for the competition-day safety net.
+
+**P15-13. Rules limits.** A bulk import is written in batches of 400 matches. Each manual-match
+write makes the rules look up its event doc and the caller's user doc; the rules allow 20
+*distinct* documents per batch and those are the same two docs for every write, and a
+40-match batch passes the emulator tests. I haven't run a 400-match batch against the emulator.
+
+### Side changes
+
+- `libraryMatchId` moved to `lib/library/ids.ts` (pure); `lib/match-library.ts` re-exports it.
+- `parseCsv` takes an optional delimiter (tab for spreadsheet paste); default unchanged.
+- `MatchRow.manual` (optional) and a Manual badge in Practice Match Select and the Results screen.
+- `TeamDoc.libraryBackfilled`; one new `AuditAction`; the existing P3 rules test now writes
+  `origin`/`published`, as every P15-era doc does.
+
+### P15: verification
+
+Run and passing: `tsc`, `eslint` (0 errors, the same 2 warnings), `vitest` — new
+`lib/library/library.test.ts` (55: every YouTube link form incl. `si` and `t`, time parsing and
+start/end validation, match-id format, event-code generation and collisions, the origin rule,
+`validateRawMatch` field by field, difficulty from typed scores and recomputed on edit, sanity
+warnings, CSV/paste validation incl. bad team numbers / duplicate teams / penalty > score /
+missing columns / event defaults / eventCode column / idempotent re-import / API ids refused /
+duplicate rows, the doc builder), 659 tests in all — `next build`, and the emulator suite
+**`npm run test:rules`: 219 tests, all passing** (205 in `firestore.rules.test.ts`, 14 in the API
+tests). New rules tests (32): published vs unpublished reads (single, filtered list, rejected
+unfiltered list), manual match create/edit shape and id, penalty/score/difficulty checks, only
+under a manual event, origin immutable both ways, API refresh can't touch a manual match and a
+manual write can't touch an API or pre-P15 one, delete rules, `libraryEvents` rules, and an
+end-to-end flow built from the real code (bulk import 40 rows → members see none → Publish all →
+members see all; set video link; rename; delete; the API-import doc shapes).
+
+**Not verified:** anything visual or interactive — no browser here — so the dialogs, fast-entry
+row, preview player with the Set start/end buttons, spreadsheet paste from a real Google
+Sheet/Excel, the bulk table, and the Manual tags haven't been seen. The store's Firestore calls
+(`lib/library/store.ts`) run only in the browser against a real project; their *documents* are
+covered by the rules tests, but the functions themselves (and the live FIRST-API collision check)
+are not run by any test. Nothing was run against the real Firestore project.
+
 ## Commands to run locally
 
 ```bash
@@ -2367,6 +2816,70 @@ npm run test:rules   # needs Java + firebase-tools; 114 rules tests incl. the P1
 # - Pit Scout / Judge Awards / Media each show one 'Coming soon' card.
 # - Open the dashboard with throttled network: every card is a skeleton the
 #   same size as its content (no layout shift).
+
+# P14 (rules changed — deploy them first; no env changes, no new indexes).
+# As an admin, open Changelog: five starter entries appear as dashed 'Draft'
+# cards (once — reload and delete one, they don't come back). Publish a couple
+# with the eye button; Pin one; Edit one (change rows, move up/down, a link
+# like [docs](https://example.com), try http:// and javascript: and confirm the
+# editor refuses to save them); Delete one — the confirmation names it. Sign in
+# as a plain member in another browser: only published entries show, no admin
+# buttons, no drafts; the Changelog nav item shows a dot until the page is
+# opened, then it clears; publish another entry as the admin and confirm the dot
+# comes back on the member. Try the type chips (counts), search ('docs' finds
+# link text), Expand all / Collapse all; the newest two start open. Throttle the
+# network: skeleton cards of a steady size, no jump. Admin Panel > Audit Log
+# shows Create/Edit/Delete Changelog Entry. Credits: as admin, the starter list
+# shows with a note; add a section, rename it, add credits (name, description
+# with a link, https link, https image URL — try http:// and confirm it's
+# refused), drag sections and credits by the grip, use the up/down buttons, delete
+# one (named confirmation), collapse a section. Reload: your version is saved.
+# As a member: the same page, read-only. Footer links (Credits, Changelog) show
+# on every page, including the landing page.
+firebase deploy --only firestore:rules   # changelog + credits rules
+npm run test:rules   # firestore.rules.test.ts: 148 tests incl. 34 for P14 (api-routes.emulator.test.ts has 11 pre-existing failures, unrelated)
+
+# FIX2 (rules changed — deploy them first; no env changes, no new indexes).
+# As the owner (an email in OWNER_EMAILS, verified), the only member of the team:
+# Team Management -> your own row now has an enabled Edit button and the Owner
+# badge next to your name. Change your primary role and secondary roles and Save;
+# the Admin switch is shown ON with a lock icon, disabled, and hovering it says
+# 'Owner access can't be removed.' Admin Panel > Audit Log shows 'Edit Member
+# Roles' for it. With a second account on the team: edit its roles, grant it
+# admin, then revoke it. Sign in as that admin: your own row and other members are
+# editable, the owner's row has a DISABLED Edit button whose tooltip reads 'Only the
+# owner can edit this member.' Sign in as a plain member: every row has a disabled
+# Edit button ('Only admins can edit roles.'). Unverified owner email: sign up with
+# the OWNER_EMAILS address and don't click the link -> the banner reads 'Verify your
+# email to activate owner access.' with Resend email; click the link in the email,
+# then 'I've verified — refresh' -> the Owner badge and owner controls appear without
+# signing out.
+firebase deploy --only firestore:rules   # the new users/{uid} update rule + isOwner()/canManageMembers()
+npm run test:rules   # needs Java + firebase-tools; now 187 tests across both files, all passing
+
+# P15 (rules changed — deploy them FIRST; no env changes, no new indexes).
+# IMPORTANT order: deploy the rules, then open the app once as an ADMIN. That stamps the
+# existing match library (origin 'api', published true) — until then scouts' practice match
+# lists are empty, because members now only read published matches. Check: Admin Panel >
+# Match Library > Imported: matches show an 'API' badge; a scout's Practice Scouting > pick a
+# difficulty still lists the matches.
+# Manual events: Admin Panel > Match Library > Manual events > Add manual event (name, season,
+# optional code/date/source link; leave the code blank to get MAN-…). Add match: fill the
+# form; paste a YouTube link in any form (youtu.be/…?si=…&t=90 pre-fills 1:30 as the start);
+# play the preview and use Set start here / Set end here. A penalty larger than its score, a
+# repeated team, or a non-YouTube link is refused. Edit the event to set a Default video, then
+# Fast entry: type teams/scores, Tab through, Enter — the number bumps and the link is kept.
+# Bulk import: pick or create the event once, set defaults, Download template, or paste rows
+# copied from Google Sheets/Excel (with or without the header); the preview lists errors per
+# row and which rows would update existing matches; Import -> matches show 'Needs review' and
+# scouts can't see them; Publish all. Select several: Set video link, Unpublish, Delete.
+# Edit a match that practice sessions already used -> the dialog says how many and offers the
+# Rescore tab. Then as a scout: Practice Scouting lists the manual matches (small 'Manual'
+# tag), they work in solo, live and the lobby, and Analytics' Practice event filter lists the
+# manual event. Importing/refreshing an API event never touches a manual match (the message
+# says how many were left alone).
+firebase deploy --only firestore:rules   # libraryMatches + libraryEvents rules
+npm run test:rules   # needs Java + firebase-tools; 219 tests across both files, all passing
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ManualLibraryPanel, OriginBadge } from "@/components/admin/library/manual-library-panel";
 import { useAuth } from "@/lib/auth";
 import { useTeamDoc, setUsePlaceholderVideo } from "@/lib/team";
 import { getEnabledSeasons, DEFAULT_SEASON_ID } from "@/lib/seasons";
@@ -25,7 +27,10 @@ import {
 
 const SEASONS = getEnabledSeasons();
 
-export function MatchLibraryPanel() {
+type LibraryView = "api" | "manual";
+
+export function MatchLibraryPanel({ onOpenRescore }: { onOpenRescore: () => void }) {
+  const [view, setView] = useState<LibraryView>("api");
   const { profile } = useAuth();
   const teamId = profile?.teamId ?? null;
   const { team } = useTeamDoc(teamId);
@@ -38,7 +43,7 @@ export function MatchLibraryPanel() {
   const [csvMessage, setCsvMessage] = useState<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
-  const { matches, loaded } = useLibraryMatches(viewingEventCode);
+  const { matches, loaded } = useLibraryMatches(viewingEventCode, { includeUnpublished: true });
   const missingVideoCount = matches.filter((m) => !m.video).length;
 
   const handleImport = async (code: string) => {
@@ -50,7 +55,10 @@ export function MatchLibraryPanel() {
     try {
       const result = await importLibraryEvent(seasonId, trimmed);
       setViewingEventCode(trimmed);
-      setImportMessage(`${result.eventName}: imported ${result.imported} match${result.imported === 1 ? "" : "es"}, skipped ${result.skipped} without posted scores.`);
+      setImportMessage(
+        `${result.eventName}: imported ${result.imported} match${result.imported === 1 ? "" : "es"}, skipped ${result.skipped} without posted scores.` +
+          (result.skippedManual.length > 0 ? ` Left ${result.skippedManual.length} manual match${result.skippedManual.length === 1 ? "" : "es"} untouched (${result.skippedManual.join(", ")}).` : "")
+      );
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Couldn't import that event.");
     } finally {
@@ -72,7 +80,7 @@ export function MatchLibraryPanel() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold">Match Library</h2>
-          <p className="text-xs text-[var(--muted-foreground)]">Import real events for practice scouting (P4+). No videos are added here automatically.</p>
+          <p className="text-xs text-[var(--muted-foreground)]">Import real events for practice scouting, or enter matches by hand for events whose scores aren&apos;t in the FIRST API. No videos are added automatically.</p>
         </div>
         <div className="flex items-center gap-2.5">
           <span className="text-xs text-[var(--muted-foreground)]">Use placeholder video for testing</span>
@@ -84,90 +92,103 @@ export function MatchLibraryPanel() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <div>
-          <Label htmlFor="library-season">Season</Label>
-          <Select value={seasonId} onValueChange={setSeasonId}>
-            <SelectTrigger id="library-season" className="w-40">
-              <SelectValue>{SEASONS.find((s) => s.id === seasonId)?.name}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {SEASONS.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex-1 min-w-[160px]">
-          <Label htmlFor="library-event-code">Event code</Label>
-          <Input
-            id="library-event-code"
-            value={eventCodeInput}
-            onChange={(e) => setEventCodeInput(e.target.value.toUpperCase())}
-            placeholder="USWABON1"
-          />
-        </div>
-        <Button className="gap-2" disabled={importing || !eventCodeInput.trim()} onClick={() => handleImport(eventCodeInput)}>
-          <Download className="h-4 w-4" /> {importing ? "Importing…" : "Import event"}
-        </Button>
-        {viewingEventCode && (
-          <Button variant="glass" className="gap-2" disabled={importing} onClick={() => handleImport(viewingEventCode)}>
-            <RefreshCw className={importing ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> Refresh scores
-          </Button>
-        )}
-      </div>
+      <Tabs value={view} onValueChange={(v) => setView(v as LibraryView)}>
+        <TabsList>
+          <TabsTrigger value="api">Imported (FIRST API)</TabsTrigger>
+          <TabsTrigger value="manual">Manual events</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      {importError && <p className="text-sm text-red-400">{importError}</p>}
-      {importMessage && <p className="text-sm text-emerald-400">{importMessage}</p>}
-
-      <div className="flex flex-wrap items-center gap-3 border-t border-[var(--glass-border)] pt-4">
-        <input
-          ref={csvInputRef}
-          type="file"
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleCsvFile(e.target.files[0])}
-        />
-        <Button variant="glass" size="sm" className="gap-2" onClick={() => csvInputRef.current?.click()}>
-          <Upload className="h-3.5 w-3.5" /> Bulk import video CSV
-        </Button>
-        <span className="text-xs text-[var(--muted-foreground)]">Columns: matchKey, url, startSec, endSec</span>
-        {csvMessage && <span className="text-xs text-emerald-400">{csvMessage}</span>}
-      </div>
-
-      {viewingEventCode && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold">{viewingEventCode}</h3>
-            {missingVideoCount > 0 && <Badge variant="warning">{missingVideoCount} missing video</Badge>}
+      {view === "manual" ? (
+        <ManualLibraryPanel onOpenRescore={onOpenRescore} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <Label htmlFor="library-season">Season</Label>
+              <Select value={seasonId} onValueChange={setSeasonId}>
+                <SelectTrigger id="library-season" className="w-40">
+                  <SelectValue>{SEASONS.find((s) => s.id === seasonId)?.name}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {SEASONS.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex-1 min-w-[160px]">
+              <Label htmlFor="library-event-code">Event code</Label>
+              <Input
+                id="library-event-code"
+                value={eventCodeInput}
+                onChange={(e) => setEventCodeInput(e.target.value.toUpperCase())}
+                placeholder="USWABON1"
+              />
+            </div>
+            <Button className="gap-2" disabled={importing || !eventCodeInput.trim()} onClick={() => handleImport(eventCodeInput)}>
+              <Download className="h-4 w-4" /> {importing ? "Importing…" : "Import event"}
+            </Button>
+            {viewingEventCode && (
+              <Button variant="glass" className="gap-2" disabled={importing} onClick={() => handleImport(viewingEventCode)}>
+                <RefreshCw className={importing ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> Refresh scores
+              </Button>
+            )}
           </div>
-          {!loaded ? (
-            <div className="glass-card h-24 animate-pulse" />
-          ) : matches.length === 0 ? (
-            <p className="text-sm text-[var(--muted-foreground)]">No matches imported for this event yet.</p>
-          ) : (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Match</TH>
-                  <TH>Red</TH>
-                  <TH>Blue</TH>
-                  <TH>Video</TH>
-                  <TH>Start</TH>
-                  <TH>End</TH>
-                  <TH>&nbsp;</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {matches.map((m) => (
-                  <LibraryMatchRow key={m.id} match={m} />
-                ))}
-              </TBody>
-            </Table>
+
+          {importError && <p className="text-sm text-red-400">{importError}</p>}
+          {importMessage && <p className="text-sm text-emerald-400">{importMessage}</p>}
+
+          <div className="flex flex-wrap items-center gap-3 border-t border-[var(--glass-border)] pt-4">
+            <input
+              ref={csvInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && handleCsvFile(e.target.files[0])}
+            />
+            <Button variant="glass" size="sm" className="gap-2" onClick={() => csvInputRef.current?.click()}>
+              <Upload className="h-3.5 w-3.5" /> Bulk import video CSV
+            </Button>
+            <span className="text-xs text-[var(--muted-foreground)]">Columns: matchKey, url, startSec, endSec</span>
+            {csvMessage && <span className="text-xs text-emerald-400">{csvMessage}</span>}
+          </div>
+
+          {viewingEventCode && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">{viewingEventCode}</h3>
+                {missingVideoCount > 0 && <Badge variant="warning">{missingVideoCount} missing video</Badge>}
+              </div>
+              {!loaded ? (
+                <div className="glass-card h-24 animate-pulse" />
+              ) : matches.length === 0 ? (
+                <p className="text-sm text-[var(--muted-foreground)]">No matches imported for this event yet.</p>
+              ) : (
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Match</TH>
+                      <TH>Red</TH>
+                      <TH>Blue</TH>
+                      <TH>Video</TH>
+                      <TH>Start</TH>
+                      <TH>End</TH>
+                      <TH>&nbsp;</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {matches.map((m) => (
+                      <LibraryMatchRow key={m.id} match={m} />
+                    ))}
+                  </TBody>
+                </Table>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </GlassPanel>
   );
@@ -199,8 +220,11 @@ function LibraryMatchRow({ match }: { match: LibraryMatch }) {
   return (
     <TR>
       <TD className="font-medium">
-        {MATCH_TYPE_PREFIX[match.matchType]}
-        {match.matchNumber}
+        <span className="flex items-center gap-2">
+          {MATCH_TYPE_PREFIX[match.matchType]}
+          {match.matchNumber}
+          <OriginBadge origin={match.origin === "manual" ? "manual" : "api"} />
+        </span>
       </TD>
       <TD>
         <div className="flex items-center gap-1.5 text-red-300">

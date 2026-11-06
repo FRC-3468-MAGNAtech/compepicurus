@@ -28,12 +28,15 @@ export async function POST(request: Request) {
   const emailVerified = decoded.email_verified === true;
   const uid = decoded.uid;
 
-  if (!emailVerified) {
-    return NextResponse.json({ ok: true, changed: false });
-  }
-
   const wantsOwner = isOwnerEmail(email);
   const wantsAdmin = wantsOwner || isPreconfiguredAdminEmail(email);
+
+  if (!emailVerified) {
+    // Nothing is granted, but say so (FIX2): the owner would otherwise just see
+    // controls silently missing. `ownerPendingVerification` is only ever about
+    // the caller's own token email, and nothing but this hint differs for them.
+    return NextResponse.json({ ok: true, changed: false, ownerPendingVerification: wantsOwner });
+  }
 
   const userRef = db.collection("users").doc(uid);
   const userSnap = await userRef.get();

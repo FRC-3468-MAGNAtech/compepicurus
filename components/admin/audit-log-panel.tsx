@@ -21,6 +21,11 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   "export-backup": "Export Backup",
   "edit-member-roles": "Edit Member Roles",
   "edit-pick-list": "Edit Pick List",
+  "create-changelog-entry": "Create Changelog Entry",
+  "edit-changelog-entry": "Edit Changelog Entry",
+  "delete-changelog-entry": "Delete Changelog Entry",
+  "edit-credits": "Edit Credits",
+  "edit-match-library": "Edit Match Library",
 };
 
 function toMillis(value: unknown): number {

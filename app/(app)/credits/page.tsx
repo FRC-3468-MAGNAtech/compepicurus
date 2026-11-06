@@ -1,62 +1,59 @@
-import { Bot, Heart, Trophy } from "lucide-react";
-import { GlassPanel } from "@/components/ui/glass-panel";
-import { Avatar } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
+"use client";
 
-const teamCredits = [
-  { name: "Priya Nandakumar", role: "Lead Scout & Product Direction" },
-  { name: "Marcus Webb", role: "Software Lead" },
-  { name: "Ana Torres", role: "Scouting Lead" },
-  { name: "Devon Ellis", role: "Drive Coach" },
-  { name: "Kai Fujimoto", role: "CAD & Design" },
-  { name: "Lena Brandt", role: "Mentor" },
-];
+import { useMemo, useState } from "react";
+import { Info } from "lucide-react";
+import { CreditsBoard } from "@/components/credits/credits-board";
+import { Shimmer } from "@/components/ui/shimmer";
+import { useAuth } from "@/lib/auth";
+import type { CreditsOp } from "@/lib/credits/ops";
+import { useCredits } from "@/lib/credits/store";
+import { usePermissions } from "@/lib/permissions";
 
 export default function CreditsPage() {
+  const { user, profile } = useAuth();
+  const { isAdmin } = usePermissions();
+  const { sections, isDefault, loaded, edit } = useCredits(profile?.teamId ?? null);
+  const [error, setError] = useState<string | null>(null);
+  const actor = useMemo(() => (user && profile ? { uid: user.uid, name: profile.name } : null), [user, profile]);
+
+  const onOp = async (op: CreditsOp) => {
+    setError(null);
+    const ok = await edit(actor, op);
+    if (!ok) setError("Couldn't save that change. You may be offline, or no longer allowed to edit.");
+  };
+
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
-      <div className="text-center">
-        <Trophy className="mx-auto h-9 w-9" style={{ color: "var(--color-secondary)" }} />
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight">Credits</h1>
-        <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-          CompEpicurus is built and maintained by FTC Team 3468 &mdash; MAGNAtech.
-        </p>
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Credits</h1>
+        <p className="text-sm text-[var(--muted-foreground)]">The people, tools, and data behind CompEpicurus.</p>
       </div>
 
-      <GlassPanel strong className="flex items-center gap-4">
-        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
-          <Bot className="h-6 w-6" />
-        </span>
-        <div>
-          <div className="font-semibold">Claude (Anthropic)</div>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            AI collaborator on this build &mdash; scaffolded the app, design system, and every page in this shell
-            alongside the team.
-          </p>
-        </div>
-      </GlassPanel>
+      {isAdmin && loaded && isDefault && (
+        <p className="flex items-start gap-2 self-start rounded-2xl border border-[var(--glass-border)] bg-white/5 px-4 py-2.5 text-xs text-[var(--muted-foreground)]">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>This is the starter list. Replace the team placeholders and edit anything — your changes are saved as the team&apos;s credits.</span>
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-red-300">
+          {error}
+        </p>
+      )}
 
-      <GlassPanel>
-        <div className="mb-4 flex items-center gap-2">
-          <Heart className="h-4 w-4" style={{ color: "var(--color-primary)" }} />
-          <h2 className="text-base font-semibold">Team MAGNAtech</h2>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {teamCredits.map((c) => (
-            <div key={c.name} className="flex items-center gap-3">
-              <Avatar name={c.name} size="sm" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{c.name}</div>
-                <div className="truncate text-xs text-[var(--muted-foreground)]">{c.role}</div>
-              </div>
+      {loaded ? (
+        <CreditsBoard sections={sections} admin={isAdmin} onOp={(op) => void onOp(op)} />
+      ) : (
+        <div className="flex flex-col gap-5" aria-busy="true" aria-label="Loading credits">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="glass-card flex h-[112px] flex-col gap-3 p-5">
+              <Shimmer className="h-5 w-1/4" />
+              <Shimmer className="h-4 w-2/3" />
+              <Shimmer className="h-4 w-1/2" />
             </div>
           ))}
         </div>
-      </GlassPanel>
-
-      <div className="flex justify-center">
-        <Badge variant="glass">Made with bounce &amp; glass &mdash; FTC 3468</Badge>
-      </div>
+      )}
     </div>
   );
 }

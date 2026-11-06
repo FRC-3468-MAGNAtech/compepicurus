@@ -106,7 +106,7 @@ export default function AdminPanelPage() {
         </TabsList>
       </Tabs>
 
-      {tab === "match-library" && <MatchLibraryPanel />}
+      {tab === "match-library" && <MatchLibraryPanel onOpenRescore={() => setTab("rescore")} />}
       {tab === "sessions" && <SessionsPanel />}
       {tab === "rescore" && <RescorePanel />}
       {tab === "audit-log" && <AuditLogPanel />}

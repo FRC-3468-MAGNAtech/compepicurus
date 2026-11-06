@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { deleteApp, initializeApp, type FirebaseApp } from "firebase/app";
-import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, type Auth } from "firebase/auth";
+import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword, type Auth } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore as getClientFirestore } from "firebase/firestore";
 
 // Unverified in this environment — no Java / firebase-tools available here
@@ -14,7 +14,13 @@ import { connectFirestoreEmulator, getFirestore as getClientFirestore } from "fi
 // never receive owner/admin, a verified owner email gets claims, and the
 // public config route reports the right flag.
 
-const PROJECT_ID = "compepicurus-api-test";
+// `firebase emulators:exec` runs the Auth emulator under the project in .firebaserc and
+// exports it as GCLOUD_PROJECT; the emulator mints ID tokens with *that* audience no matter
+// what projectId the client app claims, and the Admin SDK rejects a token whose audience
+// differs from its own project. So the whole test must use the emulator's project id (the
+// original hardcoded "compepicurus-api-test" made every verifyIdToken call fail with
+// `incorrect "aud"` — FIX2).
+const PROJECT_ID = process.env.GCLOUD_PROJECT || "compepicurus-api-test";
 
 // The Admin SDK only needs credentials that *parse* to construct a client when
 // FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST redirect every call
@@ -173,14 +179,44 @@ describe("POST /api/auth/sync-roles", () => {
     const body = await res.json();
     expect(body.changed).toBe(false);
     expect(body.attached ?? false).toBe(false);
+    // FIX2: nothing is granted, but the owner is told why instead of controls silently missing.
+    expect(body.ownerPendingVerification).toBe(true);
 
     const adminAuth = getAdminAuth()!;
     const record = await adminAuth.getUserByEmail("owner@example.com");
     expect(record.customClaims?.owner).toBeFalsy();
   });
 
+  it("only flags ownerPendingVerification for an owner email — not for anyone else who is unverified", async () => {
+    const idToken = await createTestUser("someone-else@example.com", { verified: false });
+    const body = await (await syncRoles(postJson({}, idToken))).json();
+    expect(body.ownerPendingVerification).toBe(false);
+  });
+
+  it("stops flagging ownerPendingVerification once the owner's email is verified, and applies owner access", async () => {
+    const idToken = await createTestUser("owner@example.com", { verified: false });
+    await createTeam(postJson({ teamNumber: 3468, name: "Owner" }, idToken));
+    expect((await (await syncRoles(postJson({}, idToken))).json()).ownerPendingVerification).toBe(true);
+
+    const adminAuth = getAdminAuth()!;
+    const record = await adminAuth.getUserByEmail("owner@example.com");
+    await adminAuth.updateUser(record.uid, { emailVerified: true });
+    // The client's cached token still says unverified until it's refreshed (lib/auth.tsx's recheckOwnerAccess does this).
+    await signInWithEmailAndPassword(clientAuth, "owner@example.com", "password123");
+    const freshToken = await clientAuth.currentUser!.getIdToken(true);
+    const body = await (await syncRoles(postJson({}, freshToken))).json();
+    expect(body.ownerPendingVerification).toBeFalsy();
+    expect(body.changed).toBe(true);
+    const userDoc = await getAdminFirestore()!.collection("users").doc(record.uid).get();
+    expect(userDoc.data()).toMatchObject({ isOwner: true, isAdmin: true });
+  });
+
   it("grants owner + admin, and sets custom claims, for a verified OWNER_EMAILS match", async () => {
+    // The sole-member owner (FIX2): they created the team (so they have a profile, with isOwner
+    // false at first), and the sync after sign-in is what makes them the owner. A verified owner
+    // with *no* profile and no single team to attach to is deliberately left alone (next test).
     const idToken = await createTestUser("owner@example.com", { verified: true });
+    await createTeam(postJson({ teamNumber: 3468, name: "Owner" }, idToken));
     await syncRoles(postJson({}, idToken));
 
     const adminAuth = getAdminAuth()!;

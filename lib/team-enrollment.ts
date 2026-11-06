@@ -47,12 +47,12 @@ export async function setTeamCreationEnabled(enabled: boolean): Promise<void> {
 }
 
 /** Called right after every sign-in — see app/api/auth/sync-roles/route.ts and lib/auth.tsx. */
-export async function syncRoles(): Promise<{ changed: boolean }> {
-  if (!auth.currentUser) return { changed: false };
+export async function syncRoles(): Promise<{ changed: boolean; ownerPendingVerification: boolean }> {
+  if (!auth.currentUser) return { changed: false, ownerPendingVerification: false };
   try {
     const result = await authedPost("/api/auth/sync-roles", {});
-    return { changed: Boolean(result.changed) };
+    return { changed: Boolean(result.changed), ownerPendingVerification: Boolean(result.ownerPendingVerification) };
   } catch {
-    return { changed: false };
+    return { changed: false, ownerPendingVerification: false };
   }
 }

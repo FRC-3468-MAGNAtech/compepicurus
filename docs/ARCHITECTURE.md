@@ -89,8 +89,8 @@ only ever touched by the Admin SDK from `app/api/public/config`,
 | `teamId` | `string` | References a `teams/{teamId}` doc |
 | `primaryRole` | `RoleId` | One of `lib/roles.ts`'s `ROLES`; shown as a colored pill. Admin-editable in Team Management's editor (FIX1); `firestore.rules` requires a real role id |
 | `secondaryRoles` | `RoleId[]` | Shown as neutral pills. Stored normalized since FIX1: primary removed, canonical `ROLES` order, at most 9 |
-| `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management. Changed only by another admin (FIX1: never by the admin themself — the last-admin safeguard — and never on an owner) |
-| `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own (see P1b-3) |
+| `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management. Changed by an admin or the owner (FIX2: never by the admin themself — the last-admin safeguard — and never on an owner's row; an owner's flag is pinned on). See `canEditMember` in `lib/member-access.ts` |
+| `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own. FIX2: an owner can edit their *own* roles (never this flag or their admin flag) — see "Owner role editing (FIX2)" |
 | `themeId` | `string` | Applied once the profile first loads (see `app/(app)/layout.tsx`) |
 | `createdAt` | `Timestamp` | |
 
@@ -145,6 +145,51 @@ Id format: `${eventCode}_${matchType prefix}${matchNumber}` (e.g.
 | `scoresUpdatedAt` | `string` (ISO) | Updated every time scores are (re-)imported |
 
 Imported (and refreshed) via `lib/match-library.ts`'s `importLibraryEvent(seasonId, eventCode)` — idempotent by construction (deterministic doc id), and importing/refreshing never touches `video`/`importedAt` on an existing doc (see P3-3).
+
+### `libraryEvents/{eventCode}` (P15)
+
+One doc per library event — every API event that has been imported (`origin: 'api'`,
+written by `importLibraryEvent`, or stamped by the one-time backfill) and every
+hand-made one (`origin: 'manual'`). The doc id **is** the event code. Readable by
+any signed-in user; admin-only writes. `origin` is fixed at creation (rules), so
+a manual event's code can never be taken over by an API import, or the reverse.
+Only a manual event can be deleted.
+
+| Field | Type | Notes |
+|---|---|---|
+| `eventCode` | `string` | = the doc id. Manual codes are `MAN-` + a slug, or the admin's own: 3-24 chars of `A-Z 0-9 -`, no underscore (the match id is `${eventCode}_…`) |
+| `eventName` | `string` | 1-120 chars; copied onto each match's own `eventName` |
+| `seasonId` | `string` | A `lib/seasons.ts` id |
+| `origin` | `'api' \| 'manual'` | |
+| `date` | `string \| null` | `YYYY-MM-DD`, optional |
+| `sourceUrl` | `string \| null` | `https://` link to where the scores came from, optional |
+| `defaultVideoUrl` | `string \| null` | One long stream reused for every match of the event; a match with no link of its own uses it |
+| `createdBy` | `string` | uid |
+| `createdAt`, `updatedAt` | `string` (ISO) | |
+
+### `libraryMatches` additions (P15)
+
+`libraryMatches` also holds **hand-entered ("manual") matches** now — same
+collection, same id format (`${eventCode}_${P|Q|F}${number}`), same shape, so
+every practice flow, difficulty tier, lobby, accuracy screen, and Analytics
+practice filter reads them without knowing the difference. New fields:
+
+| Field | Type | Notes |
+|---|---|---|
+| `origin` | `'api' \| 'manual'` | Absent on a pre-P15 doc = `'api'` (`originOf()`). **Never changes** on an existing doc (rules), so an API import/refresh can't overwrite a manual match and a manual write can't overwrite an API match |
+| `published` | `boolean` | Members read only `published == true`; admins read all. Manual matches entered one at a time start `true`; CSV/paste imports start `false` |
+| `needsReview` | `boolean` (manual) | True for bulk-imported matches until an admin publishes them (the "Needs review" badge) |
+| `createdBy` | `string` (manual) | uid of the admin who first entered it |
+| `updatedAt` | `string` (ISO, manual) | |
+| `notes` | `string` (manual) | ≤ 500 chars |
+
+A manual match's `video` is `{ youtubeUrl, startSec, endSec } | null` like any
+other; `youtubeUrl` is always stored in the canonical `https://www.youtube.com/watch?v=ID`
+form whatever link the admin pasted. Difficulty is recomputed from the typed scores
+with the shared `getDifficulty` every time the doc is built. Rules for a manual match
+(`validManualMatch`): it may only sit under a **manual** `libraryEvents` doc, its id must
+be the one its own fields give, scores are whole numbers 0-9999, each alliance's
+penalty points ≤ its score, and `difficulty` is a real tier. Only manual matches can be deleted.
 
 ### `practiceSessions/{sessionId}` (P3; fields filled in and consumed starting P4; live-mode fields added P7)
 
@@ -390,6 +435,60 @@ role). Never deleted — "Reset list" empties `picked`.
 | `updatedByName` | `string` — their name at the time (denormalized for "Last edited by X") |
 | `updatedAt` | `Timestamp` |
 
+### `changelog/{id}` (P14)
+
+Admin-written release notes. Members read **published** entries only; admins of
+the team read and write everything, drafts included. Auto-id, except the starter
+drafts, whose ids are `starter-{teamId}-{key}` so seeding is idempotent.
+
+| Field | Type |
+|---|---|
+| `teamId` | `string` |
+| `version` | `string` — "v1.4.0" or any label; 1-40 chars |
+| `title` | `string` — 1-120 chars |
+| `date` | `string` — `YYYY-MM-DD` (a plain day, not a timestamp, so it never shifts with a timezone) |
+| `summary` | `string` — up to 1000 chars; may be empty. Safe minimal markup (see "Changelog & Credits (P14)") |
+| `changes` | `{ type: "new" \| "improved" \| "fixed" \| "removed", text: string }[]` — 1-40 rows; `text` up to 400 chars, same markup |
+| `status` | `"draft" \| "published"` |
+| `pinned` | `boolean` — pinned entries sort above newer ones |
+| `createdBy` | `string` — uid; never changes |
+| `createdAt`, `updatedAt` | `Timestamp` |
+| `publishedAt` | `Timestamp \| null` — when it first went live; `null` while a draft. Kept through edits, so fixing a typo doesn't re-light the unread dot; unpublishing clears it |
+
+Rules can't loop over `changes`, so its elements aren't type-checked there —
+only that it is a list of 1-40. The editor validates them, and `entryFromData()`
+drops any malformed row on read.
+
+### `credits/{teamId}` (P14)
+
+The single Credits page for a team: ordered `sections`, each with ordered
+`entries`. The doc id **is** the team id. Readable by the whole team (a team that
+has never saved credits reads as "missing", which the page shows as the built-in
+defaults); writable only by admins, only as themselves, and only through the
+transaction in `lib/credits/store.ts`. Never deleted.
+
+| Field | Type |
+|---|---|
+| `teamId` | `string` (= the doc id) |
+| `sections` | `{ id, title, order, entries[] }[]` — at most 20 |
+| `sections[].entries` | `{ id, name, description, link, imageUrl }[]` — at most 60 per section. `description` supports the safe markup; `link` and `imageUrl` are `https://` URLs or `null` |
+| `updatedBy`, `updatedByName` | `string` — the last editor |
+| `updatedAt` | `Timestamp` |
+
+Rules check the shape of the doc (a list of at most 20) but not the contents of
+`sections`; the editors enforce https-only links and `sanitizeSections()`
+discards a malformed row, or a non-https link/image, on read.
+
+### Fields added to existing docs (P14)
+
+- `users/{uid}.lastSeenChangelogAt` (`Timestamp`, optional) — written by the user
+  themself when they open the Changelog; drives the unread dot. The existing
+  self-update rule already allows it (it can't be used to change a role).
+- `teams/{teamId}.changelogSeeded` (`boolean`, optional) — set in the same
+  transaction that creates the starter changelog drafts, so they're created once
+  and never come back after an admin deletes them. Written by an admin under the
+  existing team-update rule.
+
 ## Shared modules
 
 - `lib/firebase/client.ts` — initializes the Firebase app once, exports
@@ -436,10 +535,12 @@ role). Never deleted — "Reset list" empties `picked`.
   batch; replaces the old `setMemberPrimaryRole`/`setMemberSecondaryRoles`/
   `setMemberAdmin`). Backs both Team Management (editable) and People
   (read-only). `TeamMember` now carries `isOwner` too (P1b).
-- `lib/member-access.ts` (FIX1, pure, tested) — `getMemberEditState(actor,
-  member, adminCount)` (the UI mirror of `firestore.rules`: non-admins edit
-  nothing, owners are locked, no self-demotion, no demoting the sole admin),
-  `diffMemberAccess`, `normalizeSecondaryRoles`.
+- `lib/member-access.ts` (FIX1, reworked FIX2; pure, tested) — `canEditMember(actor,
+  target)` (the single "may this actor edit this member?" check, the TypeScript
+  twin of the `users/{uid}` update rule), `getMemberEditState(actor, member,
+  adminCount)` (Edit button state + the admin switch's block: `owner`, `self`,
+  `last-admin`; the last-admin block only ever affects the switch), `diffMemberAccess`,
+  `normalizeSecondaryRoles`. The actor is `{ uid, isAdmin, isOwner }`.
 - `lib/roles.ts` — the 9-role config (`ROLES`, `RoleId`, `getRole`,
   `DEFAULT_ROLE_ID`), each with a fixed Tailwind color token.
 - `lib/permissions.ts` — `usePermissions()` → `{ isAdmin, isOwner,
@@ -645,6 +746,33 @@ while `firestore.rules` and `usePermissions()` continue to key off the
 admins promoted through Team Management, since they never get a custom
 claim at all. `sync-roles` keeps both in sync for owner/`ADMIN_EMAILS`
 grants specifically.
+
+### Owner role editing (FIX2)
+
+FIX1 and P1b locked an owner's row for *everyone*, the owner included, so a sole
+owner couldn't edit their own roles. FIX2's matrix (`canEditMember`, mirrored by the
+`users/{uid}` update rule):
+
+| Actor | Edits roles of | Changes the admin flag of |
+|---|---|---|
+| Owner | their own row + every non-owner member | any non-owner member; never their own |
+| Admin (not owner) | any non-owner member, themself included | any non-owner member; never their own |
+| Everyone else | nobody | nobody |
+
+An owner's row is editable only by that owner (a second owner included); nobody writes
+`isOwner` from a client or moves a member off the team (`teamId` is immutable); an
+owner's `isAdmin` must stay `true`. **Rules:** `isOwner()` = the `owner` custom claim
+*or* the caller's own doc `isOwner == true`, and `canManageMembers()` = `isAdmin() ||
+isOwner()`, so a missing or stale token can't lock the owner out. **UI:**
+`components/team/member-row.tsx` always shows an Edit button — disabled, with a
+`HoverTip` reason, when the viewer can't edit that row; the editor
+(`member-editor-dialog.tsx`) shows an owner's Admin switch locked on with a lock icon
+and the tooltip "Owner access can't be removed.". **Unverified owner email:**
+`POST /api/auth/sync-roles` returns `ownerPendingVerification` (the email matches
+`OWNER_EMAILS` but isn't verified; nothing is granted); `useAuth()` exposes it plus
+`recheckOwnerAccess()`, and `components/layout/verify-email-banner.tsx` says "Verify your
+email to activate owner access." with Resend and "I've verified — refresh". Role/admin
+changes keep writing their `edit-member-roles` audit entry in the same batch.
 
 ### Accuracy engine, difficulty, seasons & the match library (P3)
 
@@ -1451,6 +1579,154 @@ fills it); `useEventMatches` / `useEventRankingsStatus` / `useEventTeams` return
 `error`; `useAllLibraryMatches(enabled)`; `ReliabilityPill` extracted to
 `components/analytics/reliability-pill.tsx`; the Match Scout Form page reads
 `?event=` and `?load=next`.
+
+### Changelog & Credits (P14)
+
+Two admin-editable pages that replace the placeholder ones: `/changelog` and
+`/credits`, plus a small footer (Credits and Changelog links) on every page.
+Data model: "`changelog/{id}`" and "`credits/{teamId}`" above.
+
+**Safe text — `lib/rich-text.ts`.** Admin-written text may use `**bold**`,
+`*italic*` (or `_italic_`), and `[label](https://link)`. `parseRichText()` turns
+it into a four-node whitelist tree (text / bold / italic / link) and
+`components/ui/rich-text.tsx` renders that as **React elements**. No HTML string
+is ever produced and `dangerouslySetInnerHTML` is not used, so `<script>` and
+`<img onerror=…>` are just escaped characters — there is nothing to sanitize
+after the fact. A link becomes a link only if `isSafeHttpsUrl()` accepts it
+(canonical `https://`, a host, no credentials, no whitespace or control
+characters, at most 2048 chars); `javascript:`, `data:`, `http:`, and `//host`
+stay visible, inert text. Links open in a new tab with `rel="noopener noreferrer"`.
+The editors also reject (rather than silently save) a `[label](url)` whose URL
+isn't https, via `findUnsafeLinks()`. The same `isSafeHttpsUrl()` validates the
+credits entry link and image URLs.
+
+**Changelog — `lib/changelog/`.** `index.ts` is pure and tested: ordering
+(pinned, then newest date, then publish time, then version), filter + search
+(search ignores markup, so "docs" finds `[the docs](…)`), grouping into New /
+Improved / Fixed / Removed, per-type counts, "latest two expanded", the unread
+rule `hasUnread()`, draft validation, and `entryFromData()` (defensive read).
+`seed.ts` has the five starter entries. `store.ts` has the Firestore side:
+`useChangelog(teamId, isAdmin)` (admins listen to everything; **everyone else's
+query includes `status == "published"`**, because rules aren't filters and an
+unfiltered list is rejected, not trimmed), `saveEntry` / `patchEntry` /
+`deleteEntry` (each a transaction that writes its `auditLog` entry in the same
+transaction), `seedChangelogIfNeeded`, `useChangelogUnread`, and
+`markChangelogSeen`.
+
+- **Unread dot.** `components/layout/sidebar.tsx` shows a dot on the Changelog
+  item when any published entry's `publishedAt` is later than the user's
+  `lastSeenChangelogAt` (never opened = everything published is unread). The page
+  stamps `lastSeenChangelogAt` when opened and again if something is published
+  while it is open. Hidden while you're on the page.
+- **Starter drafts.** The first time an admin opens the page, one transaction
+  creates the five starter entries **as drafts** and sets `teams.changelogSeeded`.
+  Nothing is published for anyone.
+- **Page.** Glass timeline; type filter chips (counts), search, Expand all /
+  Collapse all; the newest two entries start open (while filtering, every match
+  opens). The filter bar and skeleton cards are the same size as the real content,
+  so nothing shifts while loading. Admins also get New entry and per-entry Pin,
+  Publish/Unpublish, Edit, and Delete (a confirmation that names the entry);
+  drafts are dashed and labeled "Draft · only admins can see this".
+- **Editor** (`components/changelog/entry-editor.tsx`) — a glass dialog: version,
+  date, title, summary, change rows (type + text, add / remove / move up / move
+  down), Published and Pinned switches, inline validation, live preview of markup.
+
+**Credits — `lib/credits/`.** `ops.ts` is pure and tested: `CreditsOp` (add /
+edit / delete / move a section; add / edit / delete / move an entry) and
+`applyCreditsOp()`, which never throws — an op that refers to something another
+admin already deleted simply changes nothing. `store.ts`'s `editCredits()` runs
+in a **transaction**: read the latest stored sections (or the defaults, if none
+are saved), apply the op to *those*, write them back with an `edit-credits`
+audit entry. As with the pick list, that makes two admins editing at once
+compose rather than overwrite. `seed.ts`'s `DEFAULT_CREDITS` (Built with AI,
+Team, Built with, Data) is what the page shows until the first edit, which saves
+it; its ids are fixed so an edit made on the defaults replays on the stored copy.
+The board (`components/credits/credits-board.tsx`) uses `@dnd-kit` for dragging
+sections and entries (grip handle, touch long-press, keyboard) and has up / down
+buttons for each; sections collapse; the add/edit/delete dialogs are in
+`credit-dialogs.tsx`.
+
+**Rules.** `changelog/{id}`: members read published only; admins read and write
+all; the doc shape is validated (`validChangelog()`: exact key set, limits,
+`publishedAt` set iff published); `teamId`, `createdBy`, `createdAt` never change;
+`publishedAt` can't move while an entry stays published. `credits/{teamId}`:
+members read; admins create/update their own team's doc as themselves; never
+deleted. `users/{uid}.lastSeenChangelogAt` needs no rule change. Covered by 34
+new emulator tests.
+
+**Audit log.** New actions `create-changelog-entry`, `edit-changelog-entry`,
+`delete-changelog-entry`, `edit-credits` (labels in the Admin Panel's Audit Log
+tab). Edits to the changelog log the full before/after content; credits edits
+log a compact description of the op (`describeOp()`).
+
+### Manual library matches (P15)
+
+Admin Panel > Match Library now has two tabs: **Imported (FIRST API)** (the P3
+import, unchanged apart from the rules below) and **Manual events**. Data model:
+"`libraryEvents/{eventCode}`" and "`libraryMatches` additions" above.
+
+**Pure modules — `lib/library/` (all unit tested).**
+- `youtube-url.ts` — `parseYouTubeUrl(input)` → `{ videoId, startSec }` for `youtu.be/ID`,
+  `watch?v=`, `/embed/`, `/shorts/`, `/live/`, `/v/`, mobile/music/nocookie hosts, with or
+  without a scheme, with extra parameters (`si`, `feature`, `list`…) or a bare id; a
+  `t=`/`start=`/`#t=` value becomes the start time. Any other host is rejected. `canonicalYouTubeUrl`.
+  `components/video/youtube.ts`'s `extractYouTubeId` delegates to it, so any link the helper
+  accepts is one the player can play.
+- `time.ts` — `parseTimeInput` (`90`, `1:30`, `1:02:30`, also `90s` / `1m30s` / `1h2m3s`),
+  `formatTime`, `validateVideoWindow` (start before end).
+- `ids.ts` — `libraryMatchId` (moved here from `match-library.ts`, which re-exports it),
+  `parseMatchType`, `originOf`, **`decideMatchWrite(existing, writer)`** (create / update /
+  skip-other-origin — the one rule both write paths share), `generateManualEventCode`
+  (`MAN-` + slug, made unique), `validateEventCode`, `normalizeEventCode`.
+- `manual-match.ts` — `RawMatch` (a row as strings), **`validateRawMatch`** (the single
+  validator for the form, fast entry, and bulk import: type, number, four distinct 1-5 digit
+  teams, whole-number scores and penalty points with penalty ≤ its own alliance's score, video
+  link + times + start < end, notes), `buildManualMatchFields` / `buildManualMatchDoc` (the exact
+  doc that gets written, difficulty recomputed), `matchWarnings` (non-blocking: replaces an
+  existing match, a score far from the event's others via Tukey fences, a clip over 10 minutes).
+- `bulk.ts` — `validateBulk` / `summarizeBulk` for CSV or tab-separated paste, with or without a
+  header, columns matched by name in any order; event defaults (YouTube link, match type, blank
+  penalty = 0); an optional `eventCode` column must match the target event; per-row errors
+  with line numbers; create-vs-update against the event's existing matches; a later duplicate row
+  wins; `bulkTemplateCsv`. `parseCsv` gained an optional delimiter for this.
+- `event-form.ts` — `validateEventForm`.
+
+**Firestore side — `lib/library/store.ts`.** `useLibraryEvents`, `createManualEvent` (checks the
+code against every event, any matches under it, and — for an admin-typed code — the FIRST API),
+`updateManualEvent` (a rename is copied onto the event's matches), `deleteManualEvent` (refuses
+while it has matches), **`upsertManualMatches`** (reads the event's matches, runs
+`decideMatchWrite` per match so an API match is skipped and reported, writes in batches of 400
+with one audit entry), `setMatchesPublished` (also clears Needs review), `setMatchesVideoLink`,
+`deleteManualMatches`, `countCompletedSessionsForMatch` (the "N sessions used this match"
+warning), and `backfillLibraryMetadata` + `useLibraryBackfill`. Every admin write logs one
+`edit-match-library` audit entry in the same batch.
+
+**API import — `lib/match-library.ts`.** `importLibraryEvent` now refuses an event code that
+belongs to a manual event, writes the event's `libraryEvents` doc (`origin: 'api'`), runs
+`decideMatchWrite` per match (a manual match is **skipped and reported** in
+`ImportSummary.skippedManual`, shown in the Match Library and Rescore panels), and stamps
+`origin: 'api'` and (for new matches) `published: true`. Its subscription hooks now take
+`published == true` into the query: `useLibraryMatches(eventCode, { includeUnpublished })`,
+`useLibraryMatchesBySeason` (always published only — a scout's match list, admins included),
+`useAllLibraryMatches(enabled, { includeUnpublished })` (the Rescore tab passes true).
+
+**UI — `components/admin/library/`.** `manual-library-panel.tsx` (event picker, details, table
+with search / status filter / select-many / Origin + status badges, bulk Set video link,
+Publish, Unpublish, Delete with confirmation, "Needs review → Publish all"),
+`manual-event-dialog.tsx`, `manual-match-dialog.tsx` (full form, live validation, sanity
+warnings, the rescore warning), `fast-entry.tsx` (one editable row; Tab/Enter; "Save and add
+next" bumps the number and keeps type + link), `bulk-import-dialog.tsx` (pick/create the event once →
+defaults → CSV upload / paste → validation preview → import), `video-marker.tsx` (the P3
+`VideoPlayer` with **Set start here** / **Set end here** / **Go to start**). Practice Match
+Select and the Results screen show a small **Manual** tag; `components/admin/library-backfill.tsx`
+runs the one-time backfill for admins.
+
+**Rules (`firestore.rules`).** `libraryMatches`: read `published == true` or admin (read
+**strictly** — see P15-3); create/update admin-only with `origin` immutable and API writes
+barred from a manual event's code; manual matches validated (`validManualMatch`); delete only
+manual. `libraryEvents`: read any signed-in; admin create (origin fixed, manual codes
+`^[A-Z0-9-]{3,24}$`), update with `origin`/`createdBy` fixed, delete only manual. Covered by
+emulator tests, including one that feeds the rules the documents the real builders produce.
 
 ## Conventions
 
