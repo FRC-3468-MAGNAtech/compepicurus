@@ -22,7 +22,7 @@
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
 
-  /* User-adjustable glass intensity (see lib/glass-shade.tsx): a multiplier
+  /* User-adjustable glass intensity (see lib/glass-layer.tsx): a multiplier
      on --overlay-bg's base alpha only, 1 = default. Persisted and applied as
      an inline custom property on <html>. Scoped specifically to shapes that
      float *on top of other shapes* (dropdowns, popovers, tooltips) — that's

@@ -13,6 +13,8 @@ import { useAuth } from "@/lib/auth";
 import { calculateScore, valuesToScoutEntryFields, BIOBUZZ_FORM_SCHEMA } from "@/lib/scout-form/schema";
 import { deletePracticeSession, updatePracticeSession, type PracticeSession } from "@/lib/practice-sessions";
 import { getEntriesForSession, saveEntry } from "@/lib/scout-entries";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 /**
  * P7: the stream embed only ever shows the live broadcast — it doesn't
@@ -38,7 +40,7 @@ export function LiveSessionScreen({
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [validationError, setValidationError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
   const scoutFormRef = useRef<ScoutFormHandle>(null);
 
   const stream = parseStreamUrl(streamUrl);
@@ -114,7 +116,7 @@ export function LiveSessionScreen({
       }
       onCompleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't submit that entry.");
+      setError(describeFirestoreError("Couldn't submit that entry.", err));
     } finally {
       setSubmitting(false);
     }
@@ -163,7 +165,7 @@ export function LiveSessionScreen({
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <LoadError failure={error} />}
 
       <div className="glass-strong sticky bottom-3 z-20 mt-2 flex items-center justify-between gap-3 rounded-full px-5 py-3 shadow-2xl">
         <Button variant="ghost" className="gap-1.5 text-red-300" onClick={() => setCancelConfirmOpen(true)}>

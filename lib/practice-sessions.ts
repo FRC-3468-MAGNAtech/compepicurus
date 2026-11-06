@@ -1,20 +1,18 @@
 "use client";
 
 import {
-  collection,
   deleteDoc,
   doc,
   getDoc,
   getDocs,
-  limit,
   onSnapshot,
-  query,
-  runTransaction,
   serverTimestamp,
   updateDoc,
-  where,
 } from "firebase/firestore";
 import { useEffect, useState } from "react";
+import { tryClaimDoc } from "@/lib/claim-doc";
+import { describeFirestoreError, reportFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
+import { completedAttemptQuery, ownPausedSessionQuery, teamLiveSessionsQuery, teamSessionsQuery, teamSoloSessionsQuery } from "@/lib/practice-queries";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { Difficulty } from "@/lib/difficulty";
 import type { MatchType } from "@/lib/ftc/types";
@@ -115,14 +113,7 @@ export async function claimUniqueDocId(
 ): Promise<string> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const candidate = `${prefix}${randomSuffix()}`;
-    const ref = doc(db, collectionName, candidate);
-    const claimed = await runTransaction(db, async (txn) => {
-      const snap = await txn.get(ref);
-      if (snap.exists()) return false;
-      txn.set(ref, initialData);
-      return true;
-    });
-    if (claimed) return candidate;
+    if (await tryClaimDoc(db, collectionName, candidate, initialData)) return candidate;
   }
   throw new Error(`Couldn't generate a unique id in ${collectionName} — try again.`);
 }
@@ -203,6 +194,8 @@ export function usePracticeSession(sessionId: string | null) {
 export function useTeamPracticeSessions(teamId: string | null) {
   const [sessions, setSessions] = useState<PracticeSession[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+  const [error, setError] = useState<FirestoreFailure | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!teamId || !isFirebaseConfigured()) {
@@ -211,23 +204,25 @@ export function useTeamPracticeSessions(teamId: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId), where("kind", "==", "solo"));
+    setError(null);
     const unsubscribe = onSnapshot(
-      q,
+      teamSoloSessionsQuery(db, teamId),
       (snap) => {
         setSessions(snap.docs.map((d) => toSession(d.id, d.data())));
         setLoaded(true);
       },
       (err) => {
-        console.error("team practiceSessions subscription failed:", err);
+        const path = `practiceSessions where teamId == ${teamId}, kind == "solo"`;
+        reportFirestoreError("team practiceSessions subscription failed", err, path);
+        setError(describeFirestoreError("Couldn't load practice sessions", err, path));
         setSessions([]);
         setLoaded(true);
       }
     );
     return unsubscribe;
-  }, [teamId]);
+  }, [teamId, attempt]);
 
-  return { sessions, loaded };
+  return { sessions, loaded, error, retry: () => setAttempt((n) => n + 1) };
 }
 
 /**
@@ -247,15 +242,14 @@ export function useTeamLiveSessions(teamId: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId), where("kind", "==", "live"));
     const unsubscribe = onSnapshot(
-      q,
+      teamLiveSessionsQuery(db, teamId),
       (snap) => {
         setSessions(snap.docs.map((d) => toSession(d.id, d.data())));
         setLoaded(true);
       },
       (err) => {
-        console.error("team live practiceSessions subscription failed:", err);
+        reportFirestoreError("team live practiceSessions subscription failed", err, `practiceSessions where teamId == ${teamId}, kind == "live"`);
         setSessions([]);
         setLoaded(true);
       }
@@ -284,15 +278,14 @@ export function useAllTeamPracticeSessions(teamId: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collection(db, COLLECTION), where("teamId", "==", teamId));
     const unsubscribe = onSnapshot(
-      q,
+      teamSessionsQuery(db, teamId),
       (snap) => {
         setSessions(snap.docs.map((d) => toSession(d.id, d.data())));
         setLoaded(true);
       },
       (err) => {
-        console.error("all team practiceSessions subscription failed:", err);
+        reportFirestoreError("all team practiceSessions subscription failed", err, `practiceSessions where teamId == ${teamId}`);
         setSessions([]);
         setLoaded(true);
       }
@@ -315,21 +308,15 @@ export function useOwnPausedSession(teamId: string | null, uid: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(
-      collection(db, COLLECTION),
-      where("teamId", "==", teamId),
-      where("uid", "==", uid),
-      where("status", "==", "paused")
-    );
     const unsubscribe = onSnapshot(
-      q,
+      ownPausedSessionQuery(db, teamId, uid),
       (snap) => {
         const first = snap.docs[0];
         setSession(first ? toSession(first.id, first.data()) : null);
         setLoaded(true);
       },
       (err) => {
-        console.error("own paused practiceSessions subscription failed:", err);
+        reportFirestoreError("own paused practiceSessions subscription failed", err, `practiceSessions where teamId == ${teamId}, uid == ${uid}, status == "paused"`);
         setSession(null);
         setLoaded(true);
       }
@@ -347,16 +334,7 @@ export async function hasCompletedAttemptBefore(
   libraryMatchId: string,
   alliance: AllianceColor
 ): Promise<boolean> {
-  const q = query(
-    collection(db, COLLECTION),
-    where("teamId", "==", teamId),
-    where("uid", "==", uid),
-    where("libraryMatchId", "==", libraryMatchId),
-    where("alliance", "==", alliance),
-    where("status", "==", "completed"),
-    limit(1)
-  );
-  const snap = await getDocs(q);
+  const snap = await getDocs(completedAttemptQuery(db, teamId, uid, libraryMatchId, alliance));
   return !snap.empty;
 }
 

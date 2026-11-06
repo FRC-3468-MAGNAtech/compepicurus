@@ -12,12 +12,15 @@ import { SiteFooter } from "@/components/layout/site-footer";
 import { LiveMatchPill } from "@/components/layout/live-match-pill";
 import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
 import { useAuth } from "@/lib/auth";
+import { useConnectionNotice } from "@/lib/use-connection-state";
 
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile, loading } = useAuth();
+  // One subscription for the offline / unsynced badge, shared by the sidebar and the mobile top bar.
+  const connection = useConnectionNotice();
   // Pages wired to real data (Firestore/FIRST API) as of P1-P3 — everything
   // else here still runs on lib/mock-data.ts. Update this list as more
   // pages stop being placeholders.
@@ -63,9 +66,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   return (
     <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
-      <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+      <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} connection={connection} />
       <div className="min-w-0 flex-1">
-        <Topbar onMenuClick={() => setMobileNavOpen(true)} />
+        <Topbar onMenuClick={() => setMobileNavOpen(true)} connection={connection} />
         <main className="min-w-0">
           <VerifyEmailBanner className="mb-4" />
           {isPlaceholderPage && <PlaceholderBanner className="mb-4" />}

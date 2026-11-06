@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScoutForm, type ScoutFormHandle } from "@/components/scout/scout-form";
 import { VideoPlayer } from "@/components/video/video-player";
+import { clipDurationOrFallback } from "@/lib/library/video-window";
 import { MOCK_VIDEO_DURATION_SEC } from "@/components/video/mock-video-player";
 import { ChipSummary } from "@/components/practice/chip-summary";
 import { useAuth } from "@/lib/auth";
@@ -18,6 +19,8 @@ import { claimSessionId, updatePracticeSession } from "@/lib/practice-sessions";
 import { getEntriesForSession, saveEntry } from "@/lib/scout-entries";
 import { markPlayerSubmitted, useLobbySessions, type LobbyDoc, type LobbyPlayer } from "@/lib/lobby";
 import { LOBBY_CONFIG } from "@/lib/lobby/config";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 async function triggerResolve(lobbyId: string): Promise<void> {
   try {
@@ -55,7 +58,7 @@ export function LobbySessionScreen({
   const [now, setNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
   const [ending, setEnding] = useState(false);
   const resolveTriggered = useRef(false);
   const scoutFormRef = useRef<ScoutFormHandle>(null);
@@ -115,7 +118,7 @@ export function LobbySessionScreen({
         });
         setSessionId(id);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Couldn't start your session.");
+        setError(describeFirestoreError("Couldn't start your session.", err));
       } finally {
         setClaiming(false);
       }
@@ -127,7 +130,8 @@ export function LobbySessionScreen({
   const submittedCount = scoutingPlayers.filter((p) => p.submitted).length;
   const allSubmitted = scoutingPlayers.length > 0 && submittedCount === scoutingPlayers.length;
 
-  const videoDurationSec = chosenMatch?.video ? chosenMatch.video.endSec - chosenMatch.video.startSec : MOCK_VIDEO_DURATION_SEC;
+  // The results deadline needs the clip's length. With an end time that's end - start; with none the clip runs to the end of the video, whose length this client may not know yet, so a bound is used (FIX3).
+  const videoDurationSec = chosenMatch?.video ? clipDurationOrFallback(chosenMatch.video, null) : MOCK_VIDEO_DURATION_SEC;
   const deadlineMs = lobby.startsAt
     ? new Date(lobby.startsAt).getTime() + videoDurationSec * 1000 + LOBBY_CONFIG.RESULTS_GRACE_AFTER_VIDEO_END_MS
     : null;
@@ -182,7 +186,7 @@ export function LobbySessionScreen({
       await markPlayerSubmitted(lobby.id, user.uid);
       void triggerResolve(lobby.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't submit that entry.");
+      setError(describeFirestoreError("Couldn't submit that entry.", err));
     } finally {
       setSubmitting(false);
     }
@@ -269,7 +273,7 @@ export function LobbySessionScreen({
             </div>
           )}
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <LoadError failure={error} />}
 
           {!alreadySubmitted && (
             <div className="glass-strong sticky bottom-3 z-20 mt-2 flex items-center justify-end gap-3 rounded-full px-5 py-3 shadow-2xl">

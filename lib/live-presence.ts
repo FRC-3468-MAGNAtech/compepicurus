@@ -1,8 +1,10 @@
 "use client";
 
-import { collection, collectionGroup, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { deleteDoc, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
+import { reportFirestoreError } from "@/lib/firestore-errors";
+import { liveMatchScoutsQuery, teamLiveScoutsQuery } from "@/lib/practice-queries";
 import { libraryMatchId } from "@/lib/match-library";
 import { LIVE_CONFIG } from "@/lib/live/config";
 import type { MatchType } from "@/lib/ftc/types";
@@ -48,32 +50,37 @@ export function isPresenceActive(lastSeen: unknown): boolean {
   return Date.now() - ms < LIVE_CONFIG.PRESENCE_STALE_MS;
 }
 
-/** Realtime, one match's presence list (any team — the caller filters by `teamId` itself, since a real match's presence is shared viewing). */
-export function useLiveMatchScouts(matchKey: string | null) {
+/**
+ * Realtime, one match's presence list **for this team**. The query carries the
+ * `teamId` constraint itself (FIX3): firestore.rules only lets a member read
+ * their own team's presence docs, and rules aren't filters — the previous
+ * unfiltered read of the whole subcollection was denied outright.
+ */
+export function useLiveMatchScouts(matchKey: string | null, teamId: string | null) {
   const [scouts, setScouts] = useState<LiveMatchScoutPresence[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
 
   useEffect(() => {
-    if (!matchKey || !isFirebaseConfigured()) {
+    if (!matchKey || !teamId || !isFirebaseConfigured()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setScouts([]);
       setLoaded(true);
       return;
     }
     const unsubscribe = onSnapshot(
-      collection(db, COLLECTION, matchKey, "scouts"),
+      liveMatchScoutsQuery(db, matchKey, teamId),
       (snap) => {
         setScouts(snap.docs.map((d) => d.data() as LiveMatchScoutPresence));
         setLoaded(true);
       },
       (err) => {
-        console.error("liveMatches scouts subscription failed:", err);
+        reportFirestoreError("liveMatches scouts subscription failed", err, `liveMatches/${matchKey}/scouts where teamId == ${teamId}`);
         setScouts([]);
         setLoaded(true);
       }
     );
     return unsubscribe;
-  }, [matchKey]);
+  }, [matchKey, teamId]);
 
   return { scouts, loaded };
 }
@@ -90,9 +97,8 @@ export function useTeamActiveLiveScouts(teamId: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collectionGroup(db, "scouts"), where("teamId", "==", teamId));
     const unsubscribe = onSnapshot(
-      q,
+      teamLiveScoutsQuery(db, teamId),
       (snap) => {
         const all = snap.docs.map((d) => ({ ...(d.data() as LiveMatchScoutPresence), matchKey: d.ref.parent.parent!.id }));
         setScouts(all.filter((s) => isPresenceActive(s.lastSeen)));

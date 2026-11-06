@@ -554,8 +554,9 @@ discards a malformed row, or a non-https link/image, on read.
 - `lib/analytics/recompute.ts` — `recomputeForEvent(teamId, eventCode,
   season)`: recomputes accuracy + auto flags for every entry in an event
   against live official match data.
-- `components/layout/connection-status.tsx` — the nav Online/Offline/"N
-  pending sync" indicator, scoped to the active events' entries (summed).
+- `lib/use-connection-state.ts` + `lib/connection-notice.ts` (FIX3, replacing the nav "Online" label
+  in `components/layout/connection-status.tsx`) — the offline / "N pending sync" signal, scoped to the
+  active events' entries (summed), now an amber badge on the sidebar's droplet button, shown only when needed.
 - `components/team/member-row.tsx` — member display for Team Management:
   coloured primary pill, uncoloured secondary pills, and (admins) an Edit
   button / "Locked" marker driven by `getMemberEditState`.
@@ -1727,6 +1728,48 @@ barred from a manual event's code; manual matches validated (`validManualMatch`)
 manual. `libraryEvents`: read any signed-in; admin create (origin fixed, manual codes
 `^[A-Z0-9-]{3,24}$`), update with `origin`/`createdBy` fixed, delete only manual. Covered by
 emulator tests, including one that feeds the rules the documents the real builders produce.
+
+### Practice queries, errors, optional video times, glass level (FIX3)
+
+**Practice queries — `lib/practice-queries.ts`.** Every Firestore query the Practice Scouting flows
+make is a builder here (`librarySeasonQuery`, `libraryEventQuery`, `libraryAllQuery`,
+`teamSoloSessionsQuery`, `teamLiveSessionsQuery`, `teamSessionsQuery`, `ownPausedSessionQuery`,
+`completedAttemptQuery`, `lobbySessionsQuery`, `liveMatchScoutsQuery`, `teamLiveScoutsQuery`,
+`lobbyPlayersQuery`, `myLobbyPlayersQuery`). The hooks use them and the rules regression suite
+(`firestore.rules.test.ts`, "FIX3: practice queries…", once per user type) runs the same builders, so a
+query can't drift from its rule. **Rules aren't filters:** every list must carry the constraint its
+rule needs (`published == true`, `teamId == …`, `uid == you`). `lib/claim-doc.ts` `tryClaimDoc` is the
+id-reservation transaction (Session IDs and lobby codes); it reads a doc that doesn't exist yet, so the
+`practiceSessions` and `lobbies` rules allow `get` on a missing doc (`resource == null ||
+sameTeam(...)`), and `list` stays team-scoped. Collection-group queries (`scouts`, `players`) are allowed
+by recursive-wildcard rules (`match /{path=**}/scouts/{uid}`). `firestore.indexes.json` declares the
+two collection-group single-field indexes as `fieldOverrides` (the CLI rejects them as composite indexes).
+
+**Friendly errors.** `lib/firestore-errors.ts` — `describeFirestoreError(context, err, path)` →
+`FirestoreFailure { context, code, message, path, at }`, `failureExplanation`, `failureDetails` (what
+"Copy details" copies), `reportFirestoreError` (logs `[firestore] … — code — path: message`).
+`components/practice/load-error.tsx` `<LoadError failure onRetry />` is the on-theme card (Retry, Copy
+details). `useLibraryMatchesBySeason`, `useTeamPracticeSessions`, and `useCredits` return `error` and
+`retry`; the practice flows' action errors use it too.
+
+**Optional video times — `lib/library/video-window.ts`.** `LibraryVideo.startSec`/`endSec` are optional
+(null = blank): blank start = from the beginning, blank end = until the video ends. Helpers:
+`windowStart`, `windowEnd`, `clipDurationSec(video, mediaDurationSec)` (end − start; or video duration −
+start when there is no end; null if unknown), `clipDurationOrFallback` (10-minute bound for the lobby
+deadline), `clipProgress` (the "Finished Early" input; null → the flag is skipped),
+`youTubeWindowVars`, `hasReachedEnd`. `VideoPlayerHandle.getDuration()` was added (the YouTube player
+reports the video's length once loaded; the mock player its 2:30). Validation only compares start < end
+when both are present. `lib/library/video-csv.ts` is the bulk video CSV parser (blank times allowed).
+
+**Glass level — `lib/glass-layer.tsx` / `lib/glass-layer-level.ts`.** `useGlassLayerLevel()` → `{ level,
+setLevel, reset }`, applied as the `--glass-shade` multiplier, remembered in localStorage
+(`compepicurus.glass-shade`, the pre-FIX3 key) and saved per user in `users/{uid}.glassLayerLevel`
+(0.3–2, debounced). `GlassLayerProvider` sits inside `AuthProvider`. `components/theme/glass-layer-slider.tsx`
+has `<GlassLayerSlider />` (the slider) and `<GlassLayerButton compact side connection />` (the circular
+droplet button + popover), used by the sidebar, the mobile top bar, and the home page header. The old
+sidebar "Online" label is gone: `lib/connection-notice.ts` (`connectionNotice(online, pending)`, pure) and
+`lib/use-connection-state.ts` (`useConnectionNotice()`, run once in the app shell) drive a small amber
+badge on the droplet that appears only when offline or submissions are unsynced; tapping shows the message.
 
 ## Conventions
 

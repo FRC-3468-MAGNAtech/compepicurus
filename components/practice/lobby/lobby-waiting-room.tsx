@@ -19,6 +19,8 @@ import { assignPairs } from "@/lib/lobby/pairing";
 import { mulberry32, randomSeed } from "@/lib/scheduler/rng";
 import { isPlayerActive, leaveLobbyPlayer, resetPlayerSubmitted, updateLobby, type LobbyDoc, type LobbyPlayer } from "@/lib/lobby";
 import { LOBBY_CONFIG } from "@/lib/lobby/config";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 function playable(match: LibraryMatch, usePlaceholder: boolean): boolean {
   return match.video !== null || usePlaceholder;
@@ -46,7 +48,7 @@ export function LobbyWaitingRoom({
   const [target, setTarget] = useState<Difficulty>("easy");
   const [autoPicked, setAutoPicked] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
   const [copied, setCopied] = useState(false);
 
   // Host's default: a random match from the whole library, any difficulty — picked once, the moment the library has loaded.
@@ -107,7 +109,7 @@ export function LobbyWaitingRoom({
         startsAt: new Date(Date.now() + LOBBY_CONFIG.COUNTDOWN_SEC * 1000).toISOString(),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start the round.");
+      setError(describeFirestoreError("Couldn't start the round.", err));
     } finally {
       setStarting(false);
     }
@@ -223,7 +225,7 @@ export function LobbyWaitingRoom({
         </div>
       </GlassPanel>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <LoadError failure={error} />}
 
       {isHost ? (
         <div className="flex flex-col gap-2">

@@ -20,7 +20,6 @@ import { DIFFICULTY_CLASSNAMES, DIFFICULTY_LABELS } from "@/lib/difficulty";
 import { formatTime } from "@/lib/library/time";
 import { parseYouTubeUrl } from "@/lib/library/youtube-url";
 import {
-  PLACEHOLDER_CLIP,
   deleteManualEvent,
   deleteManualMatches,
   setMatchesPublished,
@@ -46,6 +45,14 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
 ];
 
 /** The "Origin" column's badge — manual matches are visibly marked, imported ones too. */
+/** "1:10–3:40", "1:10–end", "start–3:40", or "whole video" — a blank time reads as the beginning / the video's end. */
+export function windowLabel(video: { startSec?: number | null; endSec?: number | null }): string {
+  const start = typeof video.startSec === "number" ? formatTime(video.startSec) : null;
+  const end = typeof video.endSec === "number" ? formatTime(video.endSec) : null;
+  if (start === null && end === null) return "whole video";
+  return `${start ?? "start"}–${end ?? "end"}`;
+}
+
 export function OriginBadge({ origin }: { origin: "api" | "manual" }) {
   return (
     <Badge variant={origin === "manual" ? "accent" : "outline"} className="text-[10px]">
@@ -165,9 +172,9 @@ export function ManualLibraryPanel({ onOpenRescore }: { onOpenRescore: () => voi
     if (!actor) return;
     setVideoDialogOpen(false);
     void run(async () => {
-      const { placeholders } = await setMatchesVideoLink(actor, selectedMatches, parsed.videoId);
+      await setMatchesVideoLink(actor, selectedMatches, parsed.videoId);
       setSelected(new Set());
-      return `Set the video link on ${selectedMatches.length} match${selectedMatches.length === 1 ? "" : "es"}.` + (placeholders > 0 ? ` ${placeholders} had no times yet, so they got ${formatTime(PLACEHOLDER_CLIP.startSec)}–${formatTime(PLACEHOLDER_CLIP.endSec)} — edit each to set the real start and end.` : "");
+      return `Set the video link on ${selectedMatches.length} match${selectedMatches.length === 1 ? "" : "es"}.`;
     });
   };
 
@@ -400,8 +407,8 @@ export function ManualLibraryPanel({ onOpenRescore }: { onOpenRescore: () => voi
                     })}
                     <TD>
                       {m.video ? (
-                        <span className="font-mono text-xs">
-                          {formatTime(m.video.startSec)}–{formatTime(m.video.endSec)}
+                        <span className="font-mono text-xs" title="Blank start = from the beginning; blank end = until the video ends">
+                          {windowLabel(m.video)}
                         </span>
                       ) : (
                         <span title="Missing video" className="inline-flex items-center gap-1 text-xs text-amber-300">
@@ -474,7 +481,7 @@ export function ManualLibraryPanel({ onOpenRescore }: { onOpenRescore: () => voi
         <DialogContent className="glass-overlay">
           <DialogTitle className="pr-8">Set the video link</DialogTitle>
           <DialogDescription>
-            For {selectedMatches.length} selected match{selectedMatches.length === 1 ? "" : "es"}. Each keeps its own start and end times; one with no times yet gets {formatTime(PLACEHOLDER_CLIP.startSec)}–{formatTime(PLACEHOLDER_CLIP.endSec)} until you set them.
+            For {selectedMatches.length} selected match{selectedMatches.length === 1 ? "" : "es"}. Each keeps its own start and end times; a match with none plays from the beginning to the end of the video.
           </DialogDescription>
           <form
             className="mt-4 flex flex-col gap-4"

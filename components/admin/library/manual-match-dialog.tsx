@@ -206,13 +206,13 @@ export function ManualMatchDialog({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="mm-start">Start time</Label>
-                <Input id="mm-start" value={raw.start} onChange={(e) => set("start", e.target.value)} placeholder="1:30" aria-invalid={!!errors.start} />
+                <Label htmlFor="mm-start">Start time (optional)</Label>
+                <Input id="mm-start" value={raw.start} onChange={(e) => set("start", e.target.value)} placeholder="blank = from the start" aria-invalid={!!errors.start} />
                 <FieldError>{errors.start}</FieldError>
               </div>
               <div>
-                <Label htmlFor="mm-end">End time</Label>
-                <Input id="mm-end" value={raw.end} onChange={(e) => set("end", e.target.value)} placeholder="4:00" aria-invalid={!!errors.end} />
+                <Label htmlFor="mm-end">End time (optional)</Label>
+                <Input id="mm-end" value={raw.end} onChange={(e) => set("end", e.target.value)} placeholder="blank = until the video ends" aria-invalid={!!errors.end} />
                 <FieldError>{errors.end}</FieldError>
               </div>
             </div>

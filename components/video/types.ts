@@ -5,4 +5,6 @@ export type VideoPlayerHandle = {
   pause: () => void;
   seek: (seconds: number) => void;
   getCurrentTime: () => number;
+  /** The whole video's length in seconds, or null while it isn't known yet (FIX3: a match with no end time ends with the video, so the flags and deadlines need it). */
+  getDuration: () => number | null;
 };

@@ -12,6 +12,9 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ManualLibraryPanel, OriginBadge } from "@/components/admin/library/manual-library-panel";
 import { useAuth } from "@/lib/auth";
+import { backfillLibraryMetadata } from "@/lib/library/store";
+import { formatTime, parseTimeInput } from "@/lib/library/time";
+import { canonicalYouTubeUrl, parseYouTubeUrl } from "@/lib/library/youtube-url";
 import { useTeamDoc, setUsePlaceholderVideo } from "@/lib/team";
 import { getEnabledSeasons, DEFAULT_SEASON_ID } from "@/lib/seasons";
 import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
@@ -31,8 +34,10 @@ type LibraryView = "api" | "manual";
 
 export function MatchLibraryPanel({ onOpenRescore }: { onOpenRescore: () => void }) {
   const [view, setView] = useState<LibraryView>("api");
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const teamId = profile?.teamId ?? null;
+  const [updatingLibrary, setUpdatingLibrary] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const { team } = useTeamDoc(teamId);
   const [seasonId, setSeasonId] = useState(DEFAULT_SEASON_ID);
   const [eventCodeInput, setEventCodeInput] = useState("");
@@ -66,6 +71,22 @@ export function MatchLibraryPanel({ onOpenRescore }: { onOpenRescore: () => void
     }
   };
 
+  // FIX3: stamps matches imported before P15 (no `origin`/`published`) so scouts can see them. Idempotent; also runs automatically for admins.
+  const handleUpdateLibrary = async () => {
+    if (!user) return;
+    setUpdatingLibrary(true);
+    setUpdateMessage(null);
+    try {
+      const result = await backfillLibraryMetadata({ uid: user.uid });
+      setUpdateMessage(result.matchesStamped === 0 && result.eventsCreated === 0 ? "Everything is already up to date." : `Updated ${result.matchesStamped} match${result.matchesStamped === 1 ? "" : "es"} and ${result.eventsCreated} event record${result.eventsCreated === 1 ? "" : "s"}.`);
+    } catch (err) {
+      console.error("library update failed:", err);
+      setUpdateMessage("Couldn't update the library. Check your connection and try again.");
+    } finally {
+      setUpdatingLibrary(false);
+    }
+  };
+
   const handleCsvFile = async (file: File) => {
     const text = await file.text();
     setCsvMessage(null);
@@ -82,7 +103,11 @@ export function MatchLibraryPanel({ onOpenRescore }: { onOpenRescore: () => void
           <h2 className="text-base font-semibold">Match Library</h2>
           <p className="text-xs text-[var(--muted-foreground)]">Import real events for practice scouting, or enter matches by hand for events whose scores aren&apos;t in the FIRST API. No videos are added automatically.</p>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Button variant="ghost" size="sm" className="gap-1.5" disabled={updatingLibrary} onClick={() => void handleUpdateLibrary()} title="Makes matches imported before the manual-match update visible to scouts. Safe to run again.">
+            <RefreshCw className={updatingLibrary ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} /> Update library
+          </Button>
+          {updateMessage && <span className="text-xs text-[var(--muted-foreground)]">{updateMessage}</span>}
           <span className="text-xs text-[var(--muted-foreground)]">Use placeholder video for testing</span>
           <Switch
             checked={team?.usePlaceholderVideo ?? false}
@@ -152,7 +177,7 @@ export function MatchLibraryPanel({ onOpenRescore }: { onOpenRescore: () => void
             <Button variant="glass" size="sm" className="gap-2" onClick={() => csvInputRef.current?.click()}>
               <Upload className="h-3.5 w-3.5" /> Bulk import video CSV
             </Button>
-            <span className="text-xs text-[var(--muted-foreground)]">Columns: matchKey, url, startSec, endSec</span>
+            <span className="text-xs text-[var(--muted-foreground)]">Columns: matchKey, url, startSec, endSec (the times are optional)</span>
             {csvMessage && <span className="text-xs text-emerald-400">{csvMessage}</span>}
           </div>
 
@@ -196,21 +221,37 @@ export function MatchLibraryPanel({ onOpenRescore }: { onOpenRescore: () => void
 
 function LibraryMatchRow({ match }: { match: LibraryMatch }) {
   const [url, setUrl] = useState(match.video?.youtubeUrl ?? "");
-  const [startSec, setStartSec] = useState(String(match.video?.startSec ?? ""));
-  const [endSec, setEndSec] = useState(String(match.video?.endSec ?? ""));
+  const [startSec, setStartSec] = useState(typeof match.video?.startSec === "number" ? formatTime(match.video.startSec) : "");
+  const [endSec, setEndSec] = useState(typeof match.video?.endSec === "number" ? formatTime(match.video.endSec) : "");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const dirty =
     url !== (match.video?.youtubeUrl ?? "") ||
-    startSec !== String(match.video?.startSec ?? "") ||
-    endSec !== String(match.video?.endSec ?? "");
+    startSec !== (typeof match.video?.startSec === "number" ? formatTime(match.video.startSec) : "") ||
+    endSec !== (typeof match.video?.endSec === "number" ? formatTime(match.video.endSec) : "");
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const start = Number(startSec);
-      const end = Number(endSec);
-      const video: LibraryVideo | null = url.trim() && Number.isFinite(start) && Number.isFinite(end) ? { youtubeUrl: url.trim(), startSec: start, endSec: end } : null;
+      // FIX3: start and end are optional — blank start = the beginning, blank end = the video's end. Only an unreadable time (or end <= start when both are given) blocks the save.
+      setSaveError(null);
+      const parsed = url.trim() ? parseYouTubeUrl(url) : null;
+      if (url.trim() && !parsed) {
+        setSaveError("That does not look like a YouTube link.");
+        return;
+      }
+      const start = startSec.trim() === "" ? null : parseTimeInput(startSec);
+      const end = endSec.trim() === "" ? null : parseTimeInput(endSec);
+      if ((startSec.trim() !== "" && start === null) || (endSec.trim() !== "" && end === null)) {
+        setSaveError("Use seconds (90), 1:30, or 1:02:30 — or leave a time blank.");
+        return;
+      }
+      if (start !== null && end !== null && end <= start) {
+        setSaveError("The end time must be after the start time.");
+        return;
+      }
+      const video: LibraryVideo | null = parsed ? { youtubeUrl: canonicalYouTubeUrl(parsed.videoId), startSec: start, endSec: end } : null;
       await setLibraryMatchVideo(match.id, video);
     } finally {
       setSaving(false);
@@ -242,10 +283,10 @@ function LibraryMatchRow({ match }: { match: LibraryMatch }) {
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://youtube.com/watch?v=..." className="h-8 text-xs" />
       </TD>
       <TD className="w-20">
-        <Input value={startSec} onChange={(e) => setStartSec(e.target.value)} placeholder="0" inputMode="numeric" className="h-8 text-xs" />
+        <Input value={startSec} onChange={(e) => setStartSec(e.target.value)} placeholder="start (optional)" aria-label="Start time (optional)" className="h-8 text-xs" aria-invalid={!!saveError} />
       </TD>
       <TD className="w-20">
-        <Input value={endSec} onChange={(e) => setEndSec(e.target.value)} placeholder="150" inputMode="numeric" className="h-8 text-xs" />
+        <Input value={endSec} onChange={(e) => setEndSec(e.target.value)} placeholder="end (optional)" aria-label="End time (optional)" className="h-8 text-xs" aria-invalid={!!saveError} />
       </TD>
       <TD>
         {!match.video && !dirty ? (
@@ -256,6 +297,11 @@ function LibraryMatchRow({ match }: { match: LibraryMatch }) {
           <Button size="sm" variant="glass" disabled={!dirty || saving} onClick={handleSave}>
             {saving ? "Saving…" : "Save"}
           </Button>
+        )}
+        {saveError && (
+          <p role="alert" className="mt-1 max-w-[12rem] text-[10px] text-red-300">
+            {saveError}
+          </p>
         )}
       </TD>
     </TR>

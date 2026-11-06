@@ -6,6 +6,22 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
+import { tryClaimDoc } from "@/lib/claim-doc";
+import {
+  completedAttemptQuery,
+  libraryAllQuery,
+  libraryEventQuery,
+  librarySeasonQuery,
+  liveMatchScoutsQuery,
+  lobbyPlayersQuery,
+  lobbySessionsQuery,
+  myLobbyPlayersQuery,
+  ownPausedSessionQuery,
+  teamLiveScoutsQuery,
+  teamLiveSessionsQuery,
+  teamSessionsQuery,
+  teamSoloSessionsQuery,
+} from "@/lib/practice-queries";
 import { summarizeBulk, validateBulk } from "@/lib/library/bulk";
 import { buildManualMatchDoc, emptyRawMatch, validateRawMatch } from "@/lib/library/manual-match";
 import { applyPickOp, sanitizePicks, type PickOp } from "@/lib/pick-list/ops";
@@ -2313,5 +2329,228 @@ describe("P15: the documents lib/library really builds are accepted by the rules
     await assertSucceeds(setDoc(doc(db, "libraryMatches", "USAPI001_Q1"), apiMatch(75), { merge: true })); // "refresh scores"
     // The same call against a manual match (as if an API event used a manual event's id) is refused.
     await assertFails(setDoc(doc(db, "libraryMatches", `${EVENT}_Q1`), { ...apiMatch(75), eventCode: EVENT, matchNumber: 1 }, { merge: true }));
+  });
+});
+
+// FIX3: the rules regression suite for Practice Scouting. It runs the app's ACTUAL queries
+// (lib/practice-queries.ts — the same builders the hooks use) and the real id-reservation
+// transaction (lib/claim-doc.ts) for each kind of user, so a rule/query mismatch — the
+// "Missing or insufficient permissions" on starting practice scouting — can't silently return.
+describe("FIX3: practice queries and writes, for every kind of user", () => {
+  const PLAIN_UID = "plain-member-1"; // not an admin, primary role media
+  const SEASON = "biobuzz";
+  const EVENT = "USWABON1";
+  const OWN_LOBBY = "LB-OWN001";
+  const OTHER_LOBBY = "LB-OTH001";
+  const MATCH_KEY = `${EVENT}_Q1`;
+
+  const lib = (n: number, over: Record<string, unknown> = {}) => ({
+    seasonId: SEASON,
+    eventCode: EVENT,
+    eventName: "Rookie Rumble",
+    matchType: "Qualification",
+    matchNumber: n,
+    alliances: { red: { teams: [1, 2], score: 60, penaltyPoints: 0, difficulty: "medium" }, blue: { teams: [3, 4], score: 30, penaltyPoints: 0, difficulty: "easy" } },
+    video: null,
+    origin: "api",
+    published: true,
+    importedAt: "2026-11-01T00:00:00.000Z",
+    scoresUpdatedAt: "2026-11-01T00:00:00.000Z",
+    ...over,
+  });
+  const session = (over: Record<string, unknown> = {}) => ({
+    teamId: TEAM_ID,
+    uid: SCOUT_UID,
+    kind: "solo",
+    status: "in-progress",
+    startedAt: "2026-11-05T00:00:00.000Z",
+    libraryMatchId: `${EVENT}_Q1`,
+    alliance: "red",
+    ...over,
+  });
+
+  const USERS = [
+    { label: "the owner", uid: OWNER_UID },
+    { label: "a non-admin Match Scout", uid: SCOUT_UID },
+    { label: "a plain member", uid: PLAIN_UID },
+  ];
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "users", PLAIN_UID), { name: "Plain Member", email: "plain@example.com", teamId: TEAM_ID, primaryRole: "media", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
+      // Library: two published matches, one unpublished manual draft.
+      await setDoc(doc(db, "libraryMatches", `${EVENT}_Q1`), lib(1));
+      await setDoc(doc(db, "libraryMatches", `${EVENT}_Q2`), lib(2));
+      await setDoc(doc(db, "libraryEvents", EVENT), { eventCode: EVENT, eventName: "Rookie Rumble", seasonId: SEASON, origin: "api", date: null, sourceUrl: null, defaultVideoUrl: null, createdBy: ADMIN_UID });
+      await setDoc(doc(db, "libraryEvents", "MAN-DRAFT"), { eventCode: "MAN-DRAFT", eventName: "Draft", seasonId: SEASON, origin: "manual", date: null, sourceUrl: null, defaultVideoUrl: null, createdBy: ADMIN_UID });
+      await setDoc(doc(db, "libraryMatches", "MAN-DRAFT_Q1"), lib(1, { eventCode: "MAN-DRAFT", eventName: "Draft", origin: "manual", published: false, needsReview: true, createdBy: ADMIN_UID, updatedAt: "2026-11-05T00:00:00.000Z", notes: "" }));
+      // Sessions by several users in several states (the Fresh / Opened / Scouted badges read all of them).
+      await setDoc(doc(db, "practiceSessions", "PS-OPEN01"), session());
+      await setDoc(doc(db, "practiceSessions", "PS-DONE01"), session({ uid: ADMIN_UID, status: "completed" }));
+      await setDoc(doc(db, "practiceSessions", "PS-PAUSE1"), session({ uid: PLAIN_UID, status: "paused" }));
+      await setDoc(doc(db, "practiceSessions", "PS-LIVE01"), session({ uid: PLAIN_UID, kind: "live", status: "completed" }));
+      await setDoc(doc(db, "practiceSessions", "PS-LOBBY1"), session({ uid: ADMIN_UID, kind: "lobby", lobbyId: OWN_LOBBY }));
+      // Live presence: our team's scout on a match.
+      await setDoc(doc(db, "liveMatches", MATCH_KEY, "scouts", ADMIN_UID), { uid: ADMIN_UID, teamId: TEAM_ID, name: "Admin Person", robot: 1, alliance: "red", sessionId: "PS-LIVE01", lastSeen: new Date() });
+      // Lobbies: ours (host admin, two players) and one belonging to another team.
+      await setDoc(doc(db, "lobbies", OWN_LOBBY), { teamId: TEAM_ID, hostUid: ADMIN_UID, hostName: "Admin Person", seasonId: SEASON, mode: "trial", status: "waiting", libraryMatchId: null, settings: { hostScouts: true, hostIsDisplayer: false }, pairing: null, startsAt: null, hostLastSeen: new Date(), createdAt: new Date(), resolvedAt: null });
+      await setDoc(doc(db, "lobbies", OWN_LOBBY, "players", ADMIN_UID), { uid: ADMIN_UID, teamId: TEAM_ID, name: "Admin Person", lastSeen: new Date(), submitted: false, joinedAt: new Date() });
+      await setDoc(doc(db, "lobbies", OWN_LOBBY, "players", SCOUT_UID), { uid: SCOUT_UID, teamId: TEAM_ID, name: "Scout Person", lastSeen: new Date(), submitted: false, joinedAt: new Date() });
+      await setDoc(doc(db, "lobbies", OTHER_LOBBY), { teamId: OTHER_TEAM_ID, hostUid: "someone-else", hostName: "X", seasonId: SEASON, mode: "trial", status: "waiting", libraryMatchId: null, settings: { hostScouts: true, hostIsDisplayer: false }, pairing: null, startsAt: null, hostLastSeen: new Date(), createdAt: new Date(), resolvedAt: null });
+      await setDoc(doc(db, "lobbies", OTHER_LOBBY, "players", "someone-else"), { uid: "someone-else", teamId: OTHER_TEAM_ID, name: "X", lastSeen: new Date(), submitted: false, joinedAt: new Date() });
+    });
+  });
+
+  describe.each(USERS)("$label", ({ uid }) => {
+    const dbFor = () => testEnv.authenticatedContext(uid).firestore();
+
+    it("loads the library: by season, by event, and everything — published matches only", async () => {
+      const bySeason = await assertSucceeds(getDocs(librarySeasonQuery(dbFor() as never, SEASON)));
+      expect(bySeason.docs.map((d) => d.id).sort()).toEqual([`${EVENT}_Q1`, `${EVENT}_Q2`]); // the unpublished draft never shows up
+      const byEvent = await assertSucceeds(getDocs(libraryEventQuery(dbFor() as never, EVENT, false)));
+      expect(byEvent.size).toBe(2);
+      const all = await assertSucceeds(getDocs(libraryAllQuery(dbFor() as never, false)));
+      expect(all.size).toBe(2);
+    });
+
+    it("loads library events and a single match by id", async () => {
+      await assertSucceeds(getDocs(collection(dbFor(), "libraryEvents")));
+      await assertSucceeds(getDoc(doc(dbFor(), "libraryMatches", `${EVENT}_Q1`)));
+    });
+
+    it("loads every session query behind Match Select, the Fresh/Opened/Scouted badges, and the Resume banner", async () => {
+      const db = dbFor() as never;
+      expect((await assertSucceeds(getDocs(teamSoloSessionsQuery(db, TEAM_ID)))).size).toBeGreaterThan(0); // other users' sessions included
+      await assertSucceeds(getDocs(teamLiveSessionsQuery(db, TEAM_ID)));
+      await assertSucceeds(getDocs(teamSessionsQuery(db, TEAM_ID)));
+      await assertSucceeds(getDocs(ownPausedSessionQuery(db, TEAM_ID, uid)));
+      await assertSucceeds(getDocs(completedAttemptQuery(db, TEAM_ID, uid, `${EVENT}_Q1`, "red")));
+      await assertSucceeds(getDocs(lobbySessionsQuery(db, TEAM_ID, OWN_LOBBY)));
+      await assertSucceeds(getDoc(doc(dbFor(), "practiceSessions", "PS-OPEN01"))); // the session screen's own subscription
+    });
+
+    it("reserves a Session ID: reads an id that doesn't exist yet, then creates it (what picking a match does)", async () => {
+      const db = dbFor() as never;
+      const created = await assertSucceeds(tryClaimDoc(db, "practiceSessions", "PS-NEW001", { teamId: TEAM_ID, uid, kind: "solo", status: "in-progress", startedAt: "2026-11-06T00:00:00.000Z", createdAt: new Date() }));
+      expect(created).toBe(true);
+      // A second attempt at the same id finds it taken (and the claimer may read their own session).
+      expect(await assertSucceeds(tryClaimDoc(db, "practiceSessions", "PS-NEW001", { teamId: TEAM_ID, uid, kind: "solo", status: "in-progress", startedAt: "x", createdAt: new Date() }))).toBe(false);
+    });
+
+    it("can't reserve a Session ID for someone else or another team", async () => {
+      const db = dbFor() as never;
+      await assertFails(tryClaimDoc(db, "practiceSessions", "PS-BAD001", { teamId: TEAM_ID, uid: "someone-else", kind: "solo", status: "in-progress", startedAt: "x", createdAt: new Date() }));
+      await assertFails(tryClaimDoc(db, "practiceSessions", "PS-BAD002", { teamId: OTHER_TEAM_ID, uid, kind: "solo", status: "in-progress", startedAt: "x", createdAt: new Date() }));
+    });
+
+    it("can't read an existing session that belongs to another team", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-OTHER1"), session({ teamId: OTHER_TEAM_ID, uid: "someone-else" }));
+      });
+      await assertFails(getDoc(doc(dbFor(), "practiceSessions", "PS-OTHER1")));
+      await assertFails(tryClaimDoc(dbFor() as never, "practiceSessions", "PS-OTHER1", { teamId: TEAM_ID, uid, kind: "solo", status: "in-progress", startedAt: "x", createdAt: new Date() }));
+    });
+
+    it("loads live presence: one match's scouts, and the team-wide list (collection group)", async () => {
+      const db = dbFor() as never;
+      const one = await assertSucceeds(getDocs(liveMatchScoutsQuery(db, MATCH_KEY, TEAM_ID)));
+      expect(one.size).toBe(1);
+      const team = await assertSucceeds(getDocs(teamLiveScoutsQuery(db, TEAM_ID)));
+      expect(team.size).toBe(1);
+    });
+
+    it("never sees another team's live presence", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "liveMatches", MATCH_KEY, "scouts", "someone-else"), { uid: "someone-else", teamId: OTHER_TEAM_ID, name: "X", robot: 9, alliance: "blue", sessionId: "PS-X", lastSeen: new Date() });
+      });
+      const db = dbFor() as never;
+      expect((await assertSucceeds(getDocs(liveMatchScoutsQuery(db, MATCH_KEY, TEAM_ID)))).docs.map((d) => d.id)).toEqual([ADMIN_UID]);
+      await assertFails(getDocs(liveMatchScoutsQuery(db, MATCH_KEY, OTHER_TEAM_ID)));
+      await assertFails(getDocs(teamLiveScoutsQuery(db, OTHER_TEAM_ID)));
+      await assertFails(getDocs(collection(dbFor(), "liveMatches", MATCH_KEY, "scouts"))); // unfiltered: rules aren't filters
+    });
+
+    it("starts watching a live match (writes, then removes, its own presence) but not someone else's", async () => {
+      const db = dbFor();
+      await assertSucceeds(setDoc(doc(db, "liveMatches", MATCH_KEY, "scouts", uid), { uid, teamId: TEAM_ID, name: "Me", robot: 2, alliance: "red", sessionId: "PS-OPEN01", lastSeen: new Date() }));
+      await assertSucceeds(deleteDoc(doc(db, "liveMatches", MATCH_KEY, "scouts", uid)));
+      await assertFails(setDoc(doc(db, "liveMatches", MATCH_KEY, "scouts", ADMIN_UID), { uid: ADMIN_UID, teamId: TEAM_ID, name: "Fake", robot: 2, alliance: "red", sessionId: "x", lastSeen: new Date() }));
+    });
+
+    it("creates a lobby (reserves the code, then reads it), joins one, and reads its roster and sessions", async () => {
+      const db = dbFor();
+      expect(await assertSucceeds(tryClaimDoc(db as never, "lobbies", "LB-NEW001", { teamId: TEAM_ID, hostUid: uid, hostName: "Me", seasonId: SEASON, mode: "trial", status: "waiting", libraryMatchId: null, settings: { hostScouts: true, hostIsDisplayer: false }, pairing: null, startsAt: null, hostLastSeen: new Date(), createdAt: new Date(), resolvedAt: null }))).toBe(true);
+      await assertSucceeds(getDoc(doc(db, "lobbies", OWN_LOBBY))); // "Join with code" looks the lobby up first
+      await assertSucceeds(setDoc(doc(db, "lobbies", OWN_LOBBY, "players", uid), { uid, teamId: TEAM_ID, name: "Me", lastSeen: new Date(), submitted: false, joinedAt: new Date() }, { merge: true }));
+      const roster = await assertSucceeds(getDocs(lobbyPlayersQuery(db as never, OWN_LOBBY, TEAM_ID)));
+      expect(roster.docs.map((d) => d.id).sort()).toEqual([...new Set([ADMIN_UID, SCOUT_UID, uid])].sort());
+    });
+
+    it("finds the lobby you're in (collection group by uid) — and only yours", async () => {
+      const mine = await assertSucceeds(getDocs(myLobbyPlayersQuery(dbFor() as never, uid)));
+      expect(mine.docs.every((d) => d.data().uid === uid)).toBe(true);
+      await assertFails(getDocs(myLobbyPlayersQuery(dbFor() as never, "someone-else"))); // not someone else's
+    });
+
+    it("can't see another team's lobby", async () => {
+      await assertFails(getDoc(doc(dbFor(), "lobbies", OTHER_LOBBY)));
+      await assertFails(getDocs(lobbyPlayersQuery(dbFor() as never, OTHER_LOBBY, OTHER_TEAM_ID)));
+      await assertFails(getDocs(collection(dbFor(), "lobbies", OWN_LOBBY, "players"))); // unfiltered: rules aren't filters
+    });
+
+    it("keeps session writes to the owner: updates and deletes only its own in-progress/paused session", async () => {
+      const db = dbFor();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "practiceSessions", "PS-MINE01"), session({ uid, status: "paused" }));
+      });
+      await assertSucceeds(updateDoc(doc(db, "practiceSessions", "PS-MINE01"), { status: "in-progress" }));
+      await assertSucceeds(deleteDoc(doc(db, "practiceSessions", "PS-MINE01")));
+      // Someone else's in-progress session (the scout's own PS-OPEN01 would be fine for the scout): only its owner or an admin may update it.
+      const theirs = doc(db, "practiceSessions", "PS-PAUSE1"); // the plain member's paused session
+      if (uid === PLAIN_UID) await assertSucceeds(updateDoc(theirs, { status: "in-progress" }));
+      else if (uid === SCOUT_UID) await assertFails(updateDoc(theirs, { status: "in-progress" }));
+      else await assertSucceeds(updateDoc(theirs, { status: "in-progress" })); // the owner is an admin
+    });
+
+    it("reads the team's roster and its own team doc (the practice pages' headers)", async () => {
+      await assertSucceeds(getDocs(query(collection(dbFor(), "users"), where("teamId", "==", TEAM_ID))));
+      await assertSucceeds(getDoc(doc(dbFor(), "teams", TEAM_ID)));
+    });
+  });
+
+  it("an admin (and only an admin) can also read unpublished matches, which never reach a scout's list", async () => {
+    const admin = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    expect((await assertSucceeds(getDocs(libraryEventQuery(admin as never, "MAN-DRAFT", true)))).size).toBe(1);
+    const owner = testEnv.authenticatedContext(OWNER_UID).firestore();
+    expect((await assertSucceeds(getDocs(libraryAllQuery(owner as never, true)))).size).toBe(3);
+    const scout = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertFails(getDocs(libraryEventQuery(scout as never, "MAN-DRAFT", true)));
+    await assertFails(getDocs(libraryAllQuery(scout as never, true)));
+    expect((await assertSucceeds(getDocs(libraryEventQuery(scout as never, "MAN-DRAFT", false)))).size).toBe(0);
+  });
+});
+
+describe("FIX3: users/{uid}.glassLayerLevel (the layered-glass slider, saved per user)", () => {
+  const asScout = () => testEnv.authenticatedContext(SCOUT_UID).firestore();
+  const asAdmin = () => testEnv.authenticatedContext(ADMIN_UID).firestore();
+
+  it("lets a member save their own level — the self-update rule already allows fields that aren't roles", async () => {
+    await assertSucceeds(updateDoc(doc(asScout(), "users", SCOUT_UID), { glassLayerLevel: 0.7 }));
+    await assertSucceeds(updateDoc(doc(asAdmin(), "users", ADMIN_UID), { glassLayerLevel: 1.5 }));
+  });
+
+  it("lets the owner save theirs too (an owner's row was once locked — FIX2)", async () => {
+    await assertSucceeds(updateDoc(doc(testEnv.authenticatedContext(OWNER_UID).firestore(), "users", OWNER_UID), { glassLayerLevel: 1.2 }));
+  });
+
+  it("doesn't let a non-admin set someone else's", async () => {
+    await assertFails(updateDoc(doc(asScout(), "users", ADMIN_UID), { glassLayerLevel: 0.5 }));
+    await assertFails(updateDoc(doc(asScout(), "users", OWNER_UID), { glassLayerLevel: 0.5 }));
+  });
+
+  it("can't be used to smuggle in a role change", async () => {
+    await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { glassLayerLevel: 0.7, isAdmin: true }));
+    await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { glassLayerLevel: 0.7, primaryRole: "lead-scout" }));
   });
 });

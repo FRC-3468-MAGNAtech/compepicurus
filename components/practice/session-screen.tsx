@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Badge } from "@/components/ui/badge";
 import { ScoutForm, type ScoutFormHandle, type ScoutFormValues } from "@/components/scout/scout-form";
 import { VideoPlayer } from "@/components/video/video-player";
+import { clipProgress, windowStart } from "@/lib/library/video-window";
 import { MOCK_VIDEO_DURATION_SEC } from "@/components/video/mock-video-player";
 import type { VideoPlayerHandle } from "@/components/video/types";
 import { BreakMenu } from "@/components/practice/break-menu";
@@ -27,6 +28,8 @@ import {
 } from "@/lib/practice-sessions";
 import { getEntriesForSession, saveEntry, type ScoreBreakdown } from "@/lib/scout-entries";
 import type { LibraryMatch } from "@/lib/match-library";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 type PendingRobot = { teamNumber: number; values: ScoutFormValues; score: ScoreBreakdown };
 
@@ -56,7 +59,7 @@ export function SessionScreen({
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [validationError, setValidationError] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
 
   const scoutFormRef = useRef<ScoutFormHandle>(null);
   const videoRef = useRef<VideoPlayerHandle>(null);
@@ -64,18 +67,16 @@ export function SessionScreen({
   const season = getSeason(session.seasonId);
   const teamNumber = session.robots[robotIndex];
   const isLastRobot = robotIndex === session.robots.length - 1;
-  const videoDurationSec = libraryMatch.video ? libraryMatch.video.endSec - libraryMatch.video.startSec : MOCK_VIDEO_DURATION_SEC;
 
   const handleStart = () => {
     setReadyOverlay(false);
     videoRef.current?.play();
   };
 
-  const videoProgressNow = (): number => {
-    const current = videoRef.current?.getCurrentTime() ?? 0;
-    const startOffset = libraryMatch.video?.startSec ?? 0;
-    return Math.min(1, Math.max(0, (current - startOffset) / videoDurationSec));
-  };
+  // How far through the clip playback is, or null when that can't be known (no end time and the player hasn't reported a
+  // length) — the "Finished Early" flag skips itself on null (FIX3). Without a library video it's the 2:30 placeholder.
+  const videoProgressNow = (): number | null =>
+    clipProgress(videoRef.current?.getCurrentTime() ?? 0, libraryMatch.video, videoRef.current?.getDuration() ?? (libraryMatch.video ? null : MOCK_VIDEO_DURATION_SEC));
 
   const saveRobotEntry = async (robot: PendingRobot) => {
     await saveEntry(session.teamId, session.uid, {
@@ -152,7 +153,7 @@ export function SessionScreen({
       });
       onCompleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't finish the session.");
+      setError(describeFirestoreError("Couldn't finish the session.", err));
     } finally {
       setSaving(false);
     }
@@ -170,9 +171,9 @@ export function SessionScreen({
       setRobotIndex((i) => i + 1);
       setReadyOverlay(true);
       setVideoEnded(false);
-      videoRef.current?.seek(libraryMatch.video?.startSec ?? 0);
+      videoRef.current?.seek(windowStart(libraryMatch.video));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save that robot's entry.");
+      setError(describeFirestoreError("Couldn't save that robot's entry.", err));
     } finally {
       setSaving(false);
     }
@@ -190,7 +191,7 @@ export function SessionScreen({
       });
       onPaused();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't pause the session.");
+      setError(describeFirestoreError("Couldn't pause the session.", err));
       setSaving(false);
     }
   };
@@ -291,7 +292,7 @@ export function SessionScreen({
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <LoadError failure={error} />}
 
       <div className="glass-strong sticky bottom-3 z-20 mt-2 flex items-center justify-between gap-3 rounded-full px-5 py-3 shadow-2xl">
         <Button variant="ghost" className="gap-1.5 text-red-300" onClick={() => setCancelConfirmOpen(true)}>

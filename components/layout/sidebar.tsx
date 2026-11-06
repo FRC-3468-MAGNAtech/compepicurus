@@ -9,8 +9,8 @@ import { mainNav, secondaryNav, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
-import { GlassShadeControl } from "@/components/theme/glass-shade-control";
-import { ConnectionStatus } from "@/components/layout/connection-status";
+import { GlassLayerButton } from "@/components/theme/glass-layer-slider";
+import type { ConnectionNotice } from "@/lib/connection-notice";
 import { Avatar } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth";
 import { getRole } from "@/lib/roles";
@@ -76,7 +76,7 @@ function UnreadDot({ className }: { className?: string }) {
   );
 }
 
-export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose?: () => void }) {
+export function Sidebar({ mobileOpen, onClose, connection = null }: { mobileOpen?: boolean; onClose?: () => void; connection?: ConnectionNotice | null }) {
   const [collapsed, setCollapsed] = useState(false);
   const { profile, logout } = useAuth();
   const router = useRouter();
@@ -105,6 +105,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
           primaryRole={profile?.primaryRole}
           navItems={visibleSecondaryNav}
           changelogUnread={changelogUnread}
+          connection={connection}
           onLogout={handleLogout}
           scope="desktop"
         />
@@ -141,6 +142,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
                 primaryRole={profile?.primaryRole}
                 navItems={visibleSecondaryNav}
           changelogUnread={changelogUnread}
+          connection={connection}
                 onLogout={handleLogout}
                 onNavigate={onClose}
                 scope="mobile"
@@ -159,6 +161,7 @@ function SidebarInner({
   primaryRole,
   navItems,
   changelogUnread,
+  connection,
   onLogout,
   onNavigate,
   scope,
@@ -168,6 +171,7 @@ function SidebarInner({
   primaryRole?: string;
   navItems: NavItem[];
   changelogUnread: boolean;
+  connection: ConnectionNotice | null;
   onLogout: () => void;
   onNavigate?: () => void;
   scope: string;
@@ -203,10 +207,8 @@ function SidebarInner({
       <div className="flex flex-col gap-3 border-t border-[var(--glass-border)] pt-3">
         <div className={cn("flex items-center gap-2", collapsed ? "justify-center" : "justify-between")}>
           {!collapsed && <ThemeSwitcher compact />}
-          <div className="flex items-center gap-1.5">
-            <ConnectionStatus collapsed={collapsed} />
-            <GlassShadeControl compact />
-          </div>
+          {/* FIX3: the "Online" label is gone. The droplet opens the glass slider and carries the offline / unsynced-submissions badge (only when needed). */}
+          <GlassLayerButton compact connection={connection} />
         </div>
         <div className="flex items-center gap-2.5 px-1">
           <Avatar name={name} size="sm" />

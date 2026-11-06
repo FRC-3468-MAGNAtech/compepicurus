@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, doc, getDoc, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 import { auth, db, isFirebaseConfigured } from "@/lib/firebase/client";
 import { getEvent, getMatchesForEvent } from "@/lib/ftc/actions";
-import { parseCsv } from "@/lib/analytics/csv";
 import { getDifficulty, type Difficulty } from "@/lib/difficulty";
+import { parseVideoCsv } from "@/lib/library/video-csv";
+import { describeFirestoreError, reportFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
+import { libraryAllQuery, libraryEventQuery, librarySeasonQuery } from "@/lib/practice-queries";
 import { decideMatchWrite, libraryMatchId, originOf, type LibraryOrigin } from "@/lib/library/ids";
 import { getSeason } from "@/lib/seasons";
 import type { MatchType } from "@/lib/ftc/types";
@@ -29,7 +31,12 @@ export type LibraryAlliance = {
   difficulty: Difficulty;
 };
 
-export type LibraryVideo = { youtubeUrl: string; startSec: number; endSec: number };
+/**
+ * A match's video. FIX3: `startSec` and `endSec` are both optional (null/absent = blank) —
+ * blank start plays from the beginning, blank end lets the match end when the video ends.
+ * See lib/library/video-window.ts for the four combinations.
+ */
+export type LibraryVideo = { youtubeUrl: string; startSec?: number | null; endSec?: number | null };
 
 export type LibraryMatch = {
   id: string;
@@ -192,10 +199,8 @@ export function useLibraryMatches(eventCode: string | null, options: { includeUn
       setLoaded(true);
       return;
     }
-    const base = collection(db, COLLECTION);
-    const q = includeUnpublished ? query(base, where("eventCode", "==", eventCode)) : query(base, where("eventCode", "==", eventCode), where("published", "==", true));
     const unsubscribe = onSnapshot(
-      q,
+      libraryEventQuery(db, eventCode, includeUnpublished),
       (snap) => {
         const next = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch);
         next.sort((a, b) => (a.matchType === b.matchType ? a.matchNumber - b.matchNumber : a.matchType.localeCompare(b.matchType)));
@@ -203,7 +208,7 @@ export function useLibraryMatches(eventCode: string | null, options: { includeUn
         setLoaded(true);
       },
       (err) => {
-        console.error("libraryMatches (by event) subscription failed:", err);
+        reportFirestoreError("libraryMatches (by event) subscription failed", err, `libraryMatches where eventCode == ${eventCode}${includeUnpublished ? "" : ", published == true"}`);
         setMatches([]);
         setLoaded(true);
       }
@@ -224,6 +229,9 @@ export function useLibraryMatches(eventCode: string | null, options: { includeUn
 export function useLibraryMatchesBySeason(seasonId: string | null) {
   const [matches, setMatches] = useState<LibraryMatch[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
+  // FIX3: a failed subscription is surfaced (with a Retry) instead of looking like an empty library.
+  const [error, setError] = useState<FirestoreFailure | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!seasonId || !isFirebaseConfigured()) {
@@ -232,10 +240,10 @@ export function useLibraryMatchesBySeason(seasonId: string | null) {
       setLoaded(true);
       return;
     }
+    setError(null);
     // P15: only published matches ever show up in a scout's match list — admins included.
-    const q = query(collection(db, COLLECTION), where("seasonId", "==", seasonId), where("published", "==", true));
     const unsubscribe = onSnapshot(
-      q,
+      librarySeasonQuery(db, seasonId),
       (snap) => {
         const next = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch);
         next.sort((a, b) => (a.matchType === b.matchType ? a.matchNumber - b.matchNumber : a.matchType.localeCompare(b.matchType)));
@@ -243,15 +251,17 @@ export function useLibraryMatchesBySeason(seasonId: string | null) {
         setLoaded(true);
       },
       (err) => {
-        console.error("libraryMatches (by season) subscription failed:", err);
+        const path = `libraryMatches where seasonId == "${seasonId}", published == true`;
+        reportFirestoreError("libraryMatches (by season) subscription failed", err, path);
+        setError(describeFirestoreError("Couldn't load matches", err, path));
         setMatches([]);
         setLoaded(true);
       }
     );
     return unsubscribe;
-  }, [seasonId]);
+  }, [seasonId, attempt]);
 
-  return { matches, loaded };
+  return { matches, loaded, error, retry: () => setAttempt((n) => n + 1) };
 }
 
 /**
@@ -276,15 +286,14 @@ export function useAllLibraryMatches(enabled: boolean = true, options: { include
       setLoaded(true);
       return;
     }
-    const base = collection(db, COLLECTION);
     const unsubscribe = onSnapshot(
-      includeUnpublished ? base : query(base, where("published", "==", true)),
+      libraryAllQuery(db, includeUnpublished),
       (snap) => {
         setMatches(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LibraryMatch));
         setLoaded(true);
       },
       (err) => {
-        console.error("libraryMatches (all) subscription failed:", err);
+        reportFirestoreError("libraryMatches (all) subscription failed", err, `libraryMatches${includeUnpublished ? "" : " where published == true"}`);
         setMatches([]);
         setLoaded(true);
       }
@@ -299,28 +308,7 @@ export async function setLibraryMatchVideo(id: string, video: LibraryVideo | nul
   await updateDoc(doc(db, COLLECTION, id), { video });
 }
 
-export type VideoCsvRow = { matchKey: string; youtubeUrl: string; startSec: number; endSec: number };
-
-/** Parses `matchKey,url,startSec,endSec` rows (optionally with that header on line 1 — skipped if present). */
-export function parseVideoCsv(text: string): { rows: VideoCsvRow[]; errors: string[] } {
-  const table = parseCsv(text);
-  const errors: string[] = [];
-  const rows: VideoCsvRow[] = [];
-  const startIndex = table[0]?.[0]?.trim().toLowerCase() === "matchkey" ? 1 : 0;
-
-  for (let i = startIndex; i < table.length; i++) {
-    const raw = table[i];
-    const [matchKey, youtubeUrl, startSecStr, endSecStr] = raw;
-    const startSec = Number(startSecStr);
-    const endSec = Number(endSecStr);
-    if (!matchKey || !youtubeUrl || !Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) {
-      errors.push(`Row ${i + 1}: couldn't read matchKey/url/startSec/endSec.`);
-      continue;
-    }
-    rows.push({ matchKey: matchKey.trim(), youtubeUrl: youtubeUrl.trim(), startSec, endSec });
-  }
-  return { rows, errors };
-}
+export { parseVideoCsv, type VideoCsvRow } from "@/lib/library/video-csv";
 
 export type VideoCsvResult = { updated: number; errors: string[] };
 

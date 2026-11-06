@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { doc, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
+import { describeFirestoreError, reportFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 import { buildAuditEntry, newAuditLogRef } from "@/lib/audit-log";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import { applyCreditsOp, describeOp, sameSections, sanitizeSections, type CreditSection, type CreditsOp } from "@/lib/credits/ops";
@@ -46,6 +47,9 @@ export function useCredits(teamId: string | null) {
   const [stored, setStored] = useState<CreditSection[] | null>(null);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
   const [optimistic, setOptimistic] = useState<{ sections: CreditSection[]; base: CreditSection[] | null } | null>(null);
+  // FIX3: a failed load is reported, not disguised as "no credits saved yet" (which would silently show the starter list instead of the saved one).
+  const [error, setError] = useState<FirestoreFailure | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!teamId || !isFirebaseConfigured()) {
@@ -55,6 +59,7 @@ export function useCredits(teamId: string | null) {
       return;
     }
     setLoaded(false);
+    setError(null);
     const unsubscribe = onSnapshot(
       doc(db, COLLECTION, teamId),
       (snap) => {
@@ -62,13 +67,14 @@ export function useCredits(teamId: string | null) {
         setLoaded(true);
       },
       (err) => {
-        console.error("credits subscription failed:", err);
+        reportFirestoreError("credits subscription failed", err, `credits/${teamId}`);
+        setError(describeFirestoreError("Couldn't load credits", err, `credits/${teamId}`));
         setStored(null);
         setLoaded(true);
       }
     );
     return unsubscribe;
-  }, [teamId]);
+  }, [teamId, attempt]);
 
   const server = stored ?? DEFAULT_CREDITS;
   const sections = optimistic && optimistic.base === stored ? optimistic.sections : server;
@@ -91,5 +97,5 @@ export function useCredits(teamId: string | null) {
     [teamId, sections, stored]
   );
 
-  return { sections, isDefault: stored === null, loaded, edit };
+  return { sections, isDefault: stored === null, loaded, edit, error, retry: () => setAttempt((n) => n + 1) };
 }

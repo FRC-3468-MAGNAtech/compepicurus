@@ -11,6 +11,8 @@ import { useAuth } from "@/lib/auth";
 import { claimLobbyId, heartbeatHost, heartbeatPlayer, joinLobby, useLobby, useLobbyPlayers } from "@/lib/lobby";
 import { LOBBY_CONFIG } from "@/lib/lobby/config";
 import type { SessionMode } from "@/lib/practice-sessions";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 export function LobbyFlow({
   seasonId,
@@ -30,11 +32,11 @@ export function LobbyFlow({
 
   const [lobbyId, setLobbyId] = useState<string | null>(initialLobbyId ?? null);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
   const [joined, setJoined] = useState(false);
 
   const { lobby, loaded } = useLobby(lobbyId);
-  const { players } = useLobbyPlayers(lobbyId);
+  const { players } = useLobbyPlayers(lobbyId, teamId);
   const isHost = Boolean(user && lobby && user.uid === lobby.hostUid);
 
   // Ensure our own player doc exists the moment a lobby is known, whether
@@ -70,7 +72,7 @@ export function LobbyFlow({
       const id = await claimLobbyId(teamId, user.uid, profile.name, seasonId, mode);
       setLobbyId(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't create a lobby.");
+      setError(describeFirestoreError("Couldn't create a lobby.", err));
     } finally {
       setCreating(false);
     }
@@ -90,7 +92,7 @@ export function LobbyFlow({
           <p className="max-w-sm text-sm text-[var(--muted-foreground)]">
             Everyone scouts the same match at once, in pairs — results show a winner and a leaderboard, like Kahoot.
           </p>
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <LoadError failure={error} />}
           <Button size="lg" disabled={creating} onClick={handleHost}>
             {creating ? "Creating…" : "Host a Lobby"}
           </Button>

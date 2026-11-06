@@ -1,19 +1,17 @@
 "use client";
 
 import {
-  collection,
-  collectionGroup,
   deleteDoc,
   doc,
   onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
 } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
+import { reportFirestoreError } from "@/lib/firestore-errors";
+import { lobbyPlayersQuery, lobbySessionsQuery, myLobbyPlayersQuery } from "@/lib/practice-queries";
 import { claimUniqueDocId, type PracticeSession, type SessionMode } from "@/lib/practice-sessions";
 import { LOBBY_CONFIG } from "@/lib/lobby/config";
 import type { PairAssignment } from "@/lib/lobby/pairing";
@@ -167,31 +165,32 @@ export function isHostActive(hostLastSeen: unknown): boolean {
   return Date.now() - (hostLastSeen as { toMillis: () => number }).toMillis() < LOBBY_CONFIG.HOST_STALE_MS;
 }
 
-export function useLobbyPlayers(lobbyId: string | null) {
+/** A lobby's roster, filtered to the team (FIX3: rules aren't filters — the unfiltered subcollection read was denied). */
+export function useLobbyPlayers(lobbyId: string | null, teamId: string | null) {
   const [players, setPlayers] = useState<LobbyPlayer[]>([]);
   const [loaded, setLoaded] = useState(() => !isFirebaseConfigured());
 
   useEffect(() => {
-    if (!lobbyId || !isFirebaseConfigured()) {
+    if (!lobbyId || !teamId || !isFirebaseConfigured()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPlayers([]);
       setLoaded(true);
       return;
     }
     const unsubscribe = onSnapshot(
-      collection(db, LOBBIES, lobbyId, PLAYERS),
+      lobbyPlayersQuery(db, lobbyId, teamId),
       (snap) => {
         setPlayers(snap.docs.map((d) => d.data() as LobbyPlayer));
         setLoaded(true);
       },
       (err) => {
-        console.error("lobbies/{id}/players subscription failed:", err);
+        reportFirestoreError("lobbies/{id}/players subscription failed", err, `lobbies/${lobbyId}/players where teamId == ${teamId}`);
         setPlayers([]);
         setLoaded(true);
       }
     );
     return unsubscribe;
-  }, [lobbyId]);
+  }, [lobbyId, teamId]);
 
   return { players, loaded };
 }
@@ -213,15 +212,14 @@ export function useLobbySessions(teamId: string | null, lobbyId: string | null) 
       setLoaded(true);
       return;
     }
-    const q = query(collection(db, "practiceSessions"), where("teamId", "==", teamId), where("lobbyId", "==", lobbyId));
     const unsubscribe = onSnapshot(
-      q,
+      lobbySessionsQuery(db, teamId, lobbyId),
       (snap) => {
         setSessions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PracticeSession));
         setLoaded(true);
       },
       (err) => {
-        console.error("lobby practiceSessions subscription failed:", err);
+        reportFirestoreError("lobby practiceSessions subscription failed", err, `practiceSessions where teamId == ${teamId}, lobbyId == ${lobbyId}`);
         setSessions([]);
         setLoaded(true);
       }
@@ -251,9 +249,8 @@ export function useMyActiveLobbyId(uid: string | null) {
       setLoaded(true);
       return;
     }
-    const q = query(collectionGroup(db, PLAYERS), where("uid", "==", uid));
     const unsubscribe = onSnapshot(
-      q,
+      myLobbyPlayersQuery(db, uid),
       (snap) => {
         let best: { id: string; joinedAtMs: number } | null = null;
         for (const d of snap.docs) {
@@ -269,7 +266,7 @@ export function useMyActiveLobbyId(uid: string | null) {
         setLoaded(true);
       },
       (err) => {
-        console.error("my-active-lobby collectionGroup subscription failed:", err);
+        reportFirestoreError("my-active-lobby collectionGroup subscription failed", err, `collectionGroup players where uid == ${uid}`);
         setLobbyId(null);
         setLoaded(true);
       }

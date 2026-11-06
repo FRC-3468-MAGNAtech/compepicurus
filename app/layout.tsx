@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { AuthProvider } from "@/lib/auth";
-import { GlassShadeProvider } from "@/lib/glass-shade";
+import { GlassLayerProvider } from "@/lib/glass-layer";
 import { BackgroundBlobs } from "@/components/layout/background-blobs";
 
 const geistSans = Geist({
@@ -47,12 +47,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <ThemeProvider>
-          <GlassShadeProvider>
-            <AuthProvider>
+          {/* The glass level is saved per user, so it sits inside the auth provider (FIX3). */}
+          <AuthProvider>
+            <GlassLayerProvider>
               <BackgroundBlobs />
               {children}
-            </AuthProvider>
-          </GlassShadeProvider>
+            </GlassLayerProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

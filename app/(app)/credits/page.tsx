@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Info } from "lucide-react";
+import { LoadError } from "@/components/practice/load-error";
 import { CreditsBoard } from "@/components/credits/credits-board";
 import { Shimmer } from "@/components/ui/shimmer";
 import { useAuth } from "@/lib/auth";
@@ -12,7 +13,7 @@ import { usePermissions } from "@/lib/permissions";
 export default function CreditsPage() {
   const { user, profile } = useAuth();
   const { isAdmin } = usePermissions();
-  const { sections, isDefault, loaded, edit } = useCredits(profile?.teamId ?? null);
+  const { sections, isDefault, loaded, edit, error: loadError, retry } = useCredits(profile?.teamId ?? null);
   const [error, setError] = useState<string | null>(null);
   const actor = useMemo(() => (user && profile ? { uid: user.uid, name: profile.name } : null), [user, profile]);
 
@@ -41,7 +42,9 @@ export default function CreditsPage() {
         </p>
       )}
 
-      {loaded ? (
+      {loaded && loadError ? (
+        <LoadError failure={loadError} onRetry={retry} />
+      ) : loaded ? (
         <CreditsBoard sections={sections} admin={isAdmin} onOp={(op) => void onOp(op)} />
       ) : (
         <div className="flex flex-col gap-5" aria-busy="true" aria-label="Loading credits">

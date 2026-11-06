@@ -71,6 +71,8 @@ export type UserDoc = {
   themeId: string;
   /** P14: when the user last opened the Changelog (a Firestore Timestamp; absent until they first do) — drives the unread dot on its nav item. */
   lastSeenChangelogAt?: unknown;
+  /** FIX3: the layered-glass level (0.3-2, 1 = default), saved per user so it follows them across devices. See lib/glass-layer.tsx. */
+  glassLayerLevel?: number;
 };
 
 export type GoogleLinkPrompt = { email: string };

@@ -17,17 +17,28 @@
         { "fieldPath": "uid", "order": "ASCENDING" },
         { "fieldPath": "startedAt", "order": "DESCENDING" }
       ]
-    },
+    }
+  ],
+  "fieldOverrides": [
     {
       "collectionGroup": "scouts",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [{ "fieldPath": "teamId", "order": "ASCENDING" }]
+      "fieldPath": "teamId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
     },
     {
       "collectionGroup": "players",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [{ "fieldPath": "uid", "order": "ASCENDING" }]
+      "fieldPath": "uid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
     }
-  ],
-  "fieldOverrides": []
+  ]
 }

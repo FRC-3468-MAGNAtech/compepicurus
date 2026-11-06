@@ -171,8 +171,18 @@ service cloud.firestore {
     // updating their own session only while it's still in-progress/paused —
     // once completed, further edits are admin-only, same pattern as
     // scoutEntries.
+    //
+    // FIX3: `get` is allowed on a doc that doesn't exist yet. Starting a session
+    // reserves its id in a transaction that first *reads* the candidate id
+    // (lib/claim-doc.ts) — and `sameTeam(resource.data.teamId)` on a missing doc
+    // is an evaluation error, i.e. denied, which showed up as the raw "Missing or
+    // insufficient permissions" the moment a scout picked a match. An existing
+    // session of another team is still unreadable; the only thing a missing-doc
+    // read reveals is that the id is free. List queries are unchanged (they must
+    // still carry the team filter).
     match /practiceSessions/{sessionId} {
-      allow read: if sameTeam(resource.data.teamId);
+      allow get: if resource == null || sameTeam(resource.data.teamId);
+      allow list: if sameTeam(resource.data.teamId);
 
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
@@ -486,6 +496,20 @@ service cloud.firestore {
       }
     }
 
+    // FIX3: COLLECTION-GROUP queries. A `collectionGroup("scouts")` or
+    // `collectionGroup("players")` query is only allowed by a rule written with a
+    // recursive wildcard — the nested `match .../scouts/{uid}` rules above and below
+    // don't apply to it, so these queries were denied outright (the practice landing
+    // page's "who's live" and "my lobby" lookups, the Presence panel, the live pill).
+    // Same conditions as the nested rules; the player rule also lets you read your own
+    // player docs, which is what the "which lobby am I in" query (where uid == you) proves.
+    match /{path=**}/scouts/{uid} {
+      allow read: if sameTeam(resource.data.teamId);
+    }
+    match /{path=**}/players/{uid} {
+      allow read: if isSignedIn() && (resource.data.uid == request.auth.uid || sameTeam(resource.data.teamId));
+    }
+
     // P7: notifications/{sessionId} — one per scout per resolved live
     // alliance ("Scores are available"), doc id is the session id so
     // app/api/cron/poll-live-scores / app/api/live/check-scores can check
@@ -507,8 +531,13 @@ service cloud.firestore {
     // entirely) since a pair's two sessions belong to two different
     // players and neither rule below lets one teammate write another's
     // session — see docs/ASSUMPTIONS.md (P8).
+    //
+    // FIX3: the lobby code is reserved the same way as a Session ID (read the
+    // candidate, then create), so `get` is allowed on a missing doc — see
+    // practiceSessions above. Lists still need the team filter.
     match /lobbies/{lobbyId} {
-      allow read: if sameTeam(resource.data.teamId);
+      allow get: if resource == null || sameTeam(resource.data.teamId);
+      allow list: if sameTeam(resource.data.teamId);
       allow create: if isSignedIn()
         && request.resource.data.hostUid == request.auth.uid
         && sameTeam(request.resource.data.teamId);

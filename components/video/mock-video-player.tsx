@@ -81,7 +81,7 @@ export const MockVideoPlayer = forwardRef<VideoPlayerHandle, MockVideoPlayerProp
     setCurrentTime(Math.max(0, Math.min(MOCK_VIDEO_DURATION_SEC, seconds)));
   };
 
-  useImperativeHandle(ref, () => ({ play, pause, seek, getCurrentTime: () => currentTime }));
+  useImperativeHandle(ref, () => ({ play, pause, seek, getCurrentTime: () => currentTime, getDuration: () => MOCK_VIDEO_DURATION_SEC }));
 
   const progress = currentTime / MOCK_VIDEO_DURATION_SEC;
 

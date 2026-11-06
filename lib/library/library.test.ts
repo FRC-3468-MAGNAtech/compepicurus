@@ -227,9 +227,9 @@ describe("validateRawMatch", () => {
     });
   });
 
-  it("takes the start time from t= when the start box is empty, otherwise 0", () => {
+  it("takes the start time from t= when the start box is empty, otherwise leaves it blank (the beginning)", () => {
     expect(validateRawMatch(raw({ youtubeUrl: `https://youtu.be/${ID}?t=95`, start: "" })).match?.video?.startSec).toBe(95);
-    expect(validateRawMatch(raw({ start: "" })).match?.video?.startSec).toBe(0);
+    expect(validateRawMatch(raw({ start: "" })).match?.video?.startSec).toBeNull();
     expect(validateRawMatch(raw({ youtubeUrl: `https://youtu.be/${ID}?t=95`, start: "10" })).match?.video?.startSec).toBe(10);
   });
 
@@ -288,7 +288,6 @@ describe("validateRawMatch", () => {
   it("validates the video: a real YouTube link, parseable times, start before end", () => {
     expect(validateRawMatch(raw({ youtubeUrl: "https://vimeo.com/123" })).errors.youtubeUrl).toBeTruthy();
     expect(validateRawMatch(raw({ start: "abc" })).errors.start).toBeTruthy();
-    expect(validateRawMatch(raw({ end: "" })).errors.end).toBeTruthy();
     expect(validateRawMatch(raw({ end: "later" })).errors.end).toBeTruthy();
     expect(validateRawMatch(raw({ start: "3:00", end: "2:00" })).errors.end).toBeTruthy();
     expect(validateRawMatch(raw({ start: "90", end: "90" })).errors.end).toBeTruthy();
@@ -299,8 +298,124 @@ describe("validateRawMatch", () => {
   });
 
   it("reports every problem at once, not just the first", () => {
-    const r = validateRawMatch(raw({ red1: "x", blueScore: "", end: "" }));
+    const r = validateRawMatch(raw({ red1: "x", blueScore: "", end: "later" }));
     expect(Object.keys(r.errors).sort()).toEqual(["blueScore", "end", "red1"]);
+  });
+});
+
+// FIX3: start and end are both optional — blank, start only, end only, or both.
+describe("optional start and end times", () => {
+  const link = `https://youtu.be/${ID}`;
+  const video = (over: Partial<RawMatch>) => validateRawMatch(raw({ youtubeUrl: link, start: "", end: "", ...over }));
+
+  it("both blank is valid: the match plays from the beginning to the end of the video", () => {
+    const r = video({});
+    expect(r.ok).toBe(true);
+    expect(r.errors).toEqual({});
+    expect(r.match?.video).toEqual({ youtubeUrl: canonicalYouTubeUrl(ID), startSec: null, endSec: null });
+  });
+
+  it("start only is valid: plays from the start to the end of the video", () => {
+    const r = video({ start: "1:10" });
+    expect(r.ok).toBe(true);
+    expect(r.match?.video).toEqual({ youtubeUrl: canonicalYouTubeUrl(ID), startSec: 70, endSec: null });
+  });
+
+  it("end only is valid: plays from the beginning to the end time", () => {
+    const r = video({ end: "3:40" });
+    expect(r.ok).toBe(true);
+    expect(r.match?.video).toEqual({ youtubeUrl: canonicalYouTubeUrl(ID), startSec: null, endSec: 220 });
+  });
+
+  it("both given is valid, and must have the end after the start", () => {
+    expect(video({ start: "1:10", end: "3:40" }).match?.video).toMatchObject({ startSec: 70, endSec: 220 });
+    expect(video({ start: "3:00", end: "2:00" }).errors.end).toBeTruthy();
+    expect(video({ start: "90", end: "90" }).errors.end).toBeTruthy();
+  });
+
+  it("only checks start < end when both are present: an end on its own just has to be after the beginning", () => {
+    expect(video({ end: "30" }).ok).toBe(true);
+    expect(video({ end: "0" }).errors.end).toBeTruthy(); // 0 is not after the beginning
+    expect(video({ start: "9999" }).ok).toBe(true); // a lone start can't be compared with anything
+  });
+
+  it("still rejects a time that can't be read — blank is fine, junk is not", () => {
+    expect(video({ start: "abc" }).errors.start).toBeTruthy();
+    expect(video({ end: "later" }).errors.end).toBeTruthy();
+    expect(video({ start: "  ", end: " " }).ok).toBe(true); // whitespace counts as blank
+  });
+
+  it("a t= in the link still pre-fills a blank start, and a typed start wins", () => {
+    expect(video({ youtubeUrl: `${link}?t=95` }).match?.video?.startSec).toBe(95);
+    expect(video({ youtubeUrl: `${link}?t=95`, start: "10" }).match?.video?.startSec).toBe(10);
+    expect(video({ youtubeUrl: `${link}?t=95`, end: "3:00" }).match?.video).toMatchObject({ startSec: 95, endSec: 180 });
+  });
+
+  it("with no link at all the times are irrelevant", () => {
+    expect(validateRawMatch(raw({ youtubeUrl: "", start: "abc", end: "xyz" })).match?.video).toBeNull();
+  });
+
+  it("round-trips through the form strings in every combination", () => {
+    for (const times of [{}, { start: "1:10" }, { end: "3:40" }, { start: "1:10", end: "3:40" }]) {
+      const first = video(times).match!;
+      const doc = buildManualMatchFields(first, { eventCode: "MAN-T", eventName: "T", seasonId: "biobuzz" });
+      expect(validateRawMatch(matchToRaw(doc)).match).toEqual(first);
+    }
+  });
+
+  it("no longer warns about a clip it cannot measure, but still warns about a long measured one", () => {
+    const event = { eventCode: "MAN-T" };
+    const ctx = { event, existingIds: new Set<string>(), siblings: [] };
+    expect(matchWarnings(video({}).match!, ctx)).toEqual([]);
+    expect(matchWarnings(video({ start: "0:10" }).match!, ctx)).toEqual([]);
+    expect(matchWarnings(video({ end: "30:00" }).match!, ctx).some((w) => w.includes("30:00"))).toBe(true);
+  });
+});
+
+describe("optional times in CSV and pasted rows", () => {
+  const HDR = BULK_COLUMNS.join(",");
+  const rowWith = (start: string, end: string, url = `https://youtu.be/${ID}`) => `Q,1,254,971,118,1114,142,98,6,0,${url},${start},${end},`;
+  const preview = (row: string) => validateBulk({ text: `${HDR}\n${row}`, event: { eventCode: "MAN-T" }, defaults: { matchType: null, youtubeUrl: "" }, existing: new Map() });
+
+  it("blank startSec and endSec are not errors — in any combination", () => {
+    for (const [start, end, expected] of [
+      ["", "", { startSec: null, endSec: null }],
+      ["1:10", "", { startSec: 70, endSec: null }],
+      ["", "3:40", { startSec: null, endSec: 220 }],
+      ["1:10", "3:40", { startSec: 70, endSec: 220 }],
+    ] as const) {
+      const result = preview(rowWith(start, end));
+      expect(result.rows[0].errors, `${start}|${end}`).toEqual([]);
+      expect(result.rows[0].match?.video).toMatchObject(expected);
+      expect(summarizeBulk(result)).toMatchObject({ valid: 1, errors: 0, creates: 1 });
+    }
+  });
+
+  it("omitting the startSec and endSec columns entirely is fine too", () => {
+    const text = "matchType,matchNumber,red1,red2,blue1,blue2,redScore,blueScore,youtubeUrl\nQ,1,254,971,118,1114,142,98," + `https://youtu.be/${ID}`;
+    const result = validateBulk({ text, event: { eventCode: "MAN-T" }, defaults: { matchType: null, youtubeUrl: "" }, existing: new Map() });
+    expect(result.columnErrors).toEqual([]);
+    expect(result.rows[0].match?.video).toMatchObject({ startSec: null, endSec: null });
+  });
+
+  it("works the same for text pasted from a spreadsheet (tab-separated, trailing cells empty)", () => {
+    const tsv = ["Q", "1", "254", "971", "118", "1114", "142", "98", "6", "0", `https://youtu.be/${ID}`, "", "", ""].join("\t");
+    const result = validateBulk({ text: tsv, event: { eventCode: "MAN-T" }, defaults: { matchType: null, youtubeUrl: "" }, existing: new Map() });
+    expect(result.rows[0].errors).toEqual([]);
+    expect(result.rows[0].match?.video).toMatchObject({ startSec: null, endSec: null });
+  });
+
+  it("an event default video with blank times works per row, too", () => {
+    const text = `${HDR}\n${rowWith("", "", "")}`;
+    const result = validateBulk({ text, event: { eventCode: "MAN-T" }, defaults: { matchType: null, youtubeUrl: `https://youtu.be/${ID}` }, existing: new Map() });
+    expect(result.rows[0].errors).toEqual([]);
+    expect(result.rows[0].match?.video).toEqual({ youtubeUrl: canonicalYouTubeUrl(ID), startSec: null, endSec: null });
+  });
+
+  it("still flags a time that can't be read, or an end before the start when both are given", () => {
+    expect(preview(rowWith("abc", "")).rows[0].errors.join(" ")).toMatch(/Start/);
+    expect(preview(rowWith("", "later")).rows[0].errors.join(" ")).toMatch(/End/);
+    expect(preview(rowWith("3:00", "2:00")).rows[0].errors.join(" ")).toMatch(/End/);
   });
 });
 

@@ -36,6 +36,8 @@ import {
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 type Step = "season" | "mode" | "difficulty" | "match-select" | "session" | "results" | "live" | "lobby";
 
@@ -64,7 +66,7 @@ export default function PracticeScoutingPage() {
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
   const [liveResumeTarget, setLiveResumeTarget] = useState<ResumePendingRobot | undefined>(undefined);
   const [liveViewResultsId, setLiveViewResultsId] = useState<string | undefined>(undefined);
   const [lobbyId, setLobbyId] = useState<string | undefined>(undefined);
@@ -119,7 +121,7 @@ export default function PracticeScoutingPage() {
       setActiveSessionId(sessionId);
       setStep("session");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start that session.");
+      setError(describeFirestoreError("Couldn't start that session.", err));
     } finally {
       setClaiming(false);
     }
@@ -329,7 +331,7 @@ export default function PracticeScoutingPage() {
 
       {step === "match-select" && seasonId && difficulty && (
         <>
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <LoadError failure={error} />}
           <MatchSelect seasonId={seasonId} difficulty={difficulty} onBack={() => setStep("difficulty")} onStart={claimAndStart} />
           {claiming && <p className="text-sm text-[var(--muted-foreground)]">Starting session&hellip;</p>}
         </>

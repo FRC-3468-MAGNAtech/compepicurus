@@ -24,8 +24,8 @@ const COLUMNS: { field: RawField; label: string; width: string; tone?: "red" | "
   { field: "redPenalty", label: "Red pen.", width: "w-16", tone: "red" },
   { field: "bluePenalty", label: "Blue pen.", width: "w-16", tone: "blue" },
   { field: "youtubeUrl", label: "YouTube link", width: "w-56" },
-  { field: "start", label: "Start", width: "w-20" },
-  { field: "end", label: "End", width: "w-20" },
+  { field: "start", label: "Start (opt.)", width: "w-24" },
+  { field: "end", label: "End (opt.)", width: "w-24" },
 ];
 
 /**

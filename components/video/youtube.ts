@@ -10,6 +10,7 @@ export type YTPlayerInstance = {
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
+  getDuration(): number;
   destroy(): void;
 };
 

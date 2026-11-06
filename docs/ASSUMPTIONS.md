@@ -76,7 +76,7 @@ fixed, pre-chosen set of Tailwind hues (sky, violet, fuchsia, emerald, amber,
 orange, cyan, pink, lime) rather than tints of the active theme's accent.
 
 **P1-10. Offline/pending-sync indicator is scoped to the active event.**
-`components/layout/connection-status.tsx` subscribes to
+`components/layout/connection-status.tsx` (replaced in FIX3 by `lib/use-connection-state.ts` and a badge on the droplet button) subscribes to
 `scoutEntries` for the active event (where offline submissions actually
 happen — the Scout Form at a venue with bad Wi-Fi) rather than every entry
 the team has ever recorded, to avoid an unbounded realtime listener. With no
@@ -2543,6 +2543,192 @@ Sheet/Excel, the bulk table, and the Manual tags haven't been seen. The store's 
 covered by the rules tests, but the functions themselves (and the live FIRST-API collision check)
 are not run by any test. Nothing was run against the real Firestore project.
 
+## FIX3 — Bugfix Pass 2 (Practice Permission Error, Credits, Optional Video Times, Glass Slider)
+
+**FIX3-0. No clarifying questions were asked** — nothing blocked. As in P1-1 the prompt's Vite
+wording maps to Next.js.
+
+### 1. Practice Scouting: "Missing or insufficient permissions"
+
+**Root causes — found by running the app's real queries against the rules in the emulator, as
+three users (owner, non-admin Match Scout, plain member).** Before any fix, 13 of the new
+regression cases failed (12 genuine; one was a mistake in my own test fixture), for **every** kind of user (so it was never a role/claims problem):
+
+1. **Picking a match reserves a Session ID in a transaction that first *reads* an id that
+   doesn't exist yet** (`lib/practice-sessions.ts` → `claimUniqueDocId`; extracted to
+   `lib/claim-doc.ts` `tryClaimDoc`). The `practiceSessions` read rule was
+   `sameTeam(resource.data.teamId)` — on a document that doesn't exist, `resource` is null, so
+   that is an evaluation error, i.e. denied. **This is the raw error on the team select page** (it
+   is thrown straight out of `claimSessionId` and shown as `err.message`). The lobby code is
+   reserved the same way (`claimLobbyId`) and failed identically. Fix: split `read` into
+   `get: resource == null || sameTeam(...)` and `list: sameTeam(...)` on `practiceSessions` and
+   `lobbies`. A missing-doc read now reveals only that an id is free; an *existing* session or
+   lobby of another team is still unreadable, and list queries still need the team filter.
+2. **Collection-group queries had no rules.** The practice landing page's "which lobby am I
+   in" (`collectionGroup("players") where uid == you`) and the live-presence lists
+   (`collectionGroup("scouts") where teamId == …`) are only allowed by a rule with a recursive
+   wildcard (`match /{path=**}/scouts/{uid}`); the nested rules didn't apply, so both were denied
+   (silently — the hooks swallowed the error). Added `match /{path=**}/scouts/{uid}` (same team
+   condition as the nested rule) and `match /{path=**}/players/{uid}` (own docs, or same team).
+3. **Two subcollection reads were unfiltered.** `useLiveMatchScouts` read a whole
+   `liveMatches/{key}/scouts` subcollection ("any team — the caller filters"), and `useLobbyPlayers`
+   a whole `lobbies/{id}/players`; both rules are `sameTeam(resource.data.teamId)`, and rules
+   aren't filters, so an unfiltered list is rejected outright. Both queries now carry
+   `where("teamId", "==", teamId)` (the hooks take a `teamId` argument).
+
+Checked and **not** the cause: the prompt's "old documents lack `published`" and "queries not
+matching the rules" for the library — see FIX3-1; the session status badges (members already may
+read team sessions); claims and user-doc fields (the rules read the user doc).
+
+**FIX3-1. I did NOT make the library read rule treat a missing `published` as true** (the prompt's
+suggested `resource.data.get('published', true)`). I tried exactly that in P15; the emulator
+showed it lets a member's *unfiltered* query through (the default makes it provable), which
+exposes unpublished matches. The rule stays strict (`resource.data.published == true || isAdmin()`)
+and the data is migrated instead: P15's idempotent `backfillLibraryMetadata` stamps
+`origin: 'api'` / `published: true` on older matches. It already ran automatically the first time
+an admin opened the app; FIX3 adds the **admin-only "Update library" button** the prompt asks for
+(Admin Panel > Match Library) and tells a scout with an empty list where to look. Library
+matches have no `teamId` by design (P3-6), so no rule needed one.
+
+**FIX3-2. One module for the practice queries — `lib/practice-queries.ts`.** Every query the
+solo/live/lobby flows make (library by season / event / all, team sessions solo / live / all,
+own paused session, repeat-attempt check, lobby sessions, live presence per match and team-wide,
+lobby roster, "my lobby") is a builder there, used by the hooks *and* by the regression suite,
+so the suite tests the real queries and can't drift from the app.
+
+**FIX3-3. The regression suite** (`firestore.rules.test.ts`, "FIX3: practice queries and writes,
+for every kind of user", run once per user type) covers: library by season/event/all (published
+only, drafts never in a scout's list), `libraryEvents`, every session query, the Session ID and
+lobby-code reservation transactions, other teams' sessions/lobbies/presence being unreadable,
+live presence (per match, team-wide, own writes only), lobby join/roster/"my lobby", session
+writes staying owner/admin, plus the roster and team doc. It also asserts that admins (only) can
+read unpublished matches.
+
+**FIX3-4. Indexes.** Every practice query is equality-only (no `orderBy`/range), so none needs a
+composite index. **`firestore.indexes.json` had a bug:** the two collection-group indexes
+(`scouts.teamId`, `players.uid`) were written as single-field entries in `indexes`, which
+`firebase deploy --only firestore:indexes` rejects ("this index is not necessary"). They are now
+`fieldOverrides` with a `COLLECTION_GROUP` ascending entry (the collection-group queries need
+that). The two real composite indexes (`practiceSessions`) are unchanged.
+
+**FIX3-5. If production still shows the error after deploying:** it is almost certainly the rules
+(or indexes) not being deployed — every cause above is a rules/query mismatch that the repo's
+rules now fix, so an older deployed `firestore.rules` reproduces the original symptom exactly.
+Deploy both (see Commands). The raw error is also gone from the UI regardless (FIX3-6).
+
+**FIX3-6. Friendly errors.** `lib/firestore-errors.ts` (`describeFirestoreError`,
+`failureExplanation`, `failureDetails`, `reportFirestoreError`) and
+`components/practice/load-error.tsx` (`LoadError`: title, one-sentence explanation, **Retry**,
+**Copy details** = code, message, the failing collection path and query constraints, time).
+Match Select shows "Couldn't load matches" / "Couldn't load practice sessions" with Retry
+instead of an empty list; every start/save/submit failure in the practice flows (solo, live,
+lobby) now uses it too (their `setError(err.message)` became `describeFirestoreError(...)`).
+Every Firestore subscription failure in these hooks is logged with its collection path and
+constraints (`[firestore] <what> — <code> — <path>: <message>`), in development and production.
+
+### 2. Credits
+
+**FIX3-7. Could not reproduce "admins see less outside edit mode" — there is no edit mode.**
+P14's Credits page already shows admins the same content as members, with the Add / Edit /
+Reorder / Delete controls inline (no toggle) and members none; the prompt's description (an
+edit-mode toggle) doesn't match what was built. I added `components/credits/credits-board.test.tsx`
+(server-renders the board as a member and as an admin: same sections, names, and descriptions;
+inline controls only for the admin; no edit-mode wording anywhere). One real hazard found and fixed
+while looking for the cause: **if the credits subscription failed, the page silently fell back to the
+starter list**, which would look like "different content" to whoever hit the failure. It now
+shows the same `LoadError` with Retry and Copy details instead. If you still see an admin-only
+difference on the deployed site, it is most likely an old build — please tell me what you see.
+
+### 3. Optional start and end times
+
+**FIX3-8. One rule, in `lib/library/video-window.ts` (pure, tested).** Start and end are each
+optional (null = blank):
+
+| start | end | plays from | match ends |
+|---|---|---|---|
+| blank | blank | the beginning | when the video ends |
+| given | blank | the start | when the video ends |
+| blank | given | the beginning | at the end time |
+| given | given | the start | at the end time |
+
+`LibraryVideo.startSec/endSec` are now `number | null | undefined` (stored as `null` when blank;
+older docs with numbers are unchanged). Everything that assumed both exist now goes through the
+helpers: the YouTube player (`start` always, `end` only when set; the 500 ms end-time safety net
+only when there is an end; otherwise YouTube's own ENDED event ends the match — the player handle
+gained `getDuration()`), the practice session screen (clip progress), the lobby results deadline,
+the "Finished Early" flag, the admin tables, and validation.
+
+- **"Finished Early":** progress = (current − start) / clip length, where the length is end − start,
+  or, with no end, the video's reported duration − start. **If the duration isn't known the flag is
+  skipped** (`videoProgressAtFinish: null` — already how the flag treats unknown).
+- **Lobby deadline** (start + clip length + grace): with no end time this client may not know the
+  video's length, so a bound is used — **10 minutes** (`UNKNOWN_CLIP_FALLBACK_SEC`). It only ever
+  matters if someone never submits; everyone submitting still resolves the round at once.
+- **Competitive no-pause / "Match ended" cue:** unaffected by the times — `lockPause` and the ended
+  callback are unchanged; with no end time the ended callback is YouTube's ENDED.
+- **Forms/CSV/paste:** `validateRawMatch` only compares start < end when both are present (an end
+  alone just has to be after 0:00); blank cells are never errors in the CSV/paste preview; unreadable
+  text still is. A `t=` in a link still pre-fills a blank start. The Set start/end helpers are
+  unchanged. Imported-match rows in Match Library save blank times as blank (they used to turn blank
+  into 0), and the bulk video CSV (`matchKey,url,startSec,endSec`) accepts blanks and `1:30` forms
+  (its parser moved to `lib/library/video-csv.ts` so it can be tested). Bulk "Set video link" keeps each
+  match's own times and no longer invents a 0:00–2:30 window (P15's placeholder is gone).
+- The long-clip warning only applies to a clip with an end time (one without can't be measured).
+- Live (real-event) practice never used library video times, so it is unaffected.
+
+### 4. The droplet button and the shared glass slider
+
+**FIX3-9. What already existed.** The "layered glass slider" is the droplet popover
+(`GlassShadeControl`) backed by a localStorage-only provider (`GlassShadeProvider`,
+`--glass-shade`) — already shared in-tab and already placed in the sidebar footer, next to the
+"Online" label. So this was an extraction and a persistence change more than a new control.
+
+**FIX3-10. Shared state and component.** `lib/glass-layer.tsx` (`GlassLayerProvider`,
+`useGlassLayerLevel()` → `{ level, setLevel, reset }`) and `lib/glass-layer-level.ts` (pure:
+clamp/parse/resolve; tested); `components/theme/glass-layer-slider.tsx` has `<GlassLayerSlider />`
+(the slider, labeled, a native range input so arrow keys/Home/End/PageUp/PageDown work) and
+`<GlassLayerButton />` (the droplet + popover). The old `lib/glass-shade.tsx` and
+`glass-shade-control.tsx` were removed; the home page header, the mobile top bar, and the sidebar all
+use `GlassLayerButton`, driven by the one hook, so they move together. The CSS variable name
+(`--glass-shade`) and the localStorage key are unchanged so nothing visual changes and an existing
+choice carries over.
+- **Persisted per user:** `users/{uid}.glassLayerLevel` (number 0.3-2), written ~0.5 s after the
+  slider stops moving (and flushed if the provider unmounts), with the localStorage value as the local
+  fallback (applies before sign-in and instantly on load). The signed-in user's saved level wins; a level
+  only this browser had is saved to the account once. This needed no rules change (the self-update
+  rule already allows it; tested). The provider now sits *inside* `AuthProvider` in `app/layout.tsx`.
+
+**FIX3-11. Sidebar.** The "Online" label (`components/layout/connection-status.tsx`) is removed; the
+footer has a single circular droplet button (themed glow on hover/open, the shared spring press,
+`aria-haspopup="dialog"`, Escape/outside-click close, focus moves to the slider on open and back to
+the button on Escape). Collapsed sidebar and the mobile drawer show it too (the drawer reuses the same
+sidebar), and the mobile top bar has its own copy.
+
+**FIX3-12. The offline safety signal is kept, silent when fine.** `lib/connection-notice.ts` (pure,
+tested) + `lib/use-connection-state.ts` (the P1 online/pending logic, unchanged in meaning: pending
+entries of the active events). Online with nothing waiting: **nothing is shown**. Offline, or unsynced
+submissions: a small amber badge (cloud-off icon, or the pending count) pinned to the droplet button's
+corner — absolutely positioned, so no layout shift — and tapping the button shows "Offline: N
+submissions will sync when you're back online." (or "N submissions still syncing to the server."). The
+hook runs once in the app shell and is passed to both the sidebar and top bar, so there is one
+subscription. Offline used to be red; it is amber now, as the prompt asks.
+
+### FIX3: verification
+
+Run and passing: `tsc`, `eslint` (0 errors, the same 2 pre-existing warnings), `vitest` (719 tests:
+new `lib/library/video-window` (15), video CSV + Finished Early (8), the optional-time cases in
+`lib/library/library.test.ts`, `lib/firestore-errors` (8), `lib/glass-layer-level` + the offline notice
+(10), the Credits render test (4)), `next build`, and the emulator suite **`npm run test:rules`: 266
+tests, all passing** (the FIX3 practice-queries suite is 3 user types × 14 cases plus 1 admin case; the
+glass-level rules tests are 4).
+
+**Not verified:** anything visual or interactive — no browser here: the droplet popover and badge,
+keyboard use of the slider, the LoadError card, playback with a blank end time against a real YouTube
+embed (the embed's `getDuration()` and ENDED behavior are YouTube's, not testable without one), and
+the actual production database. The rule fixes are proven against the emulator with the app's own query
+builders; whether your deployed project was failing for exactly these reasons depends on what rules
+it is running (FIX3-5).
+
 ## Commands to run locally
 
 ```bash
@@ -2880,6 +3066,32 @@ npm run test:rules   # needs Java + firebase-tools; now 187 tests across both fi
 # says how many were left alone).
 firebase deploy --only firestore:rules   # libraryMatches + libraryEvents rules
 npm run test:rules   # needs Java + firebase-tools; 219 tests across both files, all passing
+
+# FIX3 (rules AND indexes changed — deploy both FIRST; no env changes).
+# Deploy: firebase deploy --only firestore:rules,firestore:indexes
+# (an older deployed firestore.rules reproduces the original 'Missing or insufficient
+# permissions' exactly; the indexes file also had to be fixed so the deploy accepts it.)
+# Then, as a Match Scout, a plain member, and the owner: Practice Scouting > Season > Mode >
+# Difficulty > pick a match -> the session starts (no permission error); finish it -> Results; pause
+# a session and confirm the Resume banner; open Live Practice and the Lobby (create one, join it
+# from a second account with the code). If a match list is empty, an admin presses Admin Panel >
+# Match Library > 'Update library' once (it also runs automatically for an admin). To see the new
+# error card, break your connection or sign out in another tab: 'Couldn't load matches' with Retry
+# and Copy details (paste it to see the collection path and code).
+# Credits: as an admin the page shows the same sections as a member, with Add/Edit/Reorder/Delete
+# inline and no edit-mode toggle; as a member there are no controls.
+# Optional times: Admin Panel > Match Library > Manual events: add a match with a YouTube link and
+# leave Start and End blank (also try start only, end only); in a CSV or pasted row leave
+# startSec/endSec blank -> no error in the preview; edit an imported match's video with a blank
+# time. Practice that match in Competitive mode: it starts at 0:00 (or the start) and ends when
+# the video ends; finishing at 30% of the video raises 'Finished Early'.
+# Glass slider: the droplet in the sidebar footer (also when collapsed, and in the mobile menu)
+# opens the slider; drag it, reload, and sign in on another browser -> same level; the home-page
+# slider follows it. Turn Wi-Fi off (or go offline in devtools): an amber badge appears on the
+# droplet, tapping it says 'Offline: N submissions will sync when you're back online.'; online
+# with nothing pending shows no badge at all.
+firebase deploy --only firestore:rules,firestore:indexes
+npm run test:rules   # needs Java + firebase-tools; 266 tests across both files, all passing
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

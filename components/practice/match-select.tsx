@@ -5,6 +5,7 @@ import { ChevronLeft, Shuffle, VideoOff } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LoadError } from "@/components/practice/load-error";
 import { ChipSummary } from "@/components/practice/chip-summary";
 import { useAuth } from "@/lib/auth";
 import { useTeamDoc } from "@/lib/team";
@@ -37,8 +38,9 @@ export function MatchSelect({
   const teamId = profile?.teamId ?? null;
   const { team } = useTeamDoc(teamId);
   const usePlaceholder = team?.usePlaceholderVideo ?? false;
-  const { matches, loaded: matchesLoaded } = useLibraryMatchesBySeason(seasonId);
-  const { sessions, loaded: sessionsLoaded } = useTeamPracticeSessions(teamId);
+  const { matches, loaded: matchesLoaded, error: matchesError, retry: retryMatches } = useLibraryMatchesBySeason(seasonId);
+  const { sessions, loaded: sessionsLoaded, error: sessionsError, retry: retrySessions } = useTeamPracticeSessions(teamId);
+  const loadError = matchesError ?? sessionsError;
   const season = getSeason(seasonId);
 
   const rows = useMemo(
@@ -72,10 +74,18 @@ export function MatchSelect({
 
       {!loaded ? (
         <div className="glass-card h-48 animate-pulse" />
+      ) : loadError ? (
+        <LoadError
+          failure={loadError}
+          onRetry={() => {
+            retryMatches();
+            retrySessions();
+          }}
+        />
       ) : rows.length === 0 ? (
         <GlassPanel className="py-10 text-center text-sm text-[var(--muted-foreground)]">
           No {DIFFICULTY_LABELS[difficulty].toLowerCase()} matches in the library yet &mdash; ask an admin to import one in the
-          Admin Panel.
+          Admin Panel (or, if matches were imported before and are missing, to press Update library in Admin Panel &gt; Match Library).
         </GlassPanel>
       ) : (
         <div className="flex flex-col gap-2">

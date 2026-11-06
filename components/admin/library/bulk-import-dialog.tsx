@@ -245,7 +245,7 @@ export function BulkImportDialog({
                 placeholder={"matchType\tmatchNumber\tred1\tred2\tblue1\tblue2\tredScore\tblueScore\tredPenalty\tbluePenalty\tyoutubeUrl\tstartSec\tendSec\tnotes"}
                 spellCheck={false}
               />
-              <p className="mt-1.5 text-xs text-[var(--muted-foreground)]">With or without the header row. Columns: matchType, matchNumber, red1, red2, blue1, blue2, redScore, blueScore, redPenalty, bluePenalty, youtubeUrl, startSec, endSec, notes. Times can be 90, 1:30, or 1:02:30.</p>
+              <p className="mt-1.5 text-xs text-[var(--muted-foreground)]">With or without the header row. Columns: matchType, matchNumber, red1, red2, blue1, blue2, redScore, blueScore, redPenalty, bluePenalty, youtubeUrl, startSec, endSec, notes. Times can be 90, 1:30, or 1:02:30; startSec and endSec may be blank (blank start = from the beginning, blank end = until the video ends).</p>
             </div>
           </section>
 

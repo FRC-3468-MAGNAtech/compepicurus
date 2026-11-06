@@ -54,8 +54,8 @@ export type ValidMatch = {
   matchNumber: number;
   red: ManualAlliance;
   blue: ManualAlliance;
-  /** Null when no link was given (admins can add the video later). */
-  video: { youtubeUrl: string; startSec: number; endSec: number } | null;
+  /** Null when no link was given (admins can add the video later). The times are optional: null = blank (see lib/library/video-window.ts). */
+  video: { youtubeUrl: string; startSec: number | null; endSec: number | null } | null;
   notes: string;
 };
 
@@ -142,14 +142,16 @@ export function validateRawMatch(raw: RawMatch, options: ValidateOptions = {}): 
     if (!parsed) {
       errors.youtubeUrl = "That doesn't look like a YouTube link.";
     } else {
+      // FIX3: both times are optional. Blank start = the beginning (a `t=` in the link pre-fills it); blank end = the match ends with the video.
       const startText = raw.start.trim();
-      const startSec = startText === "" ? (parsed.startSec ?? 0) : parseTimeInput(startText);
-      const endSec = raw.end.trim() === "" ? null : parseTimeInput(raw.end);
-      if (startSec === null) errors.start = "Use seconds (90), 1:30, or 1:02:30.";
-      if (raw.end.trim() === "") errors.end = "Add an end time.";
-      else if (endSec === null) errors.end = "Use seconds (150), 2:30, or 1:02:30.";
-      if (startSec !== null && endSec !== null) {
-        const windowError = validateVideoWindow(startSec, endSec);
+      const endText = raw.end.trim();
+      const startSec = startText === "" ? (parsed.startSec ?? null) : parseTimeInput(startText);
+      const endSec = endText === "" ? null : parseTimeInput(endText);
+      if (startText !== "" && startSec === null) errors.start = "Use seconds (90), 1:30, or 1:02:30 — or leave it blank.";
+      if (endText !== "" && endSec === null) errors.end = "Use seconds (150), 2:30, or 1:02:30 — or leave it blank.";
+      if (!errors.start && !errors.end) {
+        // Only compare the two when both are there; an end on its own just has to be after the beginning (0).
+        const windowError = endSec === null ? null : validateVideoWindow(startSec ?? 0, endSec);
         if (windowError) errors.end = windowError;
         else video = { youtubeUrl: canonicalYouTubeUrl(parsed.videoId), startSec, endSec };
       }
@@ -179,7 +181,7 @@ export function matchToRaw(m: {
   matchType: MatchType;
   matchNumber: number;
   alliances: { red: { teams: number[]; score: number; penaltyPoints: number }; blue: { teams: number[]; score: number; penaltyPoints: number } };
-  video: { youtubeUrl: string; startSec: number; endSec: number } | null;
+  video: { youtubeUrl: string; startSec?: number | null; endSec?: number | null } | null;
   notes?: string;
 }): RawMatch {
   return {
@@ -194,8 +196,8 @@ export function matchToRaw(m: {
     redPenalty: String(m.alliances.red.penaltyPoints),
     bluePenalty: String(m.alliances.blue.penaltyPoints),
     youtubeUrl: m.video?.youtubeUrl ?? "",
-    start: m.video ? formatTime(m.video.startSec) : "",
-    end: m.video ? formatTime(m.video.endSec) : "",
+    start: m.video && typeof m.video.startSec === "number" ? formatTime(m.video.startSec) : "",
+    end: m.video && typeof m.video.endSec === "number" ? formatTime(m.video.endSec) : "",
     notes: m.notes ?? "",
   };
 }
@@ -203,7 +205,7 @@ export function matchToRaw(m: {
 /** A stored library match as the validated shape (for sanity checks against the event's other matches). */
 export function libraryMatchToValid(m: LibraryMatch): ValidMatch {
   const side = (a: LibraryMatch["alliances"]["red"]): ManualAlliance => ({ teams: [a.teams[0] ?? 0, a.teams[1] ?? 0], score: a.score, penaltyPoints: a.penaltyPoints });
-  return { matchType: m.matchType, matchNumber: m.matchNumber, red: side(m.alliances.red), blue: side(m.alliances.blue), video: m.video, notes: m.notes ?? "" };
+  return { matchType: m.matchType, matchNumber: m.matchNumber, red: side(m.alliances.red), blue: side(m.alliances.blue), video: m.video ? { youtubeUrl: m.video.youtubeUrl, startSec: m.video.startSec ?? null, endSec: m.video.endSec ?? null } : null, notes: m.notes ?? "" };
 }
 
 /** The next free match number of a type — what "Save and add next" fills in. */
@@ -314,8 +316,10 @@ export function matchWarnings(match: ValidMatch, ctx: { event: Pick<EventRef, "e
     if (outlier) warnings.push(`${name} score ${score} is far from this event's other matches (typically ${outlier.low}-${outlier.high}).`);
   }
 
-  if (match.video && match.video.endSec - match.video.startSec > LONG_CLIP_SECONDS) {
-    warnings.push(`The video clip is ${formatTime(match.video.endSec - match.video.startSec)} long — a single match is usually under 3 minutes.`);
+  // A clip with an end time can be measured; one without ends with the video, whose length isn't known here.
+  if (match.video && typeof match.video.endSec === "number") {
+    const length = match.video.endSec - (match.video.startSec ?? 0);
+    if (length > LONG_CLIP_SECONDS) warnings.push(`The video clip is ${formatTime(length)} long — a single match is usually under 3 minutes.`);
   }
   return warnings;
 }

@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { loadYouTubeIframeAPI, extractYouTubeId, type YTPlayerInstance } from "@/components/video/youtube";
 import type { VideoPlayerHandle } from "@/components/video/types";
+import { hasReachedEnd, youTubeWindowVars } from "@/lib/library/video-window";
 import type { LibraryVideo } from "@/lib/match-library";
 
 export type YouTubePlayerProps = {
@@ -13,10 +14,12 @@ export type YouTubePlayerProps = {
 };
 
 /**
- * Real-video path for <VideoPlayer/>, honoring startSec/endSec. `end` in
+ * Real-video path for <VideoPlayer/>, honoring startSec/endSec — both optional
+ * (FIX3, lib/library/video-window.ts): no start plays from the beginning, no end lets
+ * the match end when the video does (YouTube's own ENDED event). `end` in
  * playerVars alone isn't always reliable for firing right at the boundary,
- * so a polling safety net also calls onEnded once getCurrentTime() passes
- * endSec. `lockPause` hides native controls and immediately resumes
+ * so, when there IS an end time, a polling safety net also calls onEnded once
+ * getCurrentTime() passes it. `lockPause` hides native controls and immediately resumes
  * playback if something still manages to pause it (keyboard, etc.) — there's
  * no official "disable pause" API.
  */
@@ -37,8 +40,7 @@ export const YouTubePlayer = forwardRef<VideoPlayerHandle, YouTubePlayerProps>(f
       playerRef.current = new YT.Player(containerRef.current, {
         videoId,
         playerVars: {
-          start: Math.floor(video.startSec),
-          end: Math.ceil(video.endSec),
+          ...youTubeWindowVars(video),
           controls: lockPause ? 0 : 1,
           disablekb: lockPause ? 1 : 0,
           rel: 0,
@@ -68,18 +70,19 @@ export const YouTubePlayer = forwardRef<VideoPlayerHandle, YouTubePlayerProps>(f
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId, lockPause, video.startSec, video.endSec]);
 
+  const endSec = video.endSec;
   useEffect(() => {
     const interval = window.setInterval(() => {
       const player = playerRef.current;
       if (!player || endedRef.current) return;
-      if (player.getCurrentTime() >= video.endSec) {
+      if (hasReachedEnd(player.getCurrentTime(), { endSec })) {
         endedRef.current = true;
         player.pauseVideo();
         onEnded?.();
       }
     }, 500);
     return () => window.clearInterval(interval);
-  }, [video.endSec, onEnded]);
+  }, [endSec, onEnded]);
 
   useImperativeHandle(ref, () => ({
     play: () => playerRef.current?.playVideo(),
@@ -89,6 +92,11 @@ export const YouTubePlayer = forwardRef<VideoPlayerHandle, YouTubePlayerProps>(f
     },
     seek: (seconds: number) => playerRef.current?.seekTo(seconds, true),
     getCurrentTime: () => playerRef.current?.getCurrentTime() ?? 0,
+    // 0 until YouTube has loaded the video's metadata; callers treat that as "unknown".
+    getDuration: () => {
+      const d = playerRef.current?.getDuration?.() ?? 0;
+      return Number.isFinite(d) && d > 0 ? d : null;
+    },
   }));
 
   if (!videoId) {

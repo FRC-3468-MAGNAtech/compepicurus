@@ -268,30 +268,24 @@ async function patchMatches(actor: Actor, ids: string[], patch: Record<string, u
 export const setMatchesPublished = (actor: Actor, ids: string[], published: boolean) =>
   patchMatches(actor, ids, { published, needsReview: false }, { op: published ? "publish-matches" : "unpublish-matches" });
 
-/** A match whose clip hasn't been timed yet gets this window until an admin sets the real one (an FTC match is 2:30). */
-export const PLACEHOLDER_CLIP = { startSec: 0, endSec: 150 };
-
 /**
- * Sets one YouTube link on many matches. Each keeps its own start/end times; a
- * match with no video yet gets the placeholder 0:00-2:30 window, which the admin
- * then fixes per match. Returns how many got the placeholder, so the UI can say so.
+ * Sets one YouTube link on many matches. Each keeps its own start and end times
+ * (FIX3: times are optional, so a match with none simply keeps none — it plays
+ * from the beginning to the end of the video).
  */
-export async function setMatchesVideoLink(actor: Actor, matches: Pick<LibraryMatch, "id" | "video">[], videoId: string): Promise<{ placeholders: number }> {
+export async function setMatchesVideoLink(actor: Actor, matches: Pick<LibraryMatch, "id" | "video">[], videoId: string): Promise<void> {
   const now = new Date().toISOString();
   const youtubeUrl = canonicalYouTubeUrl(videoId);
-  let placeholders = 0;
   const groups = chunk(matches, BATCH_SIZE);
   for (let i = 0; i < groups.length; i++) {
     const batch = writeBatch(db);
     for (const m of groups[i]) {
-      if (!m.video) placeholders++;
-      const video: LibraryVideo = { youtubeUrl, startSec: m.video?.startSec ?? PLACEHOLDER_CLIP.startSec, endSec: m.video?.endSec ?? PLACEHOLDER_CLIP.endSec };
+      const video: LibraryVideo = { youtubeUrl, startSec: m.video?.startSec ?? null, endSec: m.video?.endSec ?? null };
       batch.update(doc(db, MATCHES, m.id), { video, updatedAt: now });
     }
     if (i === 0) audit(batch, actor, { op: "set-video", count: matches.length, matchIds: matches.slice(0, 50).map((m) => m.id) }, null, { youtubeUrl });
     await batch.commit();
   }
-  return { placeholders };
 }
 
 export async function deleteManualMatches(actor: Actor, ids: string[]): Promise<void> {

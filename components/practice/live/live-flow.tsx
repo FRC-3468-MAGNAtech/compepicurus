@@ -22,6 +22,8 @@ import { useTeamLiveSessions, claimSessionId, updatePracticeSession, usePractice
 import { getSeason } from "@/lib/seasons";
 import { useLibraryMatches } from "@/lib/match-library";
 import type { FtcEvent, FtcMatch, MatchType } from "@/lib/ftc/types";
+import { LoadError } from "@/components/practice/load-error";
+import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
 type LiveStep = "link" | "event" | "match" | "robot" | "session" | "results";
 type Roster = { red: [number, number]; blue: [number, number] };
@@ -67,7 +69,7 @@ export function LiveFlow({
   const [teamNumber, setTeamNumber] = useState<number | null>(resumePendingRobot?.teamNumber ?? null);
   const [sessionId, setSessionId] = useState<string | null>(viewResultsSessionId ?? null);
   const [claiming, setClaiming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FirestoreFailure | null>(null);
   const [resumeHandled, setResumeHandled] = useState(false);
 
   const eventsQuery = useFtcQuery(`live-events:${season}`, () => getEvents({ season }));
@@ -77,7 +79,7 @@ export function LiveFlow({
 
   const { session } = usePracticeSession(sessionId);
   const matchKey = event && matchNumber !== null ? liveMatchKey(event.code, matchType, matchNumber) : null;
-  const { scouts: presence } = useLiveMatchScouts(matchKey);
+  const { scouts: presence } = useLiveMatchScouts(matchKey, teamId);
   const { sessions: teamLiveSessions } = useTeamLiveSessions(teamId);
 
   const matches: FtcMatch[] = matchType === "Qualification" ? (qualQuery.data ?? []) : (playoffQuery.data ?? []);
@@ -168,7 +170,7 @@ export function LiveFlow({
       setSessionId(newSessionId);
       setStep("session");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start that session.");
+      setError(describeFirestoreError("Couldn't start that session.", err));
     } finally {
       setClaiming(false);
     }
@@ -345,7 +347,7 @@ export function LiveFlow({
           </div>
           <GlassPanel className="flex flex-col gap-4">
             <h2 className="text-lg font-bold">Pick your robot</h2>
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {error && <LoadError failure={error} />}
             {joinOption.kind === "forced" ? (
               <>
                 <p className="text-sm text-[var(--muted-foreground)]">
