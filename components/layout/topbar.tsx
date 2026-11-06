@@ -10,7 +10,7 @@ import type { ConnectionNotice } from "@/lib/connection-notice";
 
 export function Topbar({ onMenuClick, connection = null }: { onMenuClick: () => void; connection?: ConnectionNotice | null }) {
   return (
-    <div className="glass-panel sticky top-3 z-20 mb-4 flex items-center justify-between gap-3 p-3 lg:hidden">
+    <div className="glass-panel sticky top-[max(0.75rem,env(safe-area-inset-top))] z-20 mb-4 flex items-center justify-between gap-3 p-3 lg:hidden">
       <Link href="/dashboard" className="flex items-center gap-2">
         <span
           className="flex h-8 w-8 items-center justify-center rounded-lg"
@@ -27,7 +27,7 @@ export function Topbar({ onMenuClick, connection = null }: { onMenuClick: () => 
           whileTap={{ scale: 0.92 }}
           transition={springSnappy}
           onClick={onMenuClick}
-          className="glass-pill flex h-9 w-9 items-center justify-center"
+          className="glass-pill flex h-11 w-11 items-center justify-center"
           aria-label="Open menu"
         >
           <Menu className="h-[18px] w-[18px]" />

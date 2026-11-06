@@ -477,7 +477,7 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={springSnappy}
-            className="glass-strong fixed bottom-24 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium shadow-2xl"
+            className="glass-strong fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium shadow-2xl"
           >
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             Match logged &mdash; ready for the next one.

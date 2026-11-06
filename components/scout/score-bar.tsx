@@ -6,7 +6,7 @@ import type { ScoreBreakdown } from "@/lib/scout-entries";
 
 export function ScoreBar({ score }: { score: ScoreBreakdown }) {
   return (
-    <div className="glass-strong sticky bottom-3 z-20 mt-2 flex items-center justify-between gap-4 rounded-full px-5 py-3 shadow-2xl">
+    <div className="glass-strong sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex items-center justify-between gap-4 rounded-full px-5 py-3 shadow-2xl">
       <div className="flex gap-4 text-xs text-[var(--muted-foreground)]">
         <span>Auto {score.auto}</span>
         <span>Teleop {score.teleop}</span>

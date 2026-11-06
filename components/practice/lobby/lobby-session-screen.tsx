@@ -276,7 +276,7 @@ export function LobbySessionScreen({
           {error && <LoadError failure={error} />}
 
           {!alreadySubmitted && (
-            <div className="glass-strong sticky bottom-3 z-20 mt-2 flex items-center justify-end gap-3 rounded-full px-5 py-3 shadow-2xl">
+            <div className="glass-strong sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex items-center justify-end gap-3 rounded-full px-5 py-3 shadow-2xl">
               <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={submitting || !mySession}>
                 <Send className="h-4 w-4" /> {submitting ? "Submitting…" : "Submit"}
               </Button>

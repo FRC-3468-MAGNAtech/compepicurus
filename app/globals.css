@@ -244,3 +244,114 @@ body {
 ::view-transition-new(root) {
   animation-duration: 0.5s;
 }
+
+/* ------------------------------------------------------------------------
+   Mobile pass (P17). Unlayered on purpose: Tailwind's utilities live in a
+   cascade layer, so these win over text-sm / h-8 without !important.
+   ------------------------------------------------------------------------ */
+
+/* No horizontal page scroll anywhere: wide content (tables, brackets) scrolls inside
+   its own container. `clip` (not `hidden`) so sticky positioning keeps working. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* Wide containers scroll with momentum and don't chain the gesture to the page. */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Safe areas: bars pinned to the bottom or sides clear the notch / home indicator. */
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+.safe-x {
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+
+/* Touch devices: at least 44x44 CSS px to hit, and no hover-only affordances. */
+@media (pointer: coarse) {
+  button:not(.touch-compact),
+  select,
+  summary,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]):not([type="file"]) {
+    min-height: 44px;
+  }
+  /* Icon-only buttons (a lone svg) get a square 44px target. */
+  button:not(.touch-compact):has(> svg:only-child) {
+    min-width: 44px;
+  }
+  /* Small controls that must not grow (Radix checkboxes, switches, radio dots, table grips) keep their look
+     and get a larger invisible hit area instead, without changing layout. */
+  [role="checkbox"],
+  [role="switch"],
+  [role="radio"],
+  .touch-compact {
+    position: relative;
+  }
+  [role="checkbox"]::after,
+  [role="switch"]::after,
+  [role="radio"]::after,
+  .touch-compact::after {
+    content: "";
+    position: absolute;
+    inset: -10px;
+  }
+}
+
+/* Tablets and phones: 16px+ form text, so iOS Safari doesn't zoom the page on focus. */
+@media (max-width: 1023px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]):not([type="file"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Glass is expensive on mobile GPUs: less blur, and the drifting background blobs hold still on phones. */
+@media (max-width: 767px) {
+  .glass-panel,
+  .glass-card,
+  .glass-pill,
+  .glass-overlay {
+    backdrop-filter: blur(12px) saturate(130%);
+    -webkit-backdrop-filter: blur(12px) saturate(130%);
+  }
+  .glass-strong {
+    backdrop-filter: blur(16px) saturate(130%);
+    -webkit-backdrop-filter: blur(16px) saturate(130%);
+  }
+  /* The blobs are already soft radial gradients; the extra blur filter is pure GPU cost on a phone. */
+  .bg-blob {
+    animation: none !important;
+    filter: none !important;
+    will-change: auto;
+  }
+}
+
+/* People who asked for less transparency: solid panels, no blur at all. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-panel,
+  .glass-card,
+  .glass-strong,
+  .glass-pill,
+  .glass-overlay {
+    background: color-mix(in srgb, var(--background) 94%, white 6%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .glass-overlay {
+    background: color-mix(in srgb, var(--background) 98%, white 2%);
+  }
+}
+
+/* Reduced motion also stops the decorative background drift outright. */
+@media (prefers-reduced-motion: reduce) {
+  .bg-blob {
+    animation: none !important;
+  }
+}

@@ -9,7 +9,7 @@ import { SiteFooter } from "@/components/layout/site-footer";
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col px-4 lg:px-8">
+    <div className="mx-auto flex min-h-dvh w-full max-w-[1400px] flex-col px-4 lg:px-8">
       <header className="glass-panel sticky top-4 z-30 mt-4 flex items-center justify-between px-4 py-3 sm:px-6">
         <Link href="/" className="flex items-center gap-2.5">
           <span

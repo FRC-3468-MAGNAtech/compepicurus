@@ -129,6 +129,7 @@ export function MatchPickerDialog({
               <Input
                 id="manual-match-number"
                 type="number"
+                inputMode="numeric"
                 min={1}
                 value={manualNumber}
                 onChange={(e) => setManualNumber(e.target.value)}

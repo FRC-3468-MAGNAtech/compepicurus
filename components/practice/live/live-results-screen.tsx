@@ -10,7 +10,8 @@ import { getStatus, getPercentColor } from "@/lib/accuracy/engine";
 import { useAuth } from "@/lib/auth";
 import { useEntriesForMatch } from "@/lib/scout-entries";
 import { LIVE_CONFIG } from "@/lib/live/config";
-import { isLikelyUnsupportedIOSBrowser, requestAndRegisterPush } from "@/lib/notifications";
+import { AddToHomeScreenHint } from "@/components/ui/add-to-home-screen-hint";
+import { requestAndRegisterPush } from "@/lib/notifications";
 import { cardEntranceVariants } from "@/lib/motion";
 import type { PracticeSession } from "@/lib/practice-sessions";
 
@@ -56,11 +57,7 @@ export function LiveResultsScreen({ session, onBackToPracticeScouting }: { sessi
                 <Bell className="h-4 w-4" /> {pushState === "requesting" ? "Requesting…" : "Enable notifications"}
               </Button>
               {pushState === "failed" && <p className="text-xs text-amber-400">Couldn&apos;t enable push on this device/browser.</p>}
-              {isLikelyUnsupportedIOSBrowser() && (
-                <p className="max-w-xs text-xs text-[var(--muted-foreground)]">
-                  On iPhone, push only works once this site is added to your Home Screen (Share &rarr; Add to Home Screen).
-                </p>
-              )}
+              <AddToHomeScreenHint />
             </div>
           )}
           {pushState === "enabled" && <Badge variant="success">Notifications enabled</Badge>}

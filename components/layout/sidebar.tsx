@@ -97,7 +97,7 @@ export function Sidebar({ mobileOpen, onClose, connection = null }: { mobileOpen
         initial={false}
         animate={{ width: collapsed ? 84 : 272 }}
         transition={spring}
-        className="glass-panel sticky top-4 z-30 hidden h-[calc(100vh-2rem)] flex-col gap-4 overflow-hidden p-4 lg:flex"
+        className="glass-panel sticky top-4 z-30 hidden h-[calc(100dvh-2rem)] flex-col gap-4 overflow-hidden p-4 lg:flex"
       >
         <SidebarInner
           collapsed={collapsed}

@@ -71,6 +71,10 @@ export function DialogContent({
                 transition={spring}
                 className={cn(
                   "glass-strong fixed left-1/2 top-1/2 z-50 w-[min(92vw,480px)] -translate-x-1/2 -translate-y-1/2 rounded-[28px] p-6 shadow-2xl",
+                  // P17: on a phone the dialog is a bottom sheet — full width, pinned to the bottom edge, rounded on top only, at most
+                  // 92% of the *dynamic* viewport (so the on-screen keyboard and browser toolbars can't push it off screen), scrolling
+                  // inside, with the home-indicator safe area below its content. The solid .glass-strong/.glass-overlay backing is unchanged.
+                  "max-sm:bottom-0 max-sm:left-0 max-sm:top-auto max-sm:max-h-[92dvh] max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:overscroll-contain max-sm:rounded-b-none max-sm:rounded-t-[28px] max-sm:px-5 max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]",
                   className
                 )}
               >

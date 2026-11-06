@@ -90,6 +90,7 @@ export function TeamPickerDialog({
               <Input
                 id="manual-team-number"
                 type="number"
+                inputMode="numeric"
                 min={1}
                 value={manualNumber}
                 onChange={(e) => setManualNumber(e.target.value)}
