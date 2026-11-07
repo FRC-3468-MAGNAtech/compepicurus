@@ -94,7 +94,7 @@ export function TeamPickerDialog({
                 min={1}
                 value={manualNumber}
                 onChange={(e) => setManualNumber(e.target.value)}
-                placeholder="3468"
+                placeholder="12345"
                 autoFocus
               />
             </div>

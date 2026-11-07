@@ -13,6 +13,7 @@ import { LiveMatchPill } from "@/components/layout/live-match-pill";
 import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
 import { useAuth } from "@/lib/auth";
 import { useConnectionNotice } from "@/lib/use-connection-state";
+import { FieldTeamsProvider } from "@/lib/field-teams-context";
 
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -38,6 +39,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     "/analytics/teams",
     "/people",
     "/team-management",
+    "/team-settings",
     "/account",
     "/admin",
     "/practice-scouting",
@@ -66,20 +68,23 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
-      <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} connection={connection} />
-      <div className="min-w-0 flex-1">
-        <Topbar onMenuClick={() => setMobileNavOpen(true)} connection={connection} />
-        <main className="min-w-0">
-          <VerifyEmailBanner className="mb-4" />
-          {isPlaceholderPage && <PlaceholderBanner className="mb-4" />}
-          <LiveMatchPill />
-          <PageTransition>{children}</PageTransition>
-        </main>
-        <SiteFooter className="mt-10" />
+    // P19: one shared subscription to the account's FTC teams for the whole signed-in app.
+    <FieldTeamsProvider>
+      <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
+        <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} connection={connection} />
+        <div className="min-w-0 flex-1">
+          <Topbar onMenuClick={() => setMobileNavOpen(true)} connection={connection} />
+          <main className="min-w-0">
+            <VerifyEmailBanner className="mb-4" />
+            {isPlaceholderPage && <PlaceholderBanner className="mb-4" />}
+            <LiveMatchPill />
+            <PageTransition>{children}</PageTransition>
+          </main>
+          <SiteFooter className="mt-10" />
+        </div>
+        <ScoresReadyWatcher />
+        {profile.isAdmin && <LibraryBackfill />}
       </div>
-      <ScoresReadyWatcher />
-      {profile.isAdmin && <LibraryBackfill />}
-    </div>
+    </FieldTeamsProvider>
   );
 }

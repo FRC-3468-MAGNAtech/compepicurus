@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AnalyticsLink } from "@/components/analytics/analytics-link";
 import { PhaseMiniBars, type PhaseValues } from "@/components/analytics/phase-bars";
-import { LowSampleBadge } from "@/components/analytics/team-bits";
+import { LowSampleBadge, OurTeamTag } from "@/components/analytics/team-bits";
+import { useIsOurTeam } from "@/lib/field-teams-context";
+import { cn } from "@/lib/utils";
 import { ReliabilityPill } from "@/components/analytics/reliability-pill";
 import { useTeamStats } from "@/lib/analytics/data-context";
 import {
@@ -105,6 +107,7 @@ export default function TeamBreakdownPage() {
 function TeamCard({ team, schema, phaseMax }: { team: TeamStats; schema: ScoutFormSchema; phaseMax: PhaseValues }) {
   const key = useMemo(() => buildKeyStats(team, schema), [team, schema]);
   const lowSample = team.entryCount < DEFAULT_MIN_ENTRIES;
+  const isOurs = useIsOurTeam()(team.teamNumber);
 
   return (
     <AnalyticsLink
@@ -112,10 +115,13 @@ function TeamCard({ team, schema, phaseMax }: { team: TeamStats; schema: ScoutFo
       className="block h-full rounded-[28px] outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--glow),0.6)]"
       aria-label={`Team ${team.teamNumber}${team.teamName ? `, ${team.teamName}` : ""} — open profile`}
     >
-      <GlassPanel interactive className="flex h-full flex-col gap-4">
+      <GlassPanel interactive className={cn("flex h-full flex-col gap-4", isOurs && "ring-2 ring-[var(--color-primary)]")}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-2xl font-semibold tabular-nums">{team.teamNumber}</div>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-semibold tabular-nums">{team.teamNumber}</span>
+              {isOurs && <OurTeamTag />}
+            </div>
             <div className="truncate text-sm text-[var(--muted-foreground)]">{team.teamName ?? "—"}</div>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">

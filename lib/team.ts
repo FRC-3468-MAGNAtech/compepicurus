@@ -5,10 +5,18 @@ import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { FtcEvent } from "@/lib/ftc/types";
 import { buildActiveEventsFields, type ActiveEventsState } from "@/lib/active-events";
+import type { FieldTeam } from "@/lib/field-teams";
 
 export type TeamDoc = {
+  /** Legacy single FTC team number. Since P19 it mirrors the first entry of `fieldTeams` (still read as a fallback until the migration has run). Prefer useFieldTeams() (lib/field-teams-context.tsx). */
   number: number;
   name: string | null;
+  /** P19: the account's FTC teams, in the admin's order. Absent on accounts the migration hasn't reached; `readFieldTeams()` (lib/field-teams.ts) falls back to `number`/`name`. */
+  fieldTeams?: FieldTeam[];
+  /** P19: ids of `fieldTeams`, same order. A rules-only mirror (firestore.rules can't project a list of maps) that member `fieldTeamIds` writes are checked against. */
+  fieldTeamIdList?: string[];
+  /** P19: optional display name for the account itself (e.g. the robotics organisation), separate from the FTC teams. */
+  accountName?: string | null;
   joinCode: string;
   activeEventCode: string | null;
   activeSeasonId: number | null;

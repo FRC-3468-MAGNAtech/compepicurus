@@ -7,6 +7,7 @@ import { useTeamPracticeSessions } from "@/lib/practice-sessions";
 import type { RoleId } from "@/lib/roles";
 import { useTeamScoutEntries, type ScoutEntry } from "@/lib/scout-entries";
 import { useTeamMembers } from "@/lib/team-members";
+import { useFieldTeams } from "@/lib/field-teams-context";
 import type { FtcEvent } from "@/lib/ftc/types";
 import { computeScoutStats } from "./engine";
 import type { RankingBasisId, RealEventCalculationScope, ScoutCategory, ScoutStatsResult } from "./types";
@@ -55,17 +56,20 @@ export type UseScoutStatsOptions = {
   category: ScoutCategory;
   roleFilter: RoleId[];
   eventFilter: string[];
+  /** P19: FTC team ids to show (empty = everyone). */
+  teamFilter?: string[];
   rankingBasis: RankingBasisId;
   realEventScope: RealEventCalculationScope;
 };
 
 /** Combines `useScoutStatsSources` with `computeScoutStats`, memoized on every input that actually changes the result. */
-export function useScoutStats({ teamId, category, roleFilter, eventFilter, rankingBasis, realEventScope }: UseScoutStatsOptions): {
+export function useScoutStats({ teamId, category, roleFilter, eventFilter, teamFilter, rankingBasis, realEventScope }: UseScoutStatsOptions): {
   result: ScoutStatsResult | null;
   loaded: boolean;
   sources: ReturnType<typeof useScoutStatsSources>;
 } {
   const sources = useScoutStatsSources(teamId);
+  const { fieldTeams } = useFieldTeams();
   const { members, sessions, entries, libraryMatchesById, attendance, loaded } = sources;
 
   const result = useMemo(() => {
@@ -79,6 +83,8 @@ export function useScoutStats({ teamId, category, roleFilter, eventFilter, ranki
       attendance,
       roleFilter,
       eventFilter,
+      teamFilter,
+      fieldTeams,
       rankingBasis,
       realEventScope,
     });
@@ -93,6 +99,8 @@ export function useScoutStats({ teamId, category, roleFilter, eventFilter, ranki
     attendance,
     roleFilter,
     eventFilter,
+    teamFilter,
+    fieldTeams,
     rankingBasis,
     realEventScope.eventCode,
     realEventScope.variant,

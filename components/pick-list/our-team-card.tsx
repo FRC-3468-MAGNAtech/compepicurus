@@ -9,7 +9,18 @@ import type { PickRow } from "@/lib/pick-list/rows";
  * official rank, scouted rank, and record — the numbers every Pick % is
  * measured from.
  */
-export function OurTeamCard({ teamNumber, row, showEpa }: { teamNumber: number | null; row: PickRow | null; showEpa: boolean }) {
+export function OurTeamCard({
+  teamNumber,
+  row,
+  showEpa,
+  switcher,
+}: {
+  teamNumber: number | null;
+  row: PickRow | null;
+  showEpa: boolean;
+  /** P19: a control to choose which of the account's FTC teams this card (and every Pick % on the board) is measured from. */
+  switcher?: React.ReactNode;
+}) {
   const record = row?.record ? `${row.record.wins}-${row.record.losses}-${row.record.ties}` : "-";
   const stats: { label: string; value: string }[] = [
     { label: "Official rank", value: row?.oRank == null ? "-" : `#${row.oRank}` },
@@ -32,6 +43,7 @@ export function OurTeamCard({ teamNumber, row, showEpa }: { teamNumber: number |
             {row?.teamName && <span className="ml-2 text-sm font-normal text-[var(--muted-foreground)]">{row.teamName}</span>}
           </div>
         </div>
+        {switcher && <div className="ml-2">{switcher}</div>}
       </div>
       <dl className="flex flex-wrap gap-x-6 gap-y-2">
         {stats.map((s) => (

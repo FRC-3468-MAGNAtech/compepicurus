@@ -5,7 +5,8 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Label } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TeamTable, type TeamTableColumn, type TeamTableSort } from "@/components/analytics/team-table";
-import { LowSampleBadge, TeamCell } from "@/components/analytics/team-bits";
+import { LowSampleBadge, OUR_TEAM_ROW_CLASS, TeamCell } from "@/components/analytics/team-bits";
+import { useIsOurTeam } from "@/lib/field-teams-context";
 import { useTeamStats } from "@/lib/analytics/data-context";
 import { DEFAULT_MIN_ENTRIES, RANK_METRICS, metricValue, rankTeams, type RankMetric, type RankedTeam } from "@/lib/analytics/team-stats";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ function formatMetric(metric: RankMetric, value: number): string {
 
 export default function RankingsPage() {
   const { teamStats, loaded } = useTeamStats();
+  const isOurs = useIsOurTeam();
   const [metric, setMetric] = useState<RankMetric>("avgTotal");
   const [minEntries, setMinEntries] = useState(DEFAULT_MIN_ENTRIES);
   // Sorting never touches the rank numbers: they come from rankTeams(), the sort only reorders rows.
@@ -143,7 +145,9 @@ export default function RankingsPage() {
             getHref={(r) => `/analytics/teams/${r.stats.teamNumber}`}
             sort={sort}
             onSortChange={setSort}
-            rowClassName={(r) => (r.rank !== null && r.rank <= 3 ? "bg-[rgba(var(--glow),0.09)]" : r.lowSample ? "opacity-70" : undefined)}
+            rowClassName={(r) =>
+              isOurs(r.stats.teamNumber) ? OUR_TEAM_ROW_CLASS : r.rank !== null && r.rank <= 3 ? "bg-[rgba(var(--glow),0.09)]" : r.lowSample ? "opacity-70" : undefined
+            }
           />
         </>
       )}

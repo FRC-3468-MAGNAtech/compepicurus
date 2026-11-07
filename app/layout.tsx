@@ -20,7 +20,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "CompEpicurus — FTC Scouting",
-  description: "FTC Team 3468 MAGNAtech's scouting app.",
+  description: "A scouting app for FTC teams.",
   // The manifest itself is app/manifest.ts. These make an iPhone "Add to Home Screen" install look right (P17).
   icons: { icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }], apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
   appleWebApp: { capable: true, title: "CompEpicurus", statusBarStyle: "black-translucent" },

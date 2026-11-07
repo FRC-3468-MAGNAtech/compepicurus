@@ -22,6 +22,8 @@ export type AuditAction =
   | "refresh-official-scores"
   | "export-backup"
   | "edit-member-roles"
+  | "edit-member-teams"
+  | "edit-field-teams"
   | "edit-pick-list"
   | "create-changelog-entry"
   | "edit-changelog-entry"

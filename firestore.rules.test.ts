@@ -2677,3 +2677,174 @@ describe("P16: scoutTargets/{teamId}_{eventCode}", () => {
     );
   });
 });
+
+// P19: several FTC teams under one account. Only admins/the owner edit `fieldTeams` and members'
+// `fieldTeamIds`; a member can't change their own; assignments must reference teams that exist.
+describe("P19 FTC teams", () => {
+  const A = { id: "ft-3468", number: 3468, name: "Alpha" };
+  const B = { id: "fteam_b", number: 35794, name: "Beta" };
+  const asScout = () => testEnv.authenticatedContext(SCOUT_UID).firestore();
+  const asAdmin = () => testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const asOwner = () => testEnv.authenticatedContext(OWNER_UID).firestore();
+  const teamWrite = (teams: { id: string }[], extra: Record<string, unknown> = {}) => ({
+    fieldTeams: teams,
+    fieldTeamIdList: teams.map((t) => t.id),
+    number: 3468,
+    name: null,
+    ...extra,
+  });
+
+  // The state right after the migration: the team has fieldTeams + the id mirror, members have fieldTeamIds.
+  async function seedMigrated(teams = [A, B]) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await updateDoc(doc(db, "teams", TEAM_ID), teamWrite(teams));
+      for (const uid of [OWNER_UID, ADMIN_UID, SCOUT_UID]) await updateDoc(doc(db, "users", uid), { fieldTeamIds: teams.map((t) => t.id) });
+    });
+  }
+
+  describe("teams/{teamId}.fieldTeams", () => {
+    it("lets an admin and the owner write a valid list, with its id mirror and an account name", async () => {
+      await assertSucceeds(updateDoc(doc(asAdmin(), "teams", TEAM_ID), teamWrite([A, B], { accountName: "Our Org" })));
+      await assertSucceeds(updateDoc(doc(asOwner(), "teams", TEAM_ID), teamWrite([B, A])));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { accountName: null }));
+    });
+
+    it("blocks a non-admin member from editing them", async () => {
+      await assertFails(updateDoc(doc(asScout(), "teams", TEAM_ID), teamWrite([A, B])));
+      await assertFails(updateDoc(doc(asScout(), "teams", TEAM_ID), { accountName: "Mine now" }));
+    });
+
+    it("blocks an admin of a different team", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), {
+          name: "Outsider Admin",
+          email: "o@example.com",
+          teamId: OTHER_TEAM_ID,
+          primaryRole: "lead-scout",
+          secondaryRoles: [],
+          isAdmin: true,
+          isOwner: false,
+          themeId: "team",
+        });
+      });
+      await assertFails(updateDoc(doc(testEnv.authenticatedContext(OTHER_TEAM_UID).firestore(), "teams", TEAM_ID), teamWrite([A, B])));
+    });
+
+    it("rejects an empty list, more than 10 teams, a missing or mismatched id mirror, and an over-long account name", async () => {
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), teamWrite([])));
+      const eleven = Array.from({ length: 11 }, (_, i) => ({ id: `t${i}`, number: i + 1, name: "" }));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), teamWrite(eleven)));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { fieldTeams: [A, B] })); // no mirror
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { fieldTeams: [A, B], fieldTeamIdList: [A.id] })); // size mismatch
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { accountName: "x".repeat(61) }));
+    });
+
+    it("leaves a not-yet-migrated team doc (no fieldTeams) fully usable for the existing admin writes", async () => {
+      await assertSucceeds(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { activeEventCode: "USNYLI" }));
+    });
+  });
+
+  describe("users/{uid}.fieldTeamIds", () => {
+    it("blocks a member from changing their own assignment, but not their other own fields", async () => {
+      await seedMigrated();
+      await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { fieldTeamIds: [A.id] }));
+      await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { fieldTeamIds: [] }));
+      await assertSucceeds(updateDoc(doc(asScout(), "users", SCOUT_UID), { themeId: "pride-rainbow", activeFieldTeamId: B.id }));
+    });
+
+    it("lets a member who has never had a list (pre-migration) keep editing their own profile", async () => {
+      await assertSucceeds(updateDoc(doc(asScout(), "users", SCOUT_UID), { themeId: "pride-rainbow", activeFieldTeamId: "ft-3468" }));
+      await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { fieldTeamIds: ["ft-3468"] }));
+    });
+
+    it("lets an admin and the owner assign members, themselves included", async () => {
+      await seedMigrated();
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { fieldTeamIds: [B.id] }));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", ADMIN_UID), { fieldTeamIds: [A.id] }));
+      await assertSucceeds(updateDoc(doc(asOwner(), "users", SCOUT_UID), { fieldTeamIds: [A.id, B.id] }));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { fieldTeamIds: [] }));
+    });
+
+    it("never lets one member assign another", async () => {
+      await seedMigrated();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users", "scout-2"), {
+          name: "Second",
+          email: "s2@example.com",
+          teamId: TEAM_ID,
+          primaryRole: "match-scout",
+          secondaryRoles: [],
+          isAdmin: false,
+          isOwner: false,
+          themeId: "team",
+          fieldTeamIds: [A.id, B.id],
+        });
+      });
+      await assertFails(updateDoc(doc(asScout(), "users", "scout-2"), { fieldTeamIds: [A.id] }));
+    });
+
+    it("rejects ids that aren't FTC teams of the account, and non-lists", async () => {
+      await seedMigrated();
+      await assertFails(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { fieldTeamIds: ["nope"] }));
+      await assertFails(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { fieldTeamIds: [A.id, "nope"] }));
+      await assertFails(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { fieldTeamIds: A.id }));
+    });
+
+    it("still allows a role edit when the member's stored assignment has gone stale", async () => {
+      await seedMigrated();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { fieldTeamIds: [A.id, "removed-team"] });
+      });
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { primaryRole: "pit-scout" }));
+    });
+
+    it("lets one batch add an FTC team and assign a member to it, and another remove a team while reassigning its members", async () => {
+      await seedMigrated([A]);
+      const db = asAdmin();
+      const add = writeBatch(db);
+      add.update(doc(db, "teams", TEAM_ID), teamWrite([A, B]));
+      add.update(doc(db, "users", SCOUT_UID), { fieldTeamIds: [A.id, B.id] });
+      await assertSucceeds(add.commit());
+
+      const remove = writeBatch(db);
+      remove.update(doc(db, "teams", TEAM_ID), teamWrite([A]));
+      remove.update(doc(db, "users", SCOUT_UID), { fieldTeamIds: [A.id] });
+      await assertSucceeds(remove.commit());
+    });
+
+    it("rejects a batch that removes a team while assigning a member to it (checked against the post-batch team doc)", async () => {
+      await seedMigrated([A, B]);
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { fieldTeamIds: [A.id] });
+      });
+      const db = asAdmin();
+      const batch = writeBatch(db);
+      batch.update(doc(db, "teams", TEAM_ID), teamWrite([A]));
+      batch.update(doc(db, "users", SCOUT_UID), { fieldTeamIds: [A.id, B.id] });
+      await assertFails(batch.commit());
+    });
+  });
+
+  describe("migration (existing members keep access)", () => {
+    it("members of a not-yet-migrated account can still read the team and everyone's profile, and submit scouting", async () => {
+      const db = asScout();
+      await assertSucceeds(getDoc(doc(db, "teams", TEAM_ID)));
+      await assertSucceeds(getDoc(doc(db, "users", ADMIN_UID)));
+      await assertSucceeds(setDoc(doc(db, "scoutEntries", "e1"), { teamId: TEAM_ID, uid: SCOUT_UID, teamNumber: 254 }));
+    });
+
+    it("the same members have the same access after the migration has written fieldTeams and fieldTeamIds", async () => {
+      await seedMigrated();
+      const db = asScout();
+      await assertSucceeds(getDoc(doc(db, "teams", TEAM_ID)));
+      await assertSucceeds(getDoc(doc(db, "users", ADMIN_UID)));
+      await assertSucceeds(setDoc(doc(db, "scoutEntries", "e2"), { teamId: TEAM_ID, uid: SCOUT_UID, teamNumber: 254 }));
+    });
+
+    it("never lets an outsider read the account's FTC teams", async () => {
+      await seedMigrated();
+      await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "teams", TEAM_ID)));
+    });
+  });
+});

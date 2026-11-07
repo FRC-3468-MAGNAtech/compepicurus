@@ -93,13 +93,13 @@ export function TeamEnrollmentFields({ enrollment }: { enrollment: ReturnType<ty
               inputMode="numeric"
               value={teamNumber}
               onChange={(e) => setTeamNumber(e.target.value)}
-              placeholder="3468"
+              placeholder="12345"
               required
             />
           </div>
           <div>
             <Label htmlFor="team-name">Team name (optional)</Label>
-            <Input id="team-name" value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="MAGNAtech" />
+            <Input id="team-name" value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Team name" />
           </div>
         </>
       ) : (

@@ -22,7 +22,8 @@ import { buildPickBoard, pickRowMatches, PICK_SORTS, sortPickRows, type PickSort
 import { useEpaMode, usePickList } from "@/lib/pick-list/store";
 import { usePermissions } from "@/lib/permissions";
 import { spring } from "@/lib/motion";
-import { useTeamDoc } from "@/lib/team";
+import { useActiveFieldTeam, useFieldTeams } from "@/lib/field-teams-context";
+import { fieldTeamFullLabel, fieldTeamLabel } from "@/lib/field-teams";
 
 export default function PickListPage() {
   // One event at a time — the official data (ranks, EPA) belongs to a single event — even in Practice mode.
@@ -30,7 +31,13 @@ export default function PickListPage() {
 
   const { user, profile } = useAuth();
   const teamId = profile?.teamId ?? null;
-  const { team, loaded: teamLoaded } = useTeamDoc(teamId);
+  // P19: "our team" starts as the FTC team this user is viewing as, and can be switched here among the
+  // account's teams. The switch only changes this page (the sidebar's choice is the user's saved default).
+  const { loaded: teamLoaded, fieldTeams } = useFieldTeams();
+  const { activeFieldTeam } = useActiveFieldTeam();
+  const [ourOverrideId, setOurOverrideId] = useState<string | null>(null);
+  const ourTeam = fieldTeams.find((t) => t.id === ourOverrideId) ?? activeFieldTeam;
+  const ourNumber = ourTeam?.number ?? null;
   const { can } = usePermissions();
   const canEdit = can("editPickList");
 
@@ -71,9 +78,9 @@ export default function PickListPage() {
         rankings,
         teamStats,
         epa,
-        ourTeamNumber: team?.number ?? null,
+        ourTeamNumber: ourNumber,
       }),
-    [teams, rankings, teamStats, picked, teamNames, epa, team?.number]
+    [teams, rankings, teamStats, picked, teamNames, epa, ourNumber]
   );
 
   const [search, setSearch] = useState("");
@@ -125,7 +132,27 @@ export default function PickListPage() {
         <PickListSkeleton />
       ) : (
         <>
-          <OurTeamCard teamNumber={team?.number ?? null} row={board.ours} showEpa={showEpa} />
+          <OurTeamCard
+            teamNumber={ourNumber}
+            row={board.ours}
+            showEpa={showEpa}
+            switcher={
+              fieldTeams.length > 1 ? (
+                <Select value={ourTeam?.id ?? ""} onValueChange={setOurOverrideId}>
+                  <SelectTrigger className="h-10 w-48" aria-label="Which of our teams to plan for">
+                    <SelectValue>{ourTeam ? fieldTeamLabel(ourTeam) : "Choose a team"}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fieldTeams.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {fieldTeamFullLabel(t)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null
+            }
+          />
 
           {!canEdit && (
             <div className="flex items-center gap-2 rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-2.5 text-xs font-medium text-sky-200">

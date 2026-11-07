@@ -12,6 +12,10 @@ import { useActiveEvents } from "@/lib/active-event";
 import { useTeamEventAttendance } from "@/lib/event-attendance";
 import { useTeamMembers } from "@/lib/team-members";
 import { getRole, ROLES } from "@/lib/roles";
+import { FieldTeamChips } from "@/components/team/field-team-chips";
+import { ALL_TEAMS, TeamFilterSelect, selectedTeamIds } from "@/components/team/team-filter-select";
+import { matchesTeamFilter } from "@/lib/field-teams";
+import { useFieldTeams } from "@/lib/field-teams-context";
 
 export default function PeoplePage() {
   const { profile } = useAuth();
@@ -24,9 +28,15 @@ export default function PeoplePage() {
     [attendance, isActive]
   );
   const [query, setQuery] = useState("");
+  // P19: Team filter (next to the search; hidden when the account has a single FTC team).
+  const { fieldTeams } = useFieldTeams();
+  const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
   const filtered = useMemo(
-    () => members.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())),
-    [members, query]
+    () =>
+      members.filter(
+        (p) => p.name.toLowerCase().includes(query.toLowerCase()) && matchesTeamFilter(p.fieldTeamIds, selectedTeamIds(teamFilter, fieldTeams), fieldTeams)
+      ),
+    [members, query, teamFilter, fieldTeams]
   );
 
   return (
@@ -36,12 +46,15 @@ export default function PeoplePage() {
           <h1 className="text-2xl font-semibold tracking-tight">People</h1>
           <p className="text-sm text-[var(--muted-foreground)]">Team roster &amp; directory.</p>
         </div>
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search people..."
-          className="sm:w-64"
-        />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <TeamFilterSelect value={teamFilter} onChange={setTeamFilter} />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people..."
+            className="sm:w-64"
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -70,6 +83,7 @@ export default function PeoplePage() {
                       </Badge>
                     );
                   })}
+                  <FieldTeamChips ids={p.fieldTeamIds} />
                   {p.isOwner && (
                     <Badge variant="glass" className="gap-1 text-[10px]">
                       <ShieldCheck className="h-3 w-3" /> Owner

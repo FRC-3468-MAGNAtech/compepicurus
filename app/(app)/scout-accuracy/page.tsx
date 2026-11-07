@@ -13,6 +13,7 @@ import { usePermissions } from "@/lib/permissions";
 import type { RoleId } from "@/lib/roles";
 import { useRealEventOptions, useScoutStats } from "@/lib/scout-stats/use-scout-stats";
 import { useActiveEvents } from "@/lib/active-event";
+import { useFieldTeams } from "@/lib/field-teams-context";
 import { orderPrimaryFirst } from "@/lib/active-events";
 import type { RankingBasisId, RealEventCalculationScope, ScoutCategory } from "@/lib/scout-stats/types";
 
@@ -24,6 +25,10 @@ export default function ScoutAccuracyPage() {
   const [category, setCategory] = useState<ScoutCategory>("trial");
   const [roleFilter, setRoleFilter] = useState<RoleId[]>([]);
   const [eventFilter, setEventFilter] = useState<string[]>([]);
+  // P19: Team filter, next to Role and Event. A chosen team that gets removed simply stops matching anyone's chips (ignored here).
+  const { fieldTeams } = useFieldTeams();
+  const [teamFilterRaw, setTeamFilter] = useState<string[]>([]);
+  const teamFilter = useMemo(() => teamFilterRaw.filter((id) => fieldTeams.some((t) => t.id === id)), [teamFilterRaw, fieldTeams]);
   const [rankingBasis, setRankingBasis] = useState<RankingBasisId>("preserve");
   const [realEventScope, setRealEventScope] = useState<RealEventCalculationScope>({ eventCode: null, variant: "plain" });
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
@@ -46,6 +51,7 @@ export default function ScoutAccuracyPage() {
     category,
     roleFilter,
     eventFilter,
+    teamFilter,
     rankingBasis: effectiveRankingBasis,
     realEventScope,
   });
@@ -91,6 +97,9 @@ export default function ScoutAccuracyPage() {
             eventOptions={eventOptions}
             eventFilter={eventFilter}
             onEventFilterChange={setEventFilter}
+            fieldTeams={fieldTeams}
+            teamFilter={teamFilter}
+            onTeamFilterChange={setTeamFilter}
             rankingBasis={effectiveRankingBasis}
             onRankingBasisChange={setRankingBasis}
             realEventScope={realEventScope}
@@ -98,7 +107,7 @@ export default function ScoutAccuracyPage() {
           />
 
           <GlassPanel>
-            <LeaderboardTable category={category} rows={result.rows} onViewDetails={setSelectedUid} />
+            <LeaderboardTable category={category} rows={result.rows} onViewDetails={setSelectedUid} showTeams />
           </GlassPanel>
         </>
       )}

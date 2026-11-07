@@ -173,7 +173,7 @@ export function RandomizeModal({
               id="prioritized"
               value={prioritizedText}
               onChange={(e) => setPrioritizedText(e.target.value)}
-              placeholder="3468, 1234"
+              placeholder="12345, 23456"
             />
             <p className="mt-1 text-xs text-[var(--muted-foreground)]">
               With few scouts, only these teams&apos; robots get assigned — every other slot is left open so breaks stay fair.

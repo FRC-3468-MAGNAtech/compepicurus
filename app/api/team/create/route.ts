@@ -5,6 +5,7 @@ import { verifyBearerToken } from "@/lib/server/require-user";
 import { APP_SETTINGS_PATH, getTeamCreationEnabledInTransaction, randomJoinCode } from "@/lib/server/team-settings";
 import { DEFAULT_ROLE_ID } from "@/lib/roles";
 import { defaultThemeId } from "@/lib/themes";
+import { migratedFieldTeamId } from "@/lib/field-teams";
 
 /**
  * Creates a new team, makes the caller its admin, and disables further team
@@ -47,9 +48,13 @@ export async function POST(request: Request) {
       const teamRef = db.collection("teams").doc();
       const joinCode = randomJoinCode();
 
+      // P19: the number the creator enters is the account's first FTC team (more are added in Team Settings).
+      const firstFieldTeam = { id: migratedFieldTeamId(teamNumber), number: teamNumber, name: teamName ?? "" };
       txn.set(teamRef, {
         number: teamNumber,
         name: teamName,
+        fieldTeams: [firstFieldTeam],
+        fieldTeamIdList: [firstFieldTeam.id],
         joinCode,
         activeEventCode: null,
         activeSeasonId: null,
@@ -66,6 +71,7 @@ export async function POST(request: Request) {
         secondaryRoles: [],
         isAdmin: true,
         isOwner: false,
+        fieldTeamIds: [firstFieldTeam.id],
         themeId: defaultThemeId,
         createdAt: FieldValue.serverTimestamp(),
       });

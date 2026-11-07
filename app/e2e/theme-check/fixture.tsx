@@ -8,14 +8,30 @@ import { AppearancePanel } from "@/components/theme/appearance-panel";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { connectionNotice } from "@/lib/connection-notice";
+import { FieldTeamsContext, buildFieldTeamsValue } from "@/lib/field-teams-context";
 
 /** The app shell (same structure as app/(app)/layout.tsx) around the Appearance panel and one sample of each glass class. */
 export function ThemeCheckFixture() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sim, setSim] = useState<"online" | "offline" | "syncing">("online");
+  // P19: two FTC teams and an account name, with a stateful "viewing as" choice, so the sidebar switcher is testable without Firebase.
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const fieldTeams = buildFieldTeamsValue({
+    loaded: true,
+    team: {
+      accountName: "Test Robotics",
+      fieldTeams: [
+        { id: "ft-35792", number: 35792, name: "Alpha Bots" },
+        { id: "fteam_b", number: 35794, name: "Beta Builders" },
+      ],
+    },
+    savedActiveId: activeId,
+    setActive: async (id) => setActiveId(id),
+  });
   const connection = sim === "online" ? null : sim === "offline" ? connectionNotice(false, 2) : connectionNotice(true, 3);
 
   return (
+    <FieldTeamsContext.Provider value={fieldTeams}>
     <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
       <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} connection={connection} />
       <div className="min-w-0 flex-1">
@@ -67,5 +83,6 @@ export function ThemeCheckFixture() {
         </main>
       </div>
     </div>
+    </FieldTeamsContext.Provider>
   );
 }

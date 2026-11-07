@@ -10,6 +10,9 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Label } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { fieldTeamFullLabel, orderIds } from "@/lib/field-teams";
+import { useFieldTeams } from "@/lib/field-teams-context";
 import { ADMIN_TOGGLE_BLOCK_REASONS, diffMemberAccess, normalizeSecondaryRoles, type AdminToggleBlock, type MemberAccess } from "@/lib/member-access";
 import { ROLES, getRole, type RoleId } from "@/lib/roles";
 import { spring, springSnappy } from "@/lib/motion";
@@ -43,7 +46,10 @@ export function MemberEditorDialog({
     secondaryRoles: normalizeSecondaryRoles(member.secondaryRoles, member.primaryRole),
     // An owner is always an admin; showing it on (locked) also repairs a doc whose flag had drifted off.
     isAdmin: member.isOwner ? true : member.isAdmin,
+    // P19: raw, as stored (stale ids included), so merely opening the editor never looks like a change.
+    fieldTeamIds: member.fieldTeamIds ?? [],
   });
+  const { fieldTeams } = useFieldTeams();
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const changes = diffMemberAccess(member, draft);
@@ -59,6 +65,14 @@ export function MemberEditorDialog({
       ...d,
       secondaryRoles: normalizeSecondaryRoles(d.secondaryRoles.includes(role) ? d.secondaryRoles.filter((r) => r !== role) : [...d.secondaryRoles, role], d.primaryRole),
     }));
+
+  const toggleFieldTeam = (id: string) =>
+    setDraft((d) => {
+      const current = d.fieldTeamIds ?? [];
+      // Drop ids of teams that no longer exist while we're here, so a save also tidies them.
+      const live = orderIds(current, fieldTeams);
+      return { ...d, fieldTeamIds: orderIds(live.includes(id) ? live.filter((x) => x !== id) : [...live, id], fieldTeams) };
+    });
 
   const handleSave = async () => {
     if (!dirty) {
@@ -143,6 +157,28 @@ export function MemberEditorDialog({
                 })}
               </div>
             </div>
+
+            {fieldTeams.length > 1 && (
+              <fieldset className="min-w-0">
+                <legend className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">FTC teams</legend>
+                <div className="flex flex-col gap-1.5">
+                  {fieldTeams.map((t) => {
+                    const checked = orderIds(draft.fieldTeamIds, fieldTeams).includes(t.id);
+                    return (
+                      <label key={t.id} className="glass-card flex min-h-11 cursor-pointer items-center gap-3 px-3.5 py-2">
+                        <Checkbox checked={checked} onCheckedChange={() => toggleFieldTeam(t.id)} disabled={busy} aria-label={fieldTeamFullLabel(t)} />
+                        <span className="min-w-0 truncate text-sm font-medium tabular-nums">{fieldTeamFullLabel(t)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-xs text-[var(--muted-foreground)]">
+                  {orderIds(draft.fieldTeamIds, fieldTeams).length === 0
+                    ? "No team ticked: this member counts as being on every team."
+                    : "Sets this member's default team and where they show up in team filters. Data access is the same for everyone."}
+                </p>
+              </fieldset>
+            )}
 
             <div className="glass-card flex items-center justify-between gap-4 p-4">
               <div className="min-w-0">

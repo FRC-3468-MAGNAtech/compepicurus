@@ -16,6 +16,8 @@ export type TeamMember = {
   isAdmin: boolean;
   /** Set only by app/api/auth/sync-roles — see docs/ASSUMPTIONS.md (P1b). Owner rows can't be edited by anyone through the UI (also enforced in firestore.rules). */
   isOwner: boolean;
+  /** P19: assigned FTC team ids; absent before the migration. Resolve with assignedFieldTeams() (lib/field-teams.ts) — empty counts as all teams. */
+  fieldTeamIds?: string[];
 };
 
 /** Realtime roster for a team — backs both Team Management (editable, admin-only) and People (read-only). */
@@ -48,6 +50,7 @@ export function useTeamMembers(teamId: string | null) {
               secondaryRoles: data.secondaryRoles ?? [],
               isAdmin: !!data.isAdmin,
               isOwner: !!data.isOwner,
+              fieldTeamIds: Array.isArray(data.fieldTeamIds) ? (data.fieldTeamIds as string[]) : undefined,
             };
           })
         );
@@ -81,7 +84,13 @@ export async function updateMemberAccess(
 ) {
   if (Object.keys(changes).length === 0) return;
 
-  const before: MemberAccess = { primaryRole: member.primaryRole, secondaryRoles: member.secondaryRoles, isAdmin: member.isAdmin };
+  // `fieldTeamIds` only joins the audit record when there is one (Firestore rejects `undefined` field values).
+  const before: MemberAccess = {
+    primaryRole: member.primaryRole,
+    secondaryRoles: member.secondaryRoles,
+    isAdmin: member.isAdmin,
+    ...(member.fieldTeamIds ? { fieldTeamIds: member.fieldTeamIds } : {}),
+  };
   const after: MemberAccess = { ...before, ...changes };
 
   const batch = writeBatch(db);

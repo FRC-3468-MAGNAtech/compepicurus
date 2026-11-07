@@ -5,6 +5,7 @@ import { verifyBearerToken } from "@/lib/server/require-user";
 import { isOwnerEmail, isPreconfiguredAdminEmail } from "@/lib/server/owner-admin";
 import { DEFAULT_ROLE_ID } from "@/lib/roles";
 import { defaultThemeId } from "@/lib/themes";
+import { defaultMemberFieldTeamIds } from "@/lib/field-teams";
 
 /**
  * Called by the client right after every sign-in (see lib/auth.tsx). Grants
@@ -56,6 +57,7 @@ export async function POST(request: Request) {
     }
     const teamId = teamsSnap.docs[0].id;
     await userRef.set({
+      fieldTeamIds: defaultMemberFieldTeamIds(teamsSnap.docs[0].data()),
       name: decoded.name ?? "",
       email: email ?? "",
       teamId,

@@ -2976,6 +2976,96 @@ Lighthouse or pixel-diff blur checks (the test asserts computed styles and ances
 generated CSS, pre-paint script), `theme-color.test.ts`, `theme-prefs.test.ts`, `connection-status.test.ts`, `glass-css.test.ts`; `npm run build` passes (its `prebuild` runs the guard);
 `npm run test:rules` 276 tests pass; Playwright: all four projects pass.
 
+## P19 — Several FTC teams under one account
+
+**P19-0. One question batch, answered "defaults", plus one change.** The defaults: the migration keeps whatever `number` the team has now as the first FTC team
+(the second team is not invented: an admin adds it in Team Settings); it runs server-side on every sign-in; a member with no team counts as every team;
+signed-out surfaces get neutral wording; the "viewing as" team is saved on the user's doc. The change: **Team Settings is its own page**, not a section of
+Account Settings (see P19-1). As in P1-1, P17-0 and P18-0, the prompt's "React + Vite" was read as this Next.js 16 app.
+
+**P19-1. Team Settings is `/team-settings`.** The prompt says "In Settings, add Team Settings"; at the user's request it is its own page with its own
+sidebar entry (above Account Settings, so the account's settings sit next to the personal ones), visible to everyone and read-only for non-admins. Account
+Settings (`/account`) is unchanged: it stays the personal page (profile, password, appearance).
+
+**P19-2. There was no "FRC" text.** The sidebar line already said "FTC 3468 MAGNAtech", hard-coded, and wrong for this account. It is now data-driven.
+The same hard-coded team appeared on signed-out and static surfaces that can't read team data (marketing page, footer, page metadata, PWA manifest): they now
+say "A scouting app for FTC teams" / "Built for FTC scouting teams", and the signed-in footer lists the account's FTC teams. The sign-up and scout-form
+placeholders ("3468", "MAGNAtech") are generic examples now. **Left as they were:** `3468` in unit-test fixtures, in `lib/mock-data.ts` (nothing imports it),
+and in the bulk-import CSV template's example row (an example, not an identity).
+
+**P19-3. Ids, mirrors and legacy fields.** FTC team ids are stable strings (`ft-<number>` for the migrated first team so a repeated or half-finished
+migration always agrees with itself; `fteam_<8 chars>` for teams added later), so changing a team's number never breaks anyone's assignment. Rules can't
+project a list of maps, so `teams.fieldTeamIdList` mirrors the ids and member assignments are checked against it; the editor always writes both together.
+The legacy `number`/`name` mirror the first team on every save and are still read as a fallback, so nothing that predates P19 can show "no team". A team's
+`name` is optional (`""`); where it is missing the UI shows just "FTC 35792".
+
+**P19-4. Migration.** Server-side (`/api/team/sync-field-teams`, Admin SDK), best-effort after every sign-in, any member may trigger it (it only fills in what's
+missing, so the result doesn't depend on who ran it). Team doc in a transaction, members in batches; members who already have a `fieldTeamIds` list are never
+touched, so an admin's later assignments survive any number of runs. It does not guess a second team: **if the existing `number` isn't one of your two teams
+(35792 / 35794), an admin fixes the number of the first team and adds the other in Team Settings after deploy** (the first team keeps its id, so assignments
+carry over). New members (join, owner auto-attach) start on every FTC team; the account creator starts on the first.
+
+**P19-5. "No team" means "all teams".** A member with nothing recorded, or only teams that no longer exist, counts as on every FTC team for display, defaults
+and filters (the member editor says so, and rows show an "All teams" chip). The alternative (an unassigned member appearing nowhere) would hide people after a
+removal or an unticked box. Data access is the same either way.
+
+**P19-6. The "viewing as" team.** `users/{uid}.activeFieldTeamId`, written by the user themself (a display preference, like the glass level), resolved against
+their assigned teams: the saved team if they are still assigned to it, else their first assigned team. So removing the team someone was viewing, or
+unassigning them from it, just moves them to their first team; no cleanup is needed.
+
+**P19-7. Rules, and what they can't check.** Only an admin or the owner can edit `fieldTeams`, `accountName` and members' `fieldTeamIds`; a member's own-doc
+rule pins `fieldTeamIds`, so the self-assign rule is "an admin can (through the admin rule), anyone else can't". Owner protections (FIX2) are unchanged: an
+owner's row is edited only by that owner. **Two deliberate choices:** (a) the `teams` update rule changed from `isAdmin()` to `canManageMembers()` (admin or
+owner), so the owner can edit FTC teams even if their admin flag were ever stale; in practice owners are always admins, so nothing else changes. (b) A
+stale (unchanged) assignment never blocks a role edit; only a *change* is checked against the account's teams. **Not expressible in rules:** per-entry shape of
+`fieldTeams` (number 1 to 5 digits, unique); the Team Settings editor validates it, and only admins can write it. The pre-existing looseness noted in P18-14
+(an admin can write other fields on a teammate's doc) still applies, now including `activeFieldTeamId`.
+
+**P19-8. FIRST lookup.** `getTeamByNumber` uses the default season. A typed number is checked 500 ms after the last keystroke; a hit fills the name only if the
+admin hasn't typed one (or still has the auto-filled one); a miss ("FIRST has no FTC team with this number this season") and a failure ("Couldn't check
+FIRST right now") both leave Save available, because a manual name always works. The lookup is a convenience, not a gate.
+
+**P19-9. Removal and saving.** The last team can't be removed (the button is disabled with a tooltip, validation and the rules also refuse an empty list).
+Removing a saved team that has members assigned opens a "move them to" dialog; the move happens in the **same batch** as the save, with its audit entry. A
+removal whose target is removed later in the same edit is followed on to a surviving team. Editing works on a local draft; if someone else saves while you edit
+you see a notice and **last write wins** (the realtime listeners are not merged into a draft you are typing in).
+
+**P19-10. Sidebar.** The account name (when set) replaces the old subtitle under the wordmark; the active team sits below it. One FTC team assigned: a plain
+display, no popover. Several: a button opening a listbox popover (portal, `glass-overlay` high-opacity backing so names stay legible in every theme; arrow
+keys, Enter, Escape). Collapsed: just the number. Signed-out/marketing surfaces have no provider and render nothing.
+
+**P19-11. Team Management.** Per-member checkboxes live in the member editor (hidden when there is only one FTC team: nothing to choose). The team filter is
+a single select (All / one team); unassigned members match every team. Bulk: row checkboxes (only rows the viewer may edit are selectable), a "select all
+shown" box and a floating bar to **add to** or **remove from** one team; each affected member gets an `edit-member-teams` audit entry in the same batch. An
+admin may assign themself (the rules allow it through the admin path); nobody else may.
+
+**P19-12. Ripple effects.** "Our team" = **any** FTC team on the account wherever a page highlights (a filled "Us" tag, a tinted row, a ring on chips and
+cards), in Team Averages, Rankings, Team Breakdown, Match Breakdown and Match Scout Analytics. "Active team" drives the Dashboard (header strip, next match,
+rank, record: they all read `ourNumber`) and the Pick List's starting "our team"; the Pick List has its own switcher (page-local, doesn't change the saved
+choice). Scout Accuracy's Team filter decides who is **shown** but, unlike Role/Event, doesn't create its own ranking pool: a scout's rank shouldn't change
+because you looked at one team. The Assignments filter narrows the attendance/scout picker (quick selects act on who's shown; people already selected but
+filtered out stay selected).
+
+**P19-13. Deliberately not done.** Team Profile pages for our own teams don't carry the tag; the Pick List board doesn't mark a sister team's row; dashboard
+widgets other than the header strip simply follow the active team; events, assignments and scouting data are not scoped per FTC team (the prompt says shared);
+the join code is still per account. Light-mode and real-device checks of the new controls: only the Playwright fixture (Chromium and WebKit, desktop and phone) in
+the default theme.
+
+### P19: verification
+
+`tsc` clean; eslint 0 errors (the 2 existing TanStack Virtual warnings); `vitest run` 928 tests in 59 files pass (new: `field-teams.test.ts` 35, `field-teams-context.test.tsx` 7, plus
+additions to `member-access` and the scout-stats engine); `npm run test:rules` 299 pass (16 new rules tests, 7 new migration/API tests); `npm run build` passes; Playwright
+`e2e/field-teams.e2e.ts`: 10 pass (the 10 desktop-only ones skip on the phone projects), and the existing sidebar and connection-chip tests still pass.
+
+### P19: commands to run
+
+1. **Deploy the rules first (or together with the app):** `firebase deploy --only firestore:rules`. Without them the app still works, but nothing enforces who may
+   edit FTC teams or assignments.
+2. Push `preview` / merge as usual (Vercel deploys the app). **No new environment variables.**
+3. After the first sign-in the account is migrated automatically. Then, as an admin, open **Team Settings** (sidebar), check the first team's number and name (it is whatever
+   the account's number was before), and **add the other team** (35792 / 35794). Assign members in **Team Management** (per-member Edit, or select several and use the bar).
+4. To run the browser tests: `npx playwright install chromium webkit` once, then `npm run test:e2e` (or `npx playwright test e2e/field-teams.e2e.ts`).
+
 ## Commands to run locally
 
 ```bash

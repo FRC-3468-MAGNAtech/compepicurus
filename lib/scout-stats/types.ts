@@ -66,6 +66,8 @@ export type ScoutLeaderboardRow = {
   name: string;
   primaryRole: RoleId;
   secondaryRoles: RoleId[];
+  /** P19: the member's assigned FTC team ids (for the row's team chips); absent before the migration. */
+  fieldTeamIds?: string[];
   /** 0-100, or null to display "?". */
   accuracy: number | null;
   status: AccuracyStatusInfo | null;

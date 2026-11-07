@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import { CommentCell } from "@/components/analytics/comment-cell";
 import { AccuracyCell } from "@/components/analytics/accuracy-cell";
 import { Badge } from "@/components/ui/badge";
+import { OUR_TEAM_ROW_CLASS, OurTeamTag } from "@/components/analytics/team-bits";
+import { useIsOurTeam } from "@/lib/field-teams-context";
 
 export type SortState = { key: string; direction: "asc" | "desc" };
 
@@ -56,6 +58,7 @@ export function AnalyticsDataTable({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const columns = schema.columns;
+  const isOurs = useIsOurTeam();
 
   const { leftOffsets, totalWidth } = useMemo(() => {
     let cumulative = 0;
@@ -179,6 +182,7 @@ export function AnalyticsDataTable({
                 style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
                 className={cn(
                   "flex border-b border-[var(--glass-border)] transition-colors hover:bg-white/5",
+                  isOurs(entry.teamNumber) && OUR_TEAM_ROW_CLASS,
                   entry.excluded && "opacity-60"
                 )}
               >
@@ -195,6 +199,7 @@ export function AnalyticsDataTable({
                     <Cell
                       col={col}
                       entry={entry}
+                      isOurs={isOurs(entry.teamNumber)}
                       hideNames={hideNames}
                       nameMap={nameMap}
                       autoExpandNotes={autoExpandNotes}
@@ -243,6 +248,7 @@ function HeaderCell({
 function Cell({
   col,
   entry,
+  isOurs,
   hideNames,
   nameMap,
   autoExpandNotes,
@@ -251,6 +257,7 @@ function Cell({
 }: {
   col: AnalyticsColumn;
   entry: ScoutEntry;
+  isOurs: boolean;
   hideNames: boolean;
   nameMap: Map<string, string>;
   autoExpandNotes: boolean;
@@ -286,6 +293,14 @@ function Cell({
       return <AccuracyCell accuracy={entry.accuracy} />;
     case "scriptStatus":
       return <span className="text-[var(--muted-foreground)]">{SCRIPT_STATUS_LABEL[entry.accuracy?.status ?? "not-applicable"]}</span>;
+    case "team":
+      // P19: any of the account's FTC teams gets the shared "Us" tag.
+      return (
+        <span className="flex items-center gap-2">
+          {String(col.getValue(entry) ?? "")}
+          {isOurs && <OurTeamTag />}
+        </span>
+      );
     case "text":
       return <span className="font-mono text-xs text-[var(--muted-foreground)]">{String(col.getValue(entry) ?? "")}</span>;
     case "badge":

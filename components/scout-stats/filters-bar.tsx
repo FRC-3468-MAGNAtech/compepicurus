@@ -5,6 +5,7 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Label } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ROLES, type RoleId } from "@/lib/roles";
+import { fieldTeamFullLabel, type FieldTeam } from "@/lib/field-teams";
 import type { RankingBasisId, RealEventCalculationScope, ScoutCategory } from "@/lib/scout-stats/types";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +45,9 @@ export function FiltersBar({
   eventOptions,
   eventFilter,
   onEventFilterChange,
+  fieldTeams = [],
+  teamFilter = [],
+  onTeamFilterChange,
   rankingBasis,
   onRankingBasisChange,
   realEventScope,
@@ -55,6 +59,10 @@ export function FiltersBar({
   eventOptions: { eventCode: string; eventName: string }[];
   eventFilter: string[];
   onEventFilterChange: (next: string[]) => void;
+  /** P19: the account's FTC teams and the selected team ids. The Team filter only appears with more than one FTC team and a handler. */
+  fieldTeams?: FieldTeam[];
+  teamFilter?: string[];
+  onTeamFilterChange?: (next: string[]) => void;
   rankingBasis: RankingBasisId;
   onRankingBasisChange: (next: RankingBasisId) => void;
   realEventScope: RealEventCalculationScope;
@@ -102,6 +110,20 @@ export function FiltersBar({
           </div>
         )}
       </div>
+
+      {fieldTeams.length > 1 && onTeamFilterChange && (
+        <div className="flex flex-col gap-2">
+          <Label>Team filter</Label>
+          <div className="flex flex-wrap gap-2">
+            {fieldTeams.map((t) => (
+              <ChipToggle key={t.id} active={teamFilter.includes(t.id)} onClick={() => onTeamFilterChange(toggle(teamFilter, t.id))}>
+                {fieldTeamFullLabel(t)}
+              </ChipToggle>
+            ))}
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)]">Shows only scouts on the chosen FTC team(s). Ranks stay the ones among everyone.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>

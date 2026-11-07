@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "CompEpicurus — FTC Scouting",
     short_name: "CompEpicurus",
-    description: "FTC Team 3468 MAGNAtech's scouting app.",
+    description: "A scouting app for FTC teams.",
     // Signed-out visitors are sent to the login page from here.
     start_url: "/dashboard",
     scope: "/",

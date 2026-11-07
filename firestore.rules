@@ -64,6 +64,34 @@ service cloud.firestore {
       );
     }
 
+    // P19: an account can have several FTC teams (`fieldTeams`: [{id, number, name}]). Only
+    // checked when the resulting doc carries `fieldTeams`, so a pre-migration team doc still
+    // passes. Rules can't project a list of maps, so `fieldTeamIdList` (a plain list of the ids,
+    // same order, written alongside by lib/field-teams.ts's fieldTeamsWrite()) is what member
+    // assignments are checked against below; the check here is that it is present and the same
+    // length. Per-entry shape (number 1-5 digits, unique) can't be expressed in rules — only
+    // admins/owners can write this and the Team Settings editor validates it first (see
+    // docs/ASSUMPTIONS.md, P19). `accountName` is an optional bounded string.
+    function validFieldTeams() {
+      let d = request.resource.data;
+      return (!('fieldTeams' in d) || (
+          d.fieldTeams is list
+          && d.fieldTeams.size() >= 1 && d.fieldTeams.size() <= 10
+          && 'fieldTeamIdList' in d && d.fieldTeamIdList is list
+          && d.fieldTeamIdList.size() == d.fieldTeams.size()))
+        && (!('accountName' in d) || d.accountName == null || (d.accountName is string && d.accountName.size() <= 60));
+    }
+
+    // P19: a member's `fieldTeamIds` may only change to a list of ids that exist on the account.
+    // `getAfter` (not `get`) so one batch can add an FTC team and assign members to it together.
+    // Unchanged is always fine, so a role edit never fails because an old assignment went stale.
+    function validMemberFieldTeams(teamId) {
+      let d = request.resource.data;
+      return d.get('fieldTeamIds', null) == resource.data.get('fieldTeamIds', null)
+        || (d.fieldTeamIds is list && d.fieldTeamIds.size() <= 10
+            && d.fieldTeamIds.hasOnly(getAfter(/databases/$(database)/documents/teams/$(teamId)).data.get('fieldTeamIdList', [])));
+    }
+
     // P12: who may edit the shared Pick List — admins, or members whose primary
     // OR secondary role is one of these. Mirrors lib/pick-list/permissions.ts's
     // PICK_LIST_EDITOR_ROLES: keep both in sync.
@@ -88,8 +116,9 @@ service cloud.firestore {
 
       // Admins of *this* team can still update its settings directly
       // (active events/season — see lib/team.ts's setActiveEvents) the same
-      // way as P1, FIX1 adding the active-events shape check above.
-      allow update: if sameTeam(teamId) && isAdmin() && validActiveEvents();
+      // way as P1, FIX1 adding the active-events shape check above. P19: `fieldTeams` /
+      // `accountName` ride the same rule (admins and the owner), with their shape check.
+      allow update: if sameTeam(teamId) && canManageMembers() && validActiveEvents() && validFieldTeams();
       allow delete: if false;
     }
 
@@ -112,7 +141,10 @@ service cloud.firestore {
         && request.resource.data.primaryRole == resource.data.primaryRole
         && request.resource.data.secondaryRoles == resource.data.secondaryRoles
         && request.resource.data.isAdmin == resource.data.isAdmin
-        && request.resource.data.isOwner == resource.data.isOwner;
+        && request.resource.data.isOwner == resource.data.isOwner
+        // P19: which FTC teams a member is assigned to is admin-only — you can't change your own
+        // (an admin changes theirs through the rule below). `.get` because pre-migration docs lack it.
+        && request.resource.data.get('fieldTeamIds', null) == resource.data.get('fieldTeamIds', null);
 
       // Team Management's role editor — the matrix is mirrored by canEditMember()
       // in lib/member-access.ts, so keep the two in sync:
@@ -138,6 +170,7 @@ service cloud.firestore {
         && request.resource.data.secondaryRoles is list
         && request.resource.data.secondaryRoles.size() <= 9
         && request.resource.data.secondaryRoles.hasOnly(validRoleIds())
+        && validMemberFieldTeams(resource.data.teamId)
         && (resource.data.isOwner == true
           ? (request.auth.uid == uid && isOwner() && request.resource.data.isAdmin == true)
           : (request.auth.uid != uid || request.resource.data.isAdmin == true));

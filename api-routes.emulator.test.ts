@@ -43,6 +43,7 @@ process.env.ADMIN_EMAILS = "preset-admin@example.com";
 const { POST: createTeam } = await import("@/app/api/team/create/route");
 const { POST: joinTeam } = await import("@/app/api/team/join/route");
 const { POST: syncRoles } = await import("@/app/api/auth/sync-roles/route");
+const { POST: syncFieldTeams } = await import("@/app/api/team/sync-field-teams/route");
 const { GET: publicConfig } = await import("@/app/api/public/config/route");
 const { getAdminAuth, getAdminFirestore } = await import("@/lib/firebase/admin");
 
@@ -251,5 +252,129 @@ describe("POST /api/auth/sync-roles", () => {
     const record = await adminAuth.getUserByEmail("preset-admin@example.com");
     expect(record.customClaims?.admin).toBe(true);
     expect(record.customClaims?.owner).toBeFalsy();
+  });
+});
+
+// P19: the FTC-teams migration and the paths that create new accounts/members.
+describe("P19 FTC teams", () => {
+  // Rolls an account back to the pre-P19 shape (what production looks like before the first sign-in after deploy).
+  async function makeLegacy(teamId: string, number: number, name: string | null) {
+    const { FieldValue } = await import("firebase-admin/firestore");
+    const db = getAdminFirestore()!;
+    await db.collection("teams").doc(teamId).update({ number, name, fieldTeams: FieldValue.delete(), fieldTeamIdList: FieldValue.delete() });
+    const users = await db.collection("users").where("teamId", "==", teamId).get();
+    await Promise.all(users.docs.map((d) => d.ref.update({ fieldTeamIds: FieldValue.delete() })));
+  }
+
+  async function uidOf(email: string) {
+    return (await getAdminAuth()!.getUserByEmail(email)).uid;
+  }
+
+  it("a created team starts with its number as the first FTC team, and the creator is on it", async () => {
+    const token = await createTestUser("maker@example.com");
+    const { teamId } = await (await createTeam(postJson({ teamNumber: 35792, teamName: "Alpha" }, token))).json();
+    const db = getAdminFirestore()!;
+    const team = (await db.collection("teams").doc(teamId).get()).data()!;
+    expect(team.fieldTeams).toEqual([{ id: "ft-35792", number: 35792, name: "Alpha" }]);
+    expect(team.fieldTeamIdList).toEqual(["ft-35792"]);
+    expect(team.number).toBe(35792);
+    expect((await db.collection("users").doc(await uidOf("maker@example.com")).get()).data()?.fieldTeamIds).toEqual(["ft-35792"]);
+  });
+
+  it("a new member joins on every FTC team of the account", async () => {
+    const creator = await createTestUser("creator-ft@example.com");
+    const { teamId, joinCode } = await (await createTeam(postJson({ teamNumber: 35792, teamName: "Alpha" }, creator))).json();
+    const db = getAdminFirestore()!;
+    await db.collection("teams").doc(teamId).update({
+      fieldTeams: [
+        { id: "ft-35792", number: 35792, name: "Alpha" },
+        { id: "fteam_b", number: 35794, name: "Beta" },
+      ],
+      fieldTeamIdList: ["ft-35792", "fteam_b"],
+    });
+    const joiner = await createTestUser("joiner-ft@example.com");
+    await joinTeam(postJson({ joinCode, name: "Joiner" }, joiner));
+    expect((await db.collection("users").doc(await uidOf("joiner-ft@example.com")).get()).data()?.fieldTeamIds).toEqual(["ft-35792", "fteam_b"]);
+  });
+
+  describe("POST /api/team/sync-field-teams", () => {
+    async function legacyAccount() {
+      const adminToken = await createTestUser("legacy-admin@example.com");
+      const { teamId, joinCode } = await (await createTeam(postJson({ teamNumber: 35792, teamName: "Alpha" }, adminToken))).json();
+      const memberToken = await createTestUser("legacy-member@example.com");
+      await joinTeam(postJson({ joinCode, name: "Member" }, memberToken));
+      await makeLegacy(teamId, 35792, "Alpha");
+      return { teamId, adminToken, memberToken };
+    }
+
+    it("migrates the legacy number into the first FTC team and gives every existing member all teams", async () => {
+      const { teamId, memberToken } = await legacyAccount();
+      const res = await syncFieldTeams(postJson({}, memberToken));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true, teamMigrated: true, membersMigrated: 2 });
+
+      const db = getAdminFirestore()!;
+      const team = (await db.collection("teams").doc(teamId).get()).data()!;
+      expect(team.fieldTeams).toEqual([{ id: "ft-35792", number: 35792, name: "Alpha" }]);
+      expect(team.fieldTeamIdList).toEqual(["ft-35792"]);
+      expect(team.number).toBe(35792); // the legacy field is kept
+      for (const email of ["legacy-admin@example.com", "legacy-member@example.com"]) {
+        expect((await db.collection("users").doc(await uidOf(email)).get()).data()?.fieldTeamIds).toEqual(["ft-35792"]);
+      }
+    });
+
+    it("is idempotent: a second run changes nothing, and never overwrites an admin's later assignments", async () => {
+      const { teamId, adminToken, memberToken } = await legacyAccount();
+      await syncFieldTeams(postJson({}, adminToken));
+
+      const db = getAdminFirestore()!;
+      // an admin later adds a second team and narrows the member to it
+      await db.collection("teams").doc(teamId).update({
+        fieldTeams: [
+          { id: "ft-35792", number: 35792, name: "Alpha" },
+          { id: "fteam_b", number: 35794, name: "Beta" },
+        ],
+        fieldTeamIdList: ["ft-35792", "fteam_b"],
+      });
+      const memberUid = await uidOf("legacy-member@example.com");
+      await db.collection("users").doc(memberUid).update({ fieldTeamIds: ["fteam_b"] });
+
+      const again = await (await syncFieldTeams(postJson({}, memberToken))).json();
+      expect(again).toMatchObject({ ok: true, teamMigrated: false, membersMigrated: 0 });
+      expect((await db.collection("teams").doc(teamId).get()).data()?.fieldTeams).toHaveLength(2);
+      expect((await db.collection("users").doc(memberUid).get()).data()?.fieldTeamIds).toEqual(["fteam_b"]);
+    });
+
+    it("only fills in members that have no list, so a half-migrated account finishes cleanly", async () => {
+      const { teamId, adminToken } = await legacyAccount();
+      const db = getAdminFirestore()!;
+      const adminUid = await uidOf("legacy-admin@example.com");
+      await db.collection("users").doc(adminUid).update({ fieldTeamIds: ["ft-35792"] });
+      const res = await (await syncFieldTeams(postJson({}, adminToken))).json();
+      expect(res).toMatchObject({ teamMigrated: true, membersMigrated: 1 });
+      expect((await db.collection("teams").doc(teamId).get()).data()?.fieldTeamIdList).toEqual(["ft-35792"]);
+    });
+
+    it("leaves a signed-in user with no team yet alone, and rejects an unauthenticated call", async () => {
+      const token = await createTestUser("no-team@example.com");
+      expect(await (await syncFieldTeams(postJson({}, token))).json()).toMatchObject({ ok: true, skipped: true });
+      expect((await syncFieldTeams(postJson({}))).status).toBe(401);
+    });
+
+    it("only ever touches the caller's own account", async () => {
+      const { teamId } = await legacyAccount();
+      // a second, separate legacy account
+      const otherDb = getAdminFirestore()!;
+      const otherRef = otherDb.collection("teams").doc("other-account");
+      await otherRef.set({ number: 111, name: "Other", joinCode: "OTHER1", createdAt: new Date() });
+      const strangerToken = await createTestUser("stranger@example.com");
+      const strangerUid = await uidOf("stranger@example.com");
+      await otherDb.collection("users").doc(strangerUid).set({
+        name: "Stranger", email: "stranger@example.com", teamId: "other-account", primaryRole: "match-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team",
+      });
+      await syncFieldTeams(postJson({}, strangerToken));
+      expect((await otherRef.get()).data()?.fieldTeams).toEqual([{ id: "ft-111", number: 111, name: "Other" }]);
+      expect((await otherDb.collection("teams").doc(teamId).get()).data()?.fieldTeams).toBeUndefined();
+    });
   });
 });

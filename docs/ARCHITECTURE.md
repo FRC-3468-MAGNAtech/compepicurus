@@ -53,8 +53,11 @@ docs/ASSUMPTIONS.md, P1b-1.
 
 | Field | Type | Notes |
 |---|---|---|
-| `number` | `number` | FTC team number |
-| `name` | `string \| null` | Optional team name (P1b) |
+| `number` | `number` | FTC team number. Since P19 it mirrors the first entry of `fieldTeams` (still read as a fallback until the migration has run) |
+| `name` | `string \| null` | Optional team name (P1b). Since P19 it mirrors the first FTC team's name |
+| `fieldTeams` | `{ id, number, name }[]` (P19, optional) | The account's FTC teams, the admin's order, 1 to 10. Absent before the migration; read through `readFieldTeams()`. See "P19 — Several FTC teams under one account" |
+| `fieldTeamIdList` | `string[]` (P19, optional) | The ids of `fieldTeams`, same order: a rules-only mirror that members' `fieldTeamIds` writes are checked against. Always written together with `fieldTeams` |
+| `accountName` | `string \| null` (P19, optional) | Display name for the account itself (at most 60 characters), separate from the FTC teams |
 | `joinCode` | `string` | Random 6-char code (no ambiguous 0/O/1/I). No longer publicly readable (P1b — see `firestore.rules` and P1b-1); only a team's own members can read it, mainly so Team Management can show it to admins |
 | `activeEventCode` | `string \| null` | FIRST API event code of the **primary** active event. Since FIX1 a team can have several active events; this stays pointed at the primary so pre-FIX1 readers keep working |
 | `activeSeasonId` | `number \| null` | FIRST API season year |
@@ -92,6 +95,8 @@ only ever touched by the Admin SDK from `app/api/public/config`,
 | `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management. Changed by an admin or the owner (FIX2: never by the admin themself — the last-admin safeguard — and never on an owner's row; an owner's flag is pinned on). See `canEditMember` in `lib/member-access.ts` |
 | `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own. FIX2: an owner can edit their *own* roles (never this flag or their admin flag) — see "Owner role editing (FIX2)" |
 | `themeId` | `string` | Any id in the `lib/themes.ts` registry (`team`, `biobuzz`, the P18 solid / gradient / `pride-*` ids). Applied by `ThemeProvider` as soon as the profile loads; the account's value wins over this browser's |
+| `fieldTeamIds` | `string[]` (P19, optional) | The FTC teams (ids from `teams/{teamId}.fieldTeams`) this member is assigned to. Admin/owner-only to change, never the member's own (rules); checked against `fieldTeamIdList`. None recorded counts as all teams |
+| `activeFieldTeamId` | `string \| null` (P19, optional) | The FTC team this user is "viewing as"; their own to write, resolved against their assigned teams |
 | `colorMode` | `"light"`, `"dark"` or `"system"` (P18, optional) | Separate from `themeId`; absent until first chosen (then this browser's / the system's applies). Ignored while a `pride-*` theme is active. The own-doc update rule already allows it: no rules change |
 | `createdAt` | `Timestamp` | |
 
@@ -1891,6 +1896,75 @@ scrolling content) is an inner box and the collapse arrow is its sibling, so it 
 `E2E_THEME_CHECK=1`, which enables the test-only page `app/e2e/theme-check` (the real Sidebar, Topbar, PageTransition and Appearance panel signed-out, plus one sample of each
 glass class; a 404 otherwise). Covers: every theme x mode keeps non-`none` backdrop filters equal to the baseline with no backdrop-root ancestor, theme/mode independence,
 flag lock + restore, no flash on the first frame, the sidebar arrow hit-test at 3 widths expanded and collapsed, and the chip's states with no layout shift.
+
+## P19 — Several FTC teams under one account
+
+**Terms.** The **team account** is the existing `teams/{teamId}` doc (join code, owner, shared data). An **FTC team** is a competing team (number
+and name) that belongs to the account. All scouting data stays shared across the whole account; assigning a member to an FTC team only changes
+display, defaults and filters, never data access.
+
+**Data model.**
+- `teams/{teamId}.fieldTeams`: `{ id, number, name }[]`, the admin's order, 1 to 10 entries. `id` is stable (the migrated first team is `ft-<number>`,
+  teams added in Settings are `fteam_<8 chars>`), so editing a number never breaks assignments. `name` may be `""`.
+- `teams/{teamId}.fieldTeamIdList`: `string[]`, the ids of `fieldTeams` in the same order. A rules-only mirror: `firestore.rules` can't project a list of
+  maps, so a member's `fieldTeamIds` is checked against this list. Always written together with `fieldTeams` (`fieldTeamsWrite()`).
+- `teams/{teamId}.accountName`: optional string (at most 60), shown under the CompEpicurus name in the sidebar.
+- The legacy `teams/{teamId}.number` / `.name` are kept and mirror the first FTC team on every save; every reader goes through `readFieldTeams()`, which
+  falls back to them while `fieldTeams` is absent.
+- `users/{uid}.fieldTeamIds`: `string[]`, the FTC teams the member is assigned to. Only an admin or the owner can change it (never the member's own);
+  writes are checked against `fieldTeamIdList` (`getAfter`, so one batch can add a team and assign people to it). **None recorded, or only ids of removed
+  teams, counts as "all teams"** (`assignedFieldTeams()`).
+- `users/{uid}.activeFieldTeamId`: the team the user is "viewing as". Their own to write; resolved against their assigned teams, so a stale id is harmless.
+- Audit (`auditLog`, no rules change): `edit-field-teams` (Team Settings save, with member reassignments), `edit-member-teams` (bulk assign, one entry per
+  member), and the existing `edit-member-roles` now carries `fieldTeamIds` in before/after when the member editor changed them.
+
+**Pure logic: `lib/field-teams.ts`** (no React, no Firebase; 35 unit tests). `FieldTeam`, `readFieldTeams`, `fieldTeamLabel` ("FTC 35792"),
+`fieldTeamFullLabel`, `parseFieldTeamNumber` (1 to 5 digits), `assignedFieldTeams`, `isImplicitlyAllTeams`, `resolveActiveFieldTeam`, `isOurTeam`,
+`validateFieldTeamDrafts` / `draftsToFieldTeams` / `toDrafts` (the editor's validation: unique numbers, bounded names, at least one team), `moveItem`,
+`fieldTeamsWrite`, `membersAssignedTo`, `planRemovals` (reassignment when teams are removed; follows a target that is itself removed),
+`applyBulkAssignment`, `matchesTeamFilter`, `sameIdSet`, and the migration planners `planTeamMigration` / `planMemberMigration` /
+`defaultMemberFieldTeamIds`.
+
+**Hooks: `lib/field-teams-context.tsx`.** `<FieldTeamsProvider>` (one team-doc subscription, mounted in `app/(app)/layout.tsx`), `useFieldTeams()`
+(`{ loaded, fieldTeams, assignedFieldTeams, accountName }`), `useActiveFieldTeam()` (`{ loaded, activeFieldTeam, setActiveFieldTeam, assignedFieldTeams,
+canSwitch }`: the saved choice while still assigned, else the first assigned team) and `useIsOurTeam()` (the hook-bound `isOurTeam(number)`, true for
+**any** FTC team on the account). They return an empty value outside the provider, so isolated component tests keep working. `buildFieldTeamsValue()` is
+the pure assembly the tests exercise. Writes: `lib/field-teams-actions.ts` (`saveTeamSettings`, `assignMembersToFieldTeams`, both one batch with their
+audit entries).
+
+**Migration (server).** `POST /api/team/sync-field-teams` (`app/api/team/sync-field-teams/route.ts` and `lib/server/field-teams-sync.ts`), called best-effort
+by `lib/auth.tsx` after every sign-in (`syncFieldTeams()` in `lib/team-enrollment.ts`). The account is the caller's own (from their profile). In a transaction
+it gives the team doc `fieldTeams` (from the legacy number/name) and the id mirror if either is missing or stale; then it gives every member **without a
+`fieldTeamIds` list** all the account's teams. Idempotent, never overwrites an existing assignment. `/api/team/create` starts a team with its number as the
+first FTC team; `/api/team/join` and the owner auto-attach in `/api/auth/sync-roles` start new members on every FTC team.
+
+**FIRST lookup.** `getTeamByNumber(teamNumber, season?)` in `lib/ftc/actions.ts` (a Server Action like the others; signed-in only; `null` when FIRST has no such
+team, an ordinary error result when the call fails).
+
+**Rules (`firestore.rules`).** `teams` update: `sameTeam && canManageMembers() && validActiveEvents() && validFieldTeams()` (an admin or the owner;
+`validFieldTeams()` = 1 to 10 entries, the id mirror present and the same length, `accountName` null or at most 60 characters). `users` own-doc update pins
+`fieldTeamIds` with `.get()` (pre-migration docs lack the field); the admin/owner member-edit rule adds `validMemberFieldTeams(teamId)` (unchanged, or a
+list of at most 10 ids all in the team's post-batch `fieldTeamIdList`).
+
+**UI.**
+- `/team-settings` (`app/(app)/team-settings/page.tsx`, `components/team/field-teams-editor.tsx`): its own page, in the sidebar above Account Settings. Admins
+  and the owner edit; everyone else gets a read-only view. Account name; FTC teams (add, remove, reorder with up/down buttons, number 1 to 5 digits and
+  unique, optional name); a typed number is looked up through FIRST after 500 ms (confirms it exists and fills the name; a manual name always works). The last
+  team can't be removed; removing a team that has members opens a "move them to" dialog, applied atomically on Save.
+- Sidebar (`components/layout/field-team-switcher.tsx`): under the wordmark, "FTC 35792" over the name; a popover switcher when assigned to more than one;
+  collapsed it is the number; the drawer has it too. The old hard-coded "FTC 3468 MAGNAtech" line is gone.
+- Team Management (`app/(app)/team-management/page.tsx`): per-member FTC team checkboxes in the editor (`member-editor-dialog.tsx`), chips on each row
+  (`components/team/field-team-chips.tsx`), a team filter (`team-filter-select.tsx`), row checkboxes plus a floating bulk bar (`bulk-assign-bar.tsx`: add to /
+  remove from a team). Edit rights are the FIX2 matrix, unchanged.
+- "Our team" highlight (`OurTeamTag`, `OUR_TEAM_ROW_CLASS` in `components/analytics/team-bits.tsx`): every FTC team on the account, in Team Averages, Rankings,
+  Team Breakdown, Match Breakdown and Match Scout Analytics.
+- Dashboard (`lib/dashboard/data.tsx`) and the Pick List's "our team" use the active team; the Pick List card has a switcher among the account's teams. People,
+  Scout Accuracy and the Assignments scout picker show chips and a Team filter (hidden when the account has one FTC team).
+
+**Tests.** `lib/field-teams.test.ts`, `lib/field-teams-context.test.tsx` (hook behaviour: default, persistence, removal of the viewed team),
+`lib/member-access.test.ts` and `lib/scout-stats/engine.test.ts` (additions), `firestore.rules.test.ts` ("P19 FTC teams", 16 tests) and
+`api-routes.emulator.test.ts` ("P19 FTC teams", migration idempotent, only the caller's account), `e2e/field-teams.e2e.ts` (Playwright, the sidebar
+switcher expanded, collapsed and in the drawer).
 
 ## Conventions
 

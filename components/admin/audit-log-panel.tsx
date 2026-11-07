@@ -20,6 +20,8 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   "refresh-official-scores": "Refresh Official Scores",
   "export-backup": "Export Backup",
   "edit-member-roles": "Edit Member Roles",
+  "edit-member-teams": "Assign Members to FTC Teams",
+  "edit-field-teams": "Edit Team Settings",
   "edit-pick-list": "Edit Pick List",
   "create-changelog-entry": "Create Changelog Entry",
   "edit-changelog-entry": "Edit Changelog Entry",

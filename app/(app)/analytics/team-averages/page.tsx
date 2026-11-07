@@ -5,12 +5,14 @@ import { Search } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input } from "@/components/ui/input";
 import { TeamTable, type TeamTableColumn, type TeamTableSort } from "@/components/analytics/team-table";
-import { InlineBar, TeamCell } from "@/components/analytics/team-bits";
+import { InlineBar, OUR_TEAM_ROW_CLASS, TeamCell } from "@/components/analytics/team-bits";
+import { useIsOurTeam } from "@/lib/field-teams-context";
 import { useTeamStats } from "@/lib/analytics/data-context";
 import type { TeamStats } from "@/lib/analytics/team-stats";
 
 export default function TeamAveragesPage() {
   const { teamStats, loaded } = useTeamStats();
+  const isOurs = useIsOurTeam();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<TeamTableSort>({ key: "avgTotal", direction: "desc" });
 
@@ -90,6 +92,7 @@ export default function TeamAveragesPage() {
             getHref={(t) => `/analytics/teams/${t.teamNumber}`}
             sort={sort}
             onSortChange={setSort}
+            rowClassName={(t) => (isOurs(t.teamNumber) ? OUR_TEAM_ROW_CLASS : undefined)}
             empty={<>No teams match &ldquo;{search}&rdquo;.</>}
           />
         </>

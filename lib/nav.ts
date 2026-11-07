@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   History,
   Settings,
+  SlidersHorizontal,
   Heart,
   CalendarCheck,
   UserCircle,
@@ -40,6 +41,7 @@ export const secondaryNav: NavItem[] = [
   { href: "/admin", label: "Admin Panel", icon: ShieldAlert },
   { href: "/changelog", label: "Changelog", icon: History },
   { href: "/credits", label: "Credits", icon: Heart },
+  { href: "/team-settings", label: "Team Settings", icon: SlidersHorizontal },
   { href: "/account", label: "Account Settings", icon: Settings },
 ];
 

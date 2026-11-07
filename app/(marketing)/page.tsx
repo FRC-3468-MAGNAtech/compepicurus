@@ -33,7 +33,7 @@ export default function LandingPage() {
       <section className="relative flex flex-col items-center gap-8 pt-16 text-center sm:pt-24">
         <Badge variant="glass" className="gap-2 px-4 py-1.5">
           <Sparkles className="h-3.5 w-3.5" style={{ color: "var(--color-secondary)" }} />
-          Built for FTC Team 3468 &mdash; MAGNAtech
+          Built for FTC scouting teams
         </Badge>
         <h1 className="max-w-3xl text-4xl font-semibold leading-tight tracking-tight sm:text-6xl">
           Scout smarter.
@@ -41,7 +41,7 @@ export default function LandingPage() {
           <span className="text-gradient">Pick winners.</span>
         </h1>
         <p className="max-w-xl text-balance text-base text-[var(--muted-foreground)] sm:text-lg">
-          CompEpicurus is MAGNAtech&apos;s scouting platform — match data entry, live analytics,
+          CompEpicurus is a scouting platform for FTC teams — match data entry, live analytics,
           and alliance selection tools, wrapped in one glassy, bouncy interface.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
@@ -95,7 +95,7 @@ export default function LandingPage() {
           <Trophy className="h-10 w-10" style={{ color: "var(--color-secondary)" }} />
           <h2 className="text-2xl font-semibold sm:text-3xl">Ready to scout your next event?</h2>
           <p className="max-w-md text-sm text-[var(--muted-foreground)]">
-            Create an account to join the MAGNAtech scouting roster and start logging matches.
+            Create an account to join your team&apos;s scouting roster and start logging matches.
           </p>
           <Link href="/signup">
             <Button size="lg" className="gap-2">

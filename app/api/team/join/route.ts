@@ -4,6 +4,7 @@ import { getAdminFirestore } from "@/lib/firebase/admin";
 import { verifyBearerToken } from "@/lib/server/require-user";
 import { DEFAULT_ROLE_ID } from "@/lib/roles";
 import { defaultThemeId } from "@/lib/themes";
+import { defaultMemberFieldTeamIds } from "@/lib/field-teams";
 
 /**
  * Validates a join code and creates the caller's user doc server-side.
@@ -49,6 +50,8 @@ export async function POST(request: Request) {
     secondaryRoles: [],
     isAdmin: false,
     isOwner: false,
+    // P19: new members start on every FTC team of the account (an admin narrows it in Team Management).
+    fieldTeamIds: defaultMemberFieldTeamIds(teamDoc.data()),
     themeId: defaultThemeId,
     createdAt: FieldValue.serverTimestamp(),
   });

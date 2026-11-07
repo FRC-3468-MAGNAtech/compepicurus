@@ -121,6 +121,15 @@ describe("diffMemberAccess", () => {
     expect(diffMemberAccess(before, { ...before, secondaryRoles: ["media", "pit-team"] })).toEqual({ secondaryRoles: ["pit-team", "media"] });
   });
 
+  it("P19: reports a changed FTC team assignment (compared as a set), and ignores it when absent or equal", () => {
+    const withTeams = { ...before, fieldTeamIds: ["a", "b"] };
+    expect(diffMemberAccess(withTeams, { ...withTeams, fieldTeamIds: ["b", "a"] })).toEqual({});
+    expect(diffMemberAccess(withTeams, { ...withTeams, fieldTeamIds: ["a"] })).toEqual({ fieldTeamIds: ["a"] });
+    expect(diffMemberAccess(withTeams, { ...before })).toEqual({}); // a role-only edit never touches assignments
+    expect(diffMemberAccess(before, { ...before, fieldTeamIds: [] })).toEqual({}); // none recorded vs none ticked
+    expect(diffMemberAccess(before, { ...before, fieldTeamIds: ["a"] })).toEqual({ fieldTeamIds: ["a"] });
+  });
+
   it("removes a secondary role that has just become the primary", () => {
     expect(diffMemberAccess(before, { ...before, primaryRole: "media" })).toEqual({ primaryRole: "media", secondaryRoles: [] });
   });

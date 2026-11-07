@@ -1,4 +1,5 @@
 import { ROLES, type RoleId } from "@/lib/roles";
+import { sameIdSet } from "@/lib/field-teams";
 
 // Pure rules for who may edit whose roles/admin status in Team Management
 // (FIX1-3, reworked in FIX2). These mirror `firestore.rules`' `users/{uid}` update
@@ -23,6 +24,8 @@ export type MemberAccess = {
   primaryRole: RoleId;
   secondaryRoles: RoleId[];
   isAdmin: boolean;
+  /** P19: the FTC team ids this member is assigned to. Optional so role-only callers (and pre-migration members) are unaffected; compared as a set, and only when the "after" side carries it. */
+  fieldTeamIds?: string[];
 };
 
 type Member = MemberAccess & { uid: string; isOwner: boolean };
@@ -96,5 +99,6 @@ export function diffMemberAccess(before: MemberAccess, after: MemberAccess): Par
     changes.secondaryRoles = afterSecondary;
   }
   if (before.isAdmin !== after.isAdmin) changes.isAdmin = after.isAdmin;
+  if (after.fieldTeamIds !== undefined && !sameIdSet(before.fieldTeamIds ?? [], after.fieldTeamIds)) changes.fieldTeamIds = after.fieldTeamIds;
   return changes;
 }

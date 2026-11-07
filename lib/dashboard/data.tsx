@@ -23,7 +23,7 @@ import { useTeamScoutEntries, type ScoutEntry } from "@/lib/scout-entries";
 import { getFormSchema, type ScoutFormSchema } from "@/lib/scout-form/schema";
 import { computeScoutStats } from "@/lib/scout-stats/engine";
 import type { ScoutCategory, ScoutStatsResult } from "@/lib/scout-stats/types";
-import { useTeamDoc } from "@/lib/team";
+import { useActiveFieldTeam } from "@/lib/field-teams-context";
 import { useTeamMembers, type TeamMember } from "@/lib/team-members";
 
 // The one data layer every dashboard widget reads (P13). The provider owns
@@ -112,8 +112,9 @@ export function DashboardProvider({ role, children }: { role: RoleId; children: 
   const isAdmin = profile?.isAdmin ?? false;
   const needs = useMemo(() => sourcesFor(role, isAdmin), [role, isAdmin]);
 
-  const { team } = useTeamDoc(teamId);
-  const ourNumber = team?.number ?? null;
+  // P19: "our team" is the FTC team this user is viewing as (header strip, next match, rank, record all follow it).
+  const { activeFieldTeam } = useActiveFieldTeam();
+  const ourNumber = activeFieldTeam?.number ?? null;
 
   // --- event context -----------------------------------------------------------------
   const { events, primaryCode, loaded: eventsLoaded } = useActiveEvents();

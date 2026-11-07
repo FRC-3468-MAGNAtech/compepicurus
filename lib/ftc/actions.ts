@@ -150,6 +150,30 @@ export async function getTeamsForEvent(eventCode: string, season?: number): Prom
 }
 
 /**
+ * P19: one team by number (Team Settings uses it to confirm a number exists and to auto-fill the
+ * name). `data` is `null` when FIRST has no such team that season; a failed request comes back as an
+ * ordinary error result, which Team Settings treats as "couldn't check — type the name yourself".
+ */
+export async function getTeamByNumber(teamNumber: number, season?: number): Promise<ActionResult<FtcTeam | null>> {
+  if (!(await requireUser())) return UNAUTHORIZED_RESULT;
+  if (!Number.isInteger(teamNumber) || teamNumber <= 0 || teamNumber > 99999) {
+    return { ok: false, error: { code: "upstream_error", message: "Enter a team number with 1 to 5 digits." } };
+  }
+  const resolvedSeason = season ?? getDefaultSeason();
+  return run(async () => {
+    try {
+      const res = await ftcFetch<{ teams?: RawTeam[] }>(`/${resolvedSeason}/teams`, { teamNumber });
+      const found = res.teams?.find((t) => t.teamNumber === teamNumber);
+      return found ? toFtcTeam(found) : null;
+    } catch (error) {
+      // FIRST answers an unknown team number with a 404; that is "doesn't exist", not a failure.
+      if (error instanceof FtcApiError && error.code === "not_found") return null;
+      throw error;
+    }
+  });
+}
+
+/**
  * Official qualification rankings (rank, win/loss/tie record, ranking points). Empty until
  * the event has played qualification matches; callers treat an error or an
  * empty list as "no official rank available" rather than a failure (Team

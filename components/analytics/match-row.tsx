@@ -1,7 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ChevronDown, ExternalLink, EyeOff, Trophy } from "lucide-react";
+import { AlertTriangle, ChevronDown, ExternalLink, EyeOff, Star, Trophy } from "lucide-react";
+import { OUR_TEAM_ROW_CLASS, OurTeamTag } from "@/components/analytics/team-bits";
+import { useIsOurTeam } from "@/lib/field-teams-context";
 import { AllianceBar } from "@/components/analytics/alliance-bar";
 import { AnalyticsLink } from "@/components/analytics/analytics-link";
 import { PhaseLegend, PhaseStackedBar } from "@/components/analytics/phase-bars";
@@ -131,6 +133,7 @@ function SideTotal({ side, alliance, winner, align }: { side: AllianceColor; all
 }
 
 function TeamLinks({ teams, side, align }: { teams: number[]; side: AllianceColor; align?: "right" }) {
+  const isOurs = useIsOurTeam();
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5", align === "right" && "justify-end")}>
       {teams.length === 0 && <span className="text-[var(--muted-foreground)]">TBD</span>}
@@ -138,9 +141,14 @@ function TeamLinks({ teams, side, align }: { teams: number[]; side: AllianceColo
         <AnalyticsLink
           key={t}
           href={`/analytics/teams/${t}`}
-          className={cn("flex min-h-8 items-center rounded-full px-3 font-semibold tabular-nums transition-colors hover:brightness-125", SIDE[side].badge)}
-          aria-label={`Team ${t} profile`}
+          className={cn(
+            "flex min-h-8 items-center gap-1 rounded-full px-3 font-semibold tabular-nums transition-colors hover:brightness-125",
+            SIDE[side].badge,
+            isOurs(t) && "ring-2 ring-[var(--color-primary)]"
+          )}
+          aria-label={`Team ${t} profile${isOurs(t) ? " (one of our FTC teams)" : ""}`}
         >
+          {isOurs(t) && <Star className="h-3 w-3" aria-hidden />}
           {t}
         </AnalyticsLink>
       ))}
@@ -251,13 +259,17 @@ function AllianceCard({
 function TeamRow({ slot, hidden, scaleMax, schema }: { slot: TeamSlot; hidden: boolean; scaleMax: number; schema: ScoutFormSchema }) {
   const entry = slot.entry;
   const summary = entry ? summarizeEntry(entry, schema) : null;
+  const isOurs = useIsOurTeam()(slot.teamNumber);
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-[var(--glass-border)] p-3">
+    <div className={cn("flex flex-col gap-2 rounded-xl border border-[var(--glass-border)] p-3", isOurs && OUR_TEAM_ROW_CLASS)}>
       <div className="flex items-center justify-between gap-2">
-        <AnalyticsLink href={`/analytics/teams/${slot.teamNumber}`} className="font-semibold tabular-nums underline-offset-4 hover:underline">
-          Team {slot.teamNumber}
-        </AnalyticsLink>
+        <span className="flex items-center gap-2">
+          <AnalyticsLink href={`/analytics/teams/${slot.teamNumber}`} className="font-semibold tabular-nums underline-offset-4 hover:underline">
+            Team {slot.teamNumber}
+          </AnalyticsLink>
+          {isOurs && <OurTeamTag />}
+        </span>
         {entry ? (
           <span className="text-lg font-semibold tabular-nums">{entry.score.total}</span>
         ) : (

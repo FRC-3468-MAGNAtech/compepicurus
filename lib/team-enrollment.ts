@@ -46,6 +46,19 @@ export async function setTeamCreationEnabled(enabled: boolean): Promise<void> {
   await authedPost("/api/admin/team-creation", { enabled });
 }
 
+/**
+ * P19: idempotent FTC-teams migration for the caller's account — see app/api/team/sync-field-teams/route.ts.
+ * Best-effort like syncRoles(): a failure just means the legacy `number` fallback keeps working until next sign-in.
+ */
+export async function syncFieldTeams(): Promise<void> {
+  if (!auth.currentUser) return;
+  try {
+    await authedPost("/api/team/sync-field-teams", {});
+  } catch {
+    // ignore — see doc comment above
+  }
+}
+
 /** Called right after every sign-in — see app/api/auth/sync-roles/route.ts and lib/auth.tsx. */
 export async function syncRoles(): Promise<{ changed: boolean; ownerPendingVerification: boolean }> {
   if (!auth.currentUser) return { changed: false, ownerPendingVerification: false };
