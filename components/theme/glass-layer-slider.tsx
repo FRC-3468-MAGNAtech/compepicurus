@@ -3,8 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { CloudOff, Droplets, RefreshCw, RotateCcw } from "lucide-react";
-import type { ConnectionNotice } from "@/lib/connection-notice";
+import { Droplets, RotateCcw } from "lucide-react";
 import { GLASS_LAYER_MAX, GLASS_LAYER_MIN, GLASS_LAYER_STEP, formatGlassLayerLevel } from "@/lib/glass-layer-level";
 import { useGlassLayerLevel } from "@/lib/glass-layer";
 import { useGlassOverlap } from "@/lib/use-glass-overlap";
@@ -56,14 +55,11 @@ export const GlassLayerSlider = ({ inputRef }: { inputRef?: React.Ref<HTMLInputE
 };
 
 /**
- * The circular water-droplet button that opens the glass slider in a popover.
- * In the app shell it also carries the **offline safety signal** (pass `connection`
- * from `useConnectionNotice()`): nothing at all while online with nothing waiting;
- * otherwise a small amber badge on the button, and tapping it explains ("Offline: N
- * submissions will sync when you're back online"). The badge is absolutely
- * positioned, so it never shifts the layout. Closes on outside click or Escape.
+ * The circular water-droplet button that opens the glass slider in a popover. (FIX3 also hung the offline /
+ * unsynced-submissions badge on it; P18 moved that to its own always-visible chip, components/layout/connection-chip.tsx,
+ * so there is exactly one indicator.) Closes on outside click or Escape.
  */
-export function GlassLayerButton({ compact = false, side = "top", connection = null }: { compact?: boolean; side?: "top" | "bottom"; connection?: ConnectionNotice | null }) {
+export function GlassLayerButton({ compact = false, side = "top" }: { compact?: boolean; side?: "top" | "bottom" }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -118,7 +114,7 @@ export function GlassLayerButton({ compact = false, side = "top", connection = n
     if (open && coords) sliderRef.current?.focus({ preventScroll: true });
   }, [open, coords]);
 
-  const label = connection ? `Glass shading and connection status — ${connection.message}` : "Adjust glass shading";
+  const label = "Adjust glass shading";
 
   return (
     <>
@@ -139,14 +135,6 @@ export function GlassLayerButton({ compact = false, side = "top", connection = n
         )}
       >
         <Droplets className="h-[18px] w-[18px]" />
-        {connection && (
-          <span
-            aria-hidden
-            className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold leading-none text-black shadow-[0_0_8px_1px_rgba(251,191,36,0.6)]"
-          >
-            {connection.tone === "offline" ? <CloudOff className="h-2.5 w-2.5" /> : connection.pending > 0 ? connection.pending : <RefreshCw className="h-2.5 w-2.5" />}
-          </span>
-        )}
       </motion.button>
 
       {typeof document !== "undefined" &&
@@ -171,12 +159,6 @@ export function GlassLayerButton({ compact = false, side = "top", connection = n
                   ...(overGlass ? {} : ({ "--glass-shade": 1 } as React.CSSProperties)),
                 }}
               >
-                {connection && (
-                  <p role="status" className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                    {connection.tone === "offline" ? <CloudOff className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />}
-                    <span>{connection.message}</span>
-                  </p>
-                )}
                 <GlassLayerSlider inputRef={sliderRef} />
               </motion.div>
             )}

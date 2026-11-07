@@ -149,7 +149,7 @@ export function EventMultiSelect({
                       singleEvent ? "rounded-full" : "rounded-md",
                       checked ? "border-transparent" : "border-[var(--glass-border)]"
                     )}
-                    style={checked ? { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" } : undefined}
+                    style={checked ? { background: "var(--theme-gradient)" } : undefined}
                   >
                     {checked && <Check className="h-3 w-3 text-[var(--color-primary-foreground)]" strokeWidth={3} />}
                   </span>
@@ -188,7 +188,7 @@ function PresetRow({ label, hint, selected, onClick }: { label: string; hint: st
     >
       <span
         className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-full border", selected ? "border-transparent" : "border-[var(--glass-border)]")}
-        style={selected ? { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" } : undefined}
+        style={selected ? { background: "var(--theme-gradient)" } : undefined}
       >
         {selected && <Check className="h-3 w-3 text-[var(--color-primary-foreground)]" strokeWidth={3} />}
       </span>

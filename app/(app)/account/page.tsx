@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import { KeyRound, Save, ShieldCheck } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Avatar } from "@/components/ui/avatar";
@@ -9,11 +8,9 @@ import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GoogleButton } from "@/components/auth/google-button";
-import { themes } from "@/lib/themes";
-import { useAppTheme } from "@/components/theme/theme-provider";
+import { AppearancePanel } from "@/components/theme/appearance-panel";
 import { useAuth } from "@/lib/auth";
 import { getRole } from "@/lib/roles";
-import { spring } from "@/lib/motion";
 
 const PROVIDER_LABELS: Record<string, string> = {
   password: "Email & password",
@@ -22,7 +19,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export default function AccountSettingsPage() {
   const { user, profile, linkedProviders, updateUserProfile, changePassword, linkGoogle } = useAuth();
-  const { themeId, setThemeId } = useAppTheme();
   const [linkingGoogle, setLinkingGoogle] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const hasGoogle = linkedProviders.includes("google.com");
@@ -73,11 +69,6 @@ export default function AccountSettingsPage() {
     }
   };
 
-  const handleSelectTheme = (id: string) => {
-    setThemeId(id);
-    void updateUserProfile({ themeId: id });
-  };
-
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError(null);
@@ -107,7 +98,7 @@ export default function AccountSettingsPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Account Settings</h1>
-        <p className="text-sm text-[var(--muted-foreground)]">Manage your profile, theme, and password.</p>
+        <p className="text-sm text-[var(--muted-foreground)]">Manage your profile, appearance, and password.</p>
       </div>
 
       <GlassPanel className="flex items-center gap-4">
@@ -172,44 +163,10 @@ export default function AccountSettingsPage() {
         </div>
       </GlassPanel>
 
-      <GlassPanel className="flex flex-col gap-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Theme</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {themes.map((t) => {
-            const active = t.id === themeId;
-            return (
-              <motion.button
-                key={t.id}
-                type="button"
-                onClick={() => handleSelectTheme(t.id)}
-                whileHover={{ scale: 1.015 }}
-                whileTap={{ scale: 0.98 }}
-                transition={spring}
-                className="glass-card relative flex flex-col gap-3 p-4 text-left"
-                style={active ? { boxShadow: `0 0 0 2px ${t.primary}, var(--glass-shadow)` } : undefined}
-              >
-                <div
-                  className="h-16 w-full rounded-xl"
-                  style={{
-                    background: `linear-gradient(135deg, ${t.backgroundGradient[0]}, ${t.backgroundGradient[2]})`,
-                  }}
-                />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold">{t.name}</div>
-                    <div className="text-xs text-[var(--muted-foreground)]">{t.tagline}</div>
-                  </div>
-                  <div className="flex -space-x-1.5">
-                    <span className="h-5 w-5 rounded-full border-2 border-[var(--background)]" style={{ background: t.primary }} />
-                    <span className="h-5 w-5 rounded-full border-2 border-[var(--background)]" style={{ background: t.secondary }} />
-                    <span className="h-5 w-5 rounded-full border-2 border-[var(--background)]" style={{ background: t.accent }} />
-                  </div>
-                </div>
-                {active && <Badge variant="accent" className="w-fit">Active</Badge>}
-              </motion.button>
-            );
-          })}
-        </div>
+      {/* P18: themes live only here (the sidebar has just the light/dark quick toggle). Saved per user as soon as you pick. */}
+      <GlassPanel id="appearance" className="flex flex-col gap-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Appearance</h2>
+        <AppearancePanel />
       </GlassPanel>
 
       <GlassPanel className="flex flex-col gap-4">

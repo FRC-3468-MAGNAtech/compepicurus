@@ -4,7 +4,8 @@ import Link from "next/link";
 import { Menu, Trophy } from "lucide-react";
 import { motion } from "framer-motion";
 import { springSnappy } from "@/lib/motion";
-import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { ColorModeToggle } from "@/components/theme/color-mode-toggle";
+import { ConnectionChip } from "@/components/layout/connection-chip";
 import { GlassLayerButton } from "@/components/theme/glass-layer-slider";
 import type { ConnectionNotice } from "@/lib/connection-notice";
 
@@ -14,15 +15,17 @@ export function Topbar({ onMenuClick, connection = null }: { onMenuClick: () => 
       <Link href="/dashboard" className="flex items-center gap-2">
         <span
           className="flex h-8 w-8 items-center justify-center rounded-lg"
-          style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+          style={{ background: "var(--theme-gradient)" }}
         >
-          <Trophy className="h-4 w-4 text-white" />
+          <Trophy className="h-4 w-4 text-[var(--color-primary-foreground)]" />
         </span>
-        <span className="text-sm font-semibold">CompEpicurus</span>
+        <span className="hidden text-sm font-semibold min-[420px]:inline">CompEpicurus</span>
       </Link>
       <div className="flex items-center gap-2">
-        <ThemeSwitcher compact />
-        <GlassLayerButton compact side="bottom" connection={connection} />
+        {/* P18: the connection chip is always here (fixed width, solid backing); the sun/moon is the light/dark mode only. */}
+        <ConnectionChip connection={connection} fixedWidth />
+        <ColorModeToggle compact />
+        <GlassLayerButton compact side="bottom" />
         <motion.button
           whileTap={{ scale: 0.92 }}
           transition={springSnappy}

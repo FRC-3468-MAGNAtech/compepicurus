@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/theme-provider";
+import { themeCss, themeInitScript as themeInitScriptSource } from "@/lib/theme-css";
 import { AuthProvider } from "@/lib/auth";
 import { GlassLayerProvider } from "@/lib/glass-layer";
 import { BackgroundBlobs } from "@/components/layout/background-blobs";
@@ -35,42 +36,36 @@ export const viewport: Viewport = {
   themeColor: "#17070c",
 };
 
-const themeInitScript = `
-(function () {
-  try {
-    var theme = localStorage.getItem("compepicurus.theme") || "team";
-    document.documentElement.setAttribute("data-theme", theme);
-    var shade = parseFloat(localStorage.getItem("compepicurus.glass-shade"));
-    if (shade >= 0.3 && shade <= 2) {
-      document.documentElement.style.setProperty("--glass-shade", String(shade));
-    }
-  } catch (e) {}
-})();
-`;
+// Every theme's variables, generated from the registry (lib/themes.ts) and the pre-paint script that picks the saved
+// theme + mode (or the system's) before anything renders, so there is never a flash of the wrong theme (P18).
+const themeStyles = themeCss();
+const themeInitScript = themeInitScriptSource();
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
       data-theme="team"
+      data-mode="dark"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <head>
+        <style id="theme-tokens" dangerouslySetInnerHTML={{ __html: themeStyles }} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        <ThemeProvider>
-          {/* The glass level is saved per user, so it sits inside the auth provider (FIX3). */}
-          <AuthProvider>
+        {/* The theme, light/dark mode and glass level are all saved per user, so they sit inside the auth provider (FIX3, P18). */}
+        <AuthProvider>
+          <ThemeProvider>
             <GlassLayerProvider>
               <MotionProvider>
                 <BackgroundBlobs />
                 {children}
               </MotionProvider>
             </GlassLayerProvider>
-          </AuthProvider>
-        </ThemeProvider>
+          </ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );

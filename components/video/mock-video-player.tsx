@@ -99,8 +99,8 @@ export const MockVideoPlayer = forwardRef<VideoPlayerHandle, MockVideoPlayerProp
           whileTap={{ scale: 0.92 }}
           onClick={() => (playing ? pause() : play())}
           disabled={playing && lockPause}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-60"
-          style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--color-primary-foreground)] disabled:opacity-60"
+          style={{ background: "var(--theme-gradient)" }}
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}

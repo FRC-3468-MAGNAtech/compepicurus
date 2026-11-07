@@ -35,7 +35,7 @@ export function Switch({
       <span
         aria-hidden
         className="absolute inset-0 rounded-full opacity-0 transition-opacity duration-300 group-data-[state=checked]:opacity-100"
-        style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+        style={{ background: "var(--theme-gradient)" }}
       />
       {/* Position is driven entirely by Framer's `animate` x-offset — no CSS
           transform classes here, so there's only one system moving this

@@ -91,7 +91,8 @@ only ever touched by the Admin SDK from `app/api/public/config`,
 | `secondaryRoles` | `RoleId[]` | Shown as neutral pills. Stored normalized since FIX1: primary removed, canonical `ROLES` order, at most 9 |
 | `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management. Changed by an admin or the owner (FIX2: never by the admin themself — the last-admin safeguard — and never on an owner's row; an owner's flag is pinned on). See `canEditMember` in `lib/member-access.ts` |
 | `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own. FIX2: an owner can edit their *own* roles (never this flag or their admin flag) — see "Owner role editing (FIX2)" |
-| `themeId` | `string` | Applied once the profile first loads (see `app/(app)/layout.tsx`) |
+| `themeId` | `string` | Any id in the `lib/themes.ts` registry (`team`, `biobuzz`, the P18 solid / gradient / `pride-*` ids). Applied by `ThemeProvider` as soon as the profile loads; the account's value wins over this browser's |
+| `colorMode` | `"light"`, `"dark"` or `"system"` (P18, optional) | Separate from `themeId`; absent until first chosen (then this browser's / the system's applies). Ignored while a `pride-*` theme is active. The own-doc update rule already allows it: no rules change |
 | `createdAt` | `Timestamp` | |
 
 Document id is the Firebase Auth `uid`. Created only via
@@ -556,7 +557,8 @@ discards a malformed row, or a non-https link/image, on read.
   against live official match data.
 - `lib/use-connection-state.ts` + `lib/connection-notice.ts` (FIX3, replacing the nav "Online" label
   in `components/layout/connection-status.tsx`) — the offline / "N pending sync" signal, scoped to the
-  active events' entries (summed), now an amber badge on the sidebar's droplet button, shown only when needed.
+  active events' entries (summed). FIX3 showed it as an amber badge on the droplet; **P18 replaced that** with the always-visible
+  `ConnectionChip` (see "P18 — Themes, Appearance, sidebar" below) and removed the badge.
 - `components/team/member-row.tsx` — member display for Team Management:
   coloured primary pill, uncoloured secondary pills, and (admins) an Edit
   button / "Locked" marker driven by `getMemberEditState`.
@@ -1765,11 +1767,11 @@ when both are present. `lib/library/video-csv.ts` is the bulk video CSV parser (
 setLevel, reset }`, applied as the `--glass-shade` multiplier, remembered in localStorage
 (`compepicurus.glass-shade`, the pre-FIX3 key) and saved per user in `users/{uid}.glassLayerLevel`
 (0.3–2, debounced). `GlassLayerProvider` sits inside `AuthProvider`. `components/theme/glass-layer-slider.tsx`
-has `<GlassLayerSlider />` (the slider) and `<GlassLayerButton compact side connection />` (the circular
-droplet button + popover), used by the sidebar, the mobile top bar, and the home page header. The old
-sidebar "Online" label is gone: `lib/connection-notice.ts` (`connectionNotice(online, pending)`, pure) and
-`lib/use-connection-state.ts` (`useConnectionNotice()`, run once in the app shell) drive a small amber
-badge on the droplet that appears only when offline or submissions are unsynced; tapping shows the message.
+has `<GlassLayerSlider />` (the slider) and `<GlassLayerButton compact side />` (the circular
+droplet button + popover; since P18 it has no `connection` prop and no badge), used by the sidebar, the mobile top bar, and the
+home page header. `lib/connection-notice.ts` (`connectionNotice(online, pending)`, pure) and
+`lib/use-connection-state.ts` (`useConnectionNotice()`, run once in the app shell) compute the offline / unsynced signal; since P18
+it is shown by `components/layout/connection-chip.tsx`, not on the droplet.
 
 ### `scoutTargets/{teamId}_{eventCode}` (P16)
 
@@ -1840,6 +1842,55 @@ installed, not on Android/desktop); it replaced the inline text on the live resu
 **Verification.** `lib/mobile.test.ts` (static guards: manifest/icon validity, viewport, CSS rules, dialog sheet
 classes, safe-area bars, no `100vh`). Browser checks are `scripts/mobile-audit.mjs` (Playwright: screenshots at
 five sizes, fails on horizontal scroll); findings and the open checklist are in `docs/mobile-audit.md`.
+
+## P18 — Themes, Appearance, sidebar
+
+**Theme model — `lib/theme-color.ts`, `lib/theme-tokens.ts`, `lib/themes.ts`.** `ThemeDefinition` = `{ id, name, kind: "solid" | "gradient" | "flag",
+tagline, accents, gradientStops (raw), glowColor, glassTint, textOnAccent?, backgroundGradient, tokens }`, where `tokens` is
+`{ light, dark }` (solid, gradient) or `{ fixed }` (flag). `ThemeTokens` is the complete set of values the CSS needs (background, foreground,
+muted, primary / secondary / accent + `primaryForeground`, fitted `gradient` stops, glow, blobs, `pageStops`, glass bg / strong / border / shadow,
+overlay color + alpha + border, `surfaceSolid`, `focusRing`, `tint`, three status colors). Registry exports: `themes`, `themeGroups`
+(Solid / Gradients / Pride), `defaultThemeId = "team"`, `getTheme`, `isThemeId`, `isFlagTheme`, `hasModes`, `tokensFor(theme, mode)`.
+Factories `solidTheme`, `gradientTheme`, `flagTheme` build tokens through `buildTokens`, which nudges every fill that carries text (all gradient
+stops, primary, accent) in HSL lightness only until the text on it is >= 4.5:1 and it stands >= 3:1 off the page (`fitLuminance`), picks white or
+near-black text by the smaller change, re-samples the gradient so the blended middle passes, and scales the background wash down until body text
+passes on the worst-case glass surface. Catalog: 9 solid (Team Colors, BIOBUZZ, Evergreen, Ocean, Amethyst, Blossom, Obsidian, Pearl, Slate), 12 gradient
+(Nebula, Lagoon, Ember, Sunset, Aurora, Cotton Candy, Midnight, Twilight, Glacier, Citrus, Tropical, Rose Gold), 18 `pride-*` flags. Ids `team` and
+`biobuzz` are unchanged and keep their original dark surfaces exactly.
+
+**Generated CSS — `lib/theme-css.ts`.** `themeCss()` (server-side, once) writes every theme x mode as
+`html[data-theme="id"][data-mode="light|dark"]{...}` (flags: `html[data-theme="id"]{...}`), the default also as `:root`, into
+`<style id="theme-tokens">` in `app/layout.tsx`; `themeInitScript()` is the pre-paint script that sets `data-theme` / `data-mode` from localStorage
+(`compepicurus.theme`, `compepicurus.colorMode`) and the system preference (flags force `dark`). `app/globals.css` no longer holds theme values, only
+what is shared: `--theme-gradient` / `--theme-gradient-h` (built from `--theme-stops`), the light-mode remaps of hardcoded `bg-white/N` tints and pastel
+`text-red-300`-style shades, a base `:focus-visible` ring (`--focus-ring`, in `@layer base`), and the `.theme-animating` fade. New variables:
+`--theme-stops`, `--page-bg`, `--surface-solid`, `--focus-ring`, `--tint-rgb`, `--status-online|offline|syncing`. The hardcoded
+`linear-gradient(135deg, var(--color-primary), var(--color-accent))` in 23 files is now `var(--theme-gradient)` (`--theme-gradient-h` for the 90deg progress bars).
+
+**Preferences — `lib/theme-prefs.ts` (pure) and `components/theme/theme-provider.tsx`.** `ThemeProvider` now sits **inside** `AuthProvider`.
+`useAppTheme()` -> `{ theme, themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked, toggleColorMode }`. Theme and mode are independent;
+a flag theme applies `dark` but leaves the saved mode alone (restored on leaving). Saves `users/{uid}.themeId` / `.colorMode` when signed in, localStorage
+always. Applying sets two attributes, plus a ~450ms `theme-animating` class on `<html>` that transitions colors on elements only (no View Transition).
+
+**Contrast guard — `lib/theme-contrast.ts`.** `auditAllThemes()` measures the final tokens of every theme x mode: foreground and muted text on page / glass
+(one layer and nested) / overlay (also over pure black and white) / solid surfaces (4.5), text on every point of the gradient + primary + accent (4.5), fills
+against the page (3), secondary (3), the focus ring on every surface (3), the status dots on the solid chip (3). Run by `lib/themes.test.ts` and by
+`npm run check:themes` (`scripts/check-theme-contrast.ts`), which `prebuild` runs, so a failing theme fails `npm run build`.
+
+**UI.** `components/theme/appearance-panel.tsx` (`<AppearancePanel />`, used in Account Settings > Appearance; Mode control, search, grouped live-preview cards);
+`components/theme/color-mode-toggle.tsx` (sun/moon, sidebar footer, top bar, marketing header; disabled on flags);
+`components/layout/connection-chip.tsx` (`<ConnectionChip connection collapsed fixedWidth />`; solid `--surface-solid` backing, Online / Offline [· N] / Syncing N,
+dot + tooltip when the sidebar is collapsed, in the desktop sidebar, the mobile top bar and the drawer) + `connectionStatus()` in `lib/connection-notice.ts`.
+`components/theme/theme-switcher.tsx` is deleted. **Sidebar structure:** the outer `motion.aside` only positions and sizes; the `glass-panel` (which clips its
+scrolling content) is an inner box and the collapse arrow is its sibling, so it can straddle the edge instead of being clipped.
+
+**Glass blur in the build.** In `app/globals.css` every `-webkit-backdrop-filter` is written *before* `backdrop-filter`, and Tailwind's `backdrop-blur-*` is not used
+(`.scrim-blur` instead): see ASSUMPTIONS P18-12. `lib/glass-css.test.ts` guards the order and runs the real Lightning CSS transform.
+
+**Browser tests — `playwright.config.ts`, `e2e/`.** `npm run test:e2e` (projects chromium-desktop, webkit-desktop, chromium-phone, webkit-phone). It starts its own Next server with
+`E2E_THEME_CHECK=1`, which enables the test-only page `app/e2e/theme-check` (the real Sidebar, Topbar, PageTransition and Appearance panel signed-out, plus one sample of each
+glass class; a 404 otherwise). Covers: every theme x mode keeps non-`none` backdrop filters equal to the baseline with no backdrop-root ancestor, theme/mode independence,
+flag lock + restore, no flash on the first frame, the sidebar arrow hit-test at 3 widths expanded and collapsed, and the chip's states with no layout shift.
 
 ## Conventions
 

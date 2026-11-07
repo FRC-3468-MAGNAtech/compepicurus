@@ -157,7 +157,7 @@ export function StatusTable({
                       </div>
                       {pct !== null && (
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label={`${r.name}'s progress`}>
-                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "linear-gradient(90deg, var(--color-primary), var(--color-accent))" }} />
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "var(--theme-gradient-h)" }} />
                         </div>
                       )}
                       <div className="mt-1 flex flex-wrap gap-1">

@@ -210,6 +210,14 @@ describe("users/{uid}", () => {
     await assertSucceeds(updateDoc(doc(db, "users", SCOUT_UID), { name: "New Name", themeId: "biobuzz" }));
   });
 
+  it("lets a user save their own light/dark mode and any theme id (P18), but not someone else's", async () => {
+    const own = testEnv.authenticatedContext(SCOUT_UID).firestore();
+    await assertSucceeds(updateDoc(doc(own, "users", SCOUT_UID), { colorMode: "light", themeId: "pride-transgender" }));
+    await assertSucceeds(updateDoc(doc(own, "users", SCOUT_UID), { colorMode: "system" }));
+    const outsider = testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+    await assertFails(updateDoc(doc(outsider, "users", SCOUT_UID), { colorMode: "dark" }));
+  });
+
   it("blocks a user from granting themselves admin or owner", async () => {
     const db = testEnv.authenticatedContext(SCOUT_UID).firestore();
     await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { isAdmin: true }));

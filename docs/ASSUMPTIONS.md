@@ -2885,6 +2885,97 @@ only in an iOS browser tab, where notifications are offered (live practice resul
 `tsc` clean; `lib/mobile.test.ts` (16 tests); lint, the full vitest run and `next build` are reported in the final
 summary. No Firestore rules changed. Not verified: everything visual (see P17-1).
 
+## P18 — Themes overhaul, Settings > Appearance, sidebar fixes, and the blur bug
+
+**P18-0. One question batch, answered "defaults".** (1) Berrisexual and Almond/Verian flags are **left out** (I wasn't certain of their colors); the Intersex flag is
+shown as yellow to purple (`#ffd800` to `#7902aa`, it is a ring, not stripes) and Progress Pride as the chevron plus the six stripes. (2) Playwright was added
+(`@playwright/test`, Chromium and WebKit downloaded). (3) The contrast guard runs in `prebuild` (so Vercel's build fails on a bad theme); no GitHub Actions
+workflow was added. As in P1-1 and P17-0 the prompt's "React + Vite" was read as this Next.js 16 app.
+
+**P18-1. "The Settings page" is Account Settings (`/account`).** Its old two-card Theme grid became an **Appearance** section (`AppearancePanel`). The nav label
+and route are unchanged. The marketing header had the old pill switcher too; it now has the sun/moon toggle (hidden under `sm`, where the header is already full).
+
+**P18-2. How the themes are built, and what changed for the existing two.** Every color that carries text (all gradient stops, primary, accent) is nudged in HSL
+lightness only (hue and saturation kept) until text on it is 4.5:1 and it is 3:1 off the page; the contrast guard measures the result independently.
+Consequences you can see: **Team Colors** keeps its red (`#e11d3c` becomes `#d71c39`) and its original dark surfaces exactly, but the orange end of its gradient is
+deepened (`#ff7a45` to `#ca3a00`), because white-ish text on the old orange was 2.3:1 and the brief requires 4.5:1. **BIOBUZZ** dark is unchanged apart from the guard;
+its old `secondary` (`#3a2a12`, near-invisible dark brown on a dark page) is now `#d97706`; its **light** mode is a deeper honey brown (`#b45309`), since amber can't carry
+white text. In **light mode** buttons always carry white text (so fills are deep and saturated); in **dark mode** each theme takes white or near-black text, whichever
+needs the smaller change (Cotton Candy, Glacier, Citrus and most flags end up pastel with dark text).
+
+**P18-3. Neutrals.** An accent can't be black on a black page or white on a white page, so: **Obsidian** is ink (`#18181b`) in light and graphite (`#71717a`) in dark;
+**Pearl** is near-white in dark and a warm pewter (`#78716c`) in light; **Slate** is slate gray in both. Surfaces and text still switch with the mode, and the glow flips
+(light glow on dark, ink shadow on light). Pearl and Slate are close cousins in light mode; that's the cost of keeping buttons visible.
+
+**P18-4. Light mode for components written for dark.** About 100 places use `bg-white/N` tints and 160 use pastel `text-red-300` / `amber-300` / `emerald-300` /
+`blue-300` shades. Rather than restyle outside this prompt's scope, `app/globals.css` remaps them for `data-mode="light"` (translucent-black tints; the 700/800 shades of the
+same hues). Where an icon sits on a gradient fill, `text-white` became `var(--color-primary-foreground)` (9 spots) so it is legible on every theme. **I only looked at the
+fixture page (shell + Appearance + glass samples) in light mode, not every app page**, so an individual page with its own hardcoded colors may still need a pass.
+
+**P18-5. Flags.** 18 flags: Rainbow, Progress, Gay (MLM), Lesbian, Bisexual, Pansexual, Demisexual, Omnisexual, Transgender, Non-binary, Asexual, Aromantic, Genderfluid, Genderqueer,
+Agender, Polysexual, Intersex, Bigender. Each is its widely recognized sequence as a smooth gradient, labelled "Pride: ...". "Other popular ones" was limited to flags I am
+certain of; please eyeball the colors in `lib/themes.ts` (they are plain hex lists). Progress Pride is in true left-to-right order from the hoist: black, brown, light blue, pink,
+white, then the six stripes. Every flag shares one fixed dark glass and text treatment (the page is the flag's colors deepened); stripes that are black or white are lightened or
+darkened by the same fit as everything else, so a flag's button gradient is a legible version of its colors, not the raw stripes.
+
+**P18-6. Light/dark on flags.** While a flag is active the applied mode is `dark`, the Settings Mode control and the sun/moon toggle are disabled (Settings says why and names the
+saved choice), and `colorMode` is never overwritten, so leaving the flag restores the user's own choice. Light/Dark/System and the theme are saved independently.
+
+**P18-7. Persistence and first load.** `ThemeProvider` moved inside `AuthProvider`. The account's `themeId` / `colorMode` win over this browser's once the profile loads (as the glass level
+does); a missing `colorMode` keeps this browser's, or the system's. **Two first-run effects after deploy:** (a) the initial mode follows the system, so someone whose device is in light
+mode sees Team Colors *light* on their first load; (b) the old sidebar switcher only ever saved to localStorage, so a user whose account says `team` but who had picked BIOBUZZ locally
+will see their account's theme once.
+
+**P18-8. Connection chip.** Placed in the desktop sidebar footer (full width; a dot with a portal tooltip when collapsed), the mobile top bar (fixed `6.75rem` width, the wordmark hides under 420px
+to make room) and the mobile drawer. Offline with submissions waiting reads "Offline · N"; "Syncing N" is amber and pulses. The solid backing is `--surface-solid`, an opaque theme color (not
+tied to `--glass-shade`). The droplet badge and the glass popover's offline message are removed.
+
+**P18-9. Sidebar arrow.** Cause: the arrow was a child of the `overflow-hidden` glass panel and positioned half outside it, so the outer half was clipped. Fix: an outer `aside` that only sizes and
+positions, an inner glass box that clips, and the arrow as the inner box's sibling. It exists only from 1024px up (below that the app uses the drawer), so "tablet" means iPad landscape and up;
+phones and portrait tablets have no arrow. The test hit-tests five points on the button, including the outer edge, expanded and collapsed, at 1040 / 1280 / 1536px (not exactly 1024:
+Playwright's Windows WebKit counts its classic scrollbar against `min-width: 1024px`).
+
+**P18-10. Contrast guard: what it does and doesn't cover.** Thresholds 4.5 / 4.5 / 3 with a small margin (4.55 / 3.2) in the fitting. Body and muted text are measured on the page's
+worst case (each blob at full strength), one and two stacked glass layers, floating overlays (also over pure black and white), and the solid chip, **at the default glass level**; the glass
+slider below 1 makes overlays more see-through by the user's choice and is not guarded. Known gaps: `--color-primary` used directly as small text color (8 places) is held to 3:1, not 4.5;
+phase-bar and avatar colors are fixed palettes, not themed.
+
+**P18-11. Blur bug, cause 1 (theme-switch transition). Not reproduced; removed anyway.** The old `ThemeProvider` wrapped every change in `document.startViewTransition(...)` on the root, and
+`globals.css` animated `body`'s colors for 0.6s. A root view transition snapshots the document, and glass (`backdrop-filter`) layers are the classic thing that breaks across one in WebKit.
+I could not reproduce it: with the old code temporarily restored, the blur test passed in Chromium and WebKit (Playwright's Windows WebKit; I have no real iPhone). I removed it because it
+is the one theme-switch mechanism that touches the root, and replaced it with a 450ms `theme-animating` class that only transitions color properties on elements. Treat this as a
+precaution that fits the brief, not as a confirmed fix for an iPhone-only symptom; please check on a real iPhone. Other suspects from the brief, checked: no ancestor of glass has
+opacity, filter, mask, clip-path, blend mode or will-change at rest (asserted for every theme x mode); a missing token is impossible now (every rule is generated from one complete
+`ThemeTokens` shape and tested); the glass slider and the mobile "lighter blur" are driven by `--glass-shade` and viewport width only, never by the theme; a theme change is two attribute
+swaps, so nothing remounts.
+
+**P18-12. Blur bug, cause 2 (confirmed, and bigger): the build was deleting the unprefixed `backdrop-filter`.** The first run of the new test found `backdrop-filter: none` on every glass
+element, in every theme, in Chromium, before any switching. Cause: Next's CSS pipeline (Lightning CSS, default targets Chrome 111 / Safari 16.4) keeps **only** `-webkit-backdrop-filter`
+when the unprefixed property is written first, which is how `globals.css` was written (and Tailwind's `backdrop-blur-sm` came out prefixed-only too). Only Safari understands the prefixed form, so
+Chrome, Edge and Firefox showed **no glass blur at all**, in dev and in the existing production CSS (`.next/static/chunks/*.css` from before P18 has `.glass-panel{...-webkit-backdrop-filter...}`
+and no unprefixed twin). I reproduced it in isolation with `lightningcss` (unprefixed-first: prefixed only; prefixed-first: both). Fix: every pair in `globals.css` is now prefixed-first, and
+the three `backdrop-blur-sm` scrims became `.scrim-blur`. `lib/glass-css.test.ts` guards the order, bans `backdrop-blur-*`, and runs the real Lightning CSS transform on `globals.css`; I confirmed
+it fails on the old order. This may or may not be what you saw on your phone (Safari kept its blur), but it is why Chrome users never had any.
+
+**P18-13. The Playwright suite.** `npm run test:e2e` (4 projects: Chromium and WebKit, a desktop and a phone viewport; Pixel 7 and iPhone 14 emulation). It needs a page to run on without a Firebase
+login, so the real Sidebar, Topbar, PageTransition and Appearance panel render on `/e2e/theme-check`, which is a 404 unless `E2E_THEME_CHECK=1` (set only by `playwright.config.ts` for its own server;
+Vercel never sets it). It tests `next dev` by default; `E2E_PROD=1` tests a production build. The test waits for hydration (the page-transition wrapper starts at opacity 0), then for each theme x mode
+asserts every glass sample's `backdrop-filter` is non-`none` and identical to the baseline, and that no ancestor is a backdrop root. It is not in any CI (there isn't one); it needs the browsers
+(`npx playwright install chromium webkit`) and takes about 1-4 minutes per project.
+
+**P18-14. Firestore.** No rules change: `colorMode` is a new optional field on the user's own doc, which the existing own-doc update rule allows (a rules test was added; the full emulator suite, 276 tests,
+passes). Observation, **not changed**: the admin member-edit rule only pins `teamId`, `isOwner` and the role fields, so an admin can write *any other* field on a teammate's user doc (`name`, `themeId`,
+`colorMode`, `glassLayerLevel`). Worth tightening in a later rules pass.
+
+**P18-15. Deliberately not done.** A GitHub Actions workflow (there is no CI to hook into); a per-page light-mode visual audit of the signed-in app (needs a login; see P18-4); real-device iPhone verification;
+Lighthouse or pixel-diff blur checks (the test asserts computed styles and ancestors, as the brief describes).
+
+### P18: verification
+
+`tsc` clean; eslint 0 errors (the 2 existing TanStack Virtual warnings); `vitest run` 884 tests in 57 files, including new `themes.test.ts` (the contrast guard for all 60 theme x mode combinations, registry,
+generated CSS, pre-paint script), `theme-color.test.ts`, `theme-prefs.test.ts`, `connection-status.test.ts`, `glass-css.test.ts`; `npm run build` passes (its `prebuild` runs the guard);
+`npm run test:rules` 276 tests pass; Playwright: all four projects pass.
+
 ## Commands to run locally
 
 ```bash

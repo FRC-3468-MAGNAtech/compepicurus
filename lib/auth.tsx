@@ -69,6 +69,8 @@ export type UserDoc = {
   /** Set only by app/api/auth/sync-roles (Admin SDK) — see docs/ASSUMPTIONS.md (P1b). Clients can never write this (firestore.rules). */
   isOwner: boolean;
   themeId: string;
+  /** P18: "light" | "dark" | "system". Separate from themeId; absent until the user first picks one (then this browser's, or the system's, applies). Ignored while a pride theme is active. */
+  colorMode?: "light" | "dark" | "system";
   /** P14: when the user last opened the Changelog (a Firestore Timestamp; absent until they first do) — drives the unread dot on its nav item. */
   lastSeenChangelogAt?: unknown;
   /** FIX3: the layered-glass level (0.3-2, 1 = default), saved per user so it follows them across devices. See lib/glass-layer.tsx. */
@@ -93,7 +95,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
-  updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId">>) => Promise<void>;
+  updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode">>) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   /** FIX2: this account's email is in OWNER_EMAILS but isn't verified yet, so owner access hasn't been applied. Drives the "Verify your email to activate owner access" notice. */
   ownerPendingVerification: boolean;
@@ -298,7 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLinkedProviders(auth.currentUser.providerData.map((p) => p.providerId));
   };
 
-  const updateUserProfile = async (patch: Partial<Pick<UserDoc, "name" | "themeId">>) => {
+  const updateUserProfile = async (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode">>) => {
     if (!auth.currentUser) throw new Error("Not signed in.");
     await updateDoc(doc(db, "users", auth.currentUser.uid), patch);
   };

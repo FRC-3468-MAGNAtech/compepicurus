@@ -321,7 +321,7 @@ function EventCard({
               "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
               selected ? "border-transparent" : "border-[var(--glass-border)]"
             )}
-            style={selected ? { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" } : undefined}
+            style={selected ? { background: "var(--theme-gradient)" } : undefined}
           >
             <AnimatePresence initial={false}>
               {selected && (

@@ -12,7 +12,7 @@ import { subscribeEntries } from "@/lib/scout-entries";
  * offline submissions actually happen — the Scout Form at a venue with bad Wi-Fi)
  * rather than every entry the team ever recorded. This is what the sidebar's
  * "Online / Offline / N pending sync" label used to compute (P1); it now feeds the
- * badge on the droplet button (components/theme/glass-layer-slider.tsx).
+ * always-visible status chip (components/layout/connection-chip.tsx, P18).
  */
 export function useConnectionNotice(): ConnectionNotice | null {
   const { profile } = useAuth();

@@ -55,8 +55,8 @@ export function CounterControl({
           whileTap={disabled ? undefined : { scale: 0.88 }}
           transition={springSnappy}
           onClick={() => onChange(value + 1)}
-          className="flex h-12 w-12 items-center justify-center rounded-full text-white disabled:cursor-not-allowed"
-          style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+          className="flex h-12 w-12 items-center justify-center rounded-full text-[var(--color-primary-foreground)] disabled:cursor-not-allowed"
+          style={{ background: "var(--theme-gradient)" }}
         >
           <Plus className="h-5 w-5" />
         </motion.button>

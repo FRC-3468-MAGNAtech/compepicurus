@@ -253,7 +253,7 @@ function Bar({ fraction }: { fraction: number }) {
     <span className="block h-2 w-full overflow-hidden rounded-full bg-white/10" aria-hidden>
       <span
         className="block h-full rounded-full"
-        style={{ width: `${Math.max(0, Math.min(1, fraction)) * 100}%`, background: "linear-gradient(90deg, var(--color-primary), var(--color-accent))" }}
+        style={{ width: `${Math.max(0, Math.min(1, fraction)) * 100}%`, background: "var(--theme-gradient-h)" }}
       />
     </span>
   );

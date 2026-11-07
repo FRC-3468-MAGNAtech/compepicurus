@@ -1,27 +1,9 @@
 @import "tailwindcss";
 
+/* Theme tokens (colors, glass, glow, gradient, page background) are NOT written here. Every theme x mode is
+   generated from lib/themes.ts into a <style id="theme-tokens"> in <head> (lib/theme-css.ts), so none can be
+   missing a variable. This block is only what is the same in every theme. (P18) */
 :root {
-  --background: #17070c;
-  --foreground: #f7ede2;
-  --muted-foreground: #c9b8ae;
-
-  --color-primary: #e11d3c;
-  --color-primary-foreground: #fff7ed;
-  --color-secondary: #f5b400;
-  --color-accent: #ff7a45;
-  --glow: 225, 29, 60;
-  --glow-soft: 245, 180, 0;
-  --surface-tint: 225, 29, 60;
-
-  --blob-1: #3a0d16;
-  --blob-2: #1a0a12;
-  --blob-3: #241102;
-
-  --glass-bg: rgba(255, 255, 255, 0.07);
-  --glass-bg-strong: rgba(255, 255, 255, 0.11);
-  --glass-border: rgba(255, 255, 255, 0.14);
-  --glass-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
-
   /* User-adjustable glass intensity (see lib/glass-layer.tsx): a multiplier
      on --overlay-bg's base alpha only, 1 = default. Persisted and applied as
      an inline custom property on <html>. Scoped specifically to shapes that
@@ -31,39 +13,15 @@
      stay fixed. */
   --glass-shade: 1;
 
-  /* Solid scrim behind floating overlays (dropdowns, popovers, tooltips) so
-     blur alone never has to carry legibility over arbitrary page content. */
-  --overlay-bg: rgba(23, 7, 12, calc(0.82 * var(--glass-shade)));
-  --overlay-border: rgba(255, 255, 255, 0.18);
-
   --radius-lg: 28px;
   --radius-md: 20px;
   --radius-sm: 14px;
 }
 
-[data-theme="biobuzz"] {
-  --background: #16110a;
-  --foreground: #fbf1d9;
-  --muted-foreground: #cabb98;
-
-  --color-primary: #f5a300;
-  --color-primary-foreground: #241902;
-  --color-secondary: #3a2a12;
-  --color-accent: #ffd23f;
-  --glow: 245, 163, 0;
-  --glow-soft: 255, 210, 63;
-  --surface-tint: 245, 163, 0;
-
-  --blob-1: #241902;
-  --blob-2: #140f08;
-  --blob-3: #2e2308;
-
-  --glass-bg: rgba(255, 226, 150, 0.06);
-  --glass-bg-strong: rgba(255, 226, 150, 0.1);
-  --glass-border: rgba(255, 214, 120, 0.16);
-
-  --overlay-bg: rgba(22, 17, 10, calc(0.82 * var(--glass-shade)));
-  --overlay-border: rgba(255, 214, 120, 0.22);
+/* One gradient, from the active theme's fitted stops (--theme-stops): buttons, active tabs/pills, progress bars. */
+html {
+  --theme-gradient: linear-gradient(135deg, var(--theme-stops));
+  --theme-gradient-h: linear-gradient(90deg, var(--theme-stops));
 }
 
 /* P11: the three score phases in stacked bars (Match Breakdown, Team Breakdown).
@@ -92,10 +50,6 @@
   border-color: var(--glass-border);
 }
 
-html {
-  color-scheme: dark;
-}
-
 html,
 body {
   min-height: 100%;
@@ -105,19 +59,21 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-  transition: background-color 0.6s ease, color 0.6s ease;
 }
 
 ::selection {
   background: rgba(var(--glow), 0.35);
 }
 
-/* Glassmorphism primitives */
+/* Glassmorphism primitives.
+   ORDER MATTERS: every `-webkit-backdrop-filter` is written BEFORE its unprefixed twin. Next's CSS pipeline (Lightning CSS, targets
+   Chrome 111 / Safari 16.4) drops the unprefixed declaration when it comes first, leaving only the -webkit- one, which Chrome,
+   Edge and Firefox ignore: no blur at all outside Safari. lib/glass-css.test.ts guards this. (P18) */
 
 .glass-panel {
   background: var(--glass-bg);
-  backdrop-filter: blur(28px) saturate(140%);
   -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(28px) saturate(140%);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow);
@@ -125,8 +81,8 @@ body {
 
 .glass-card {
   background: var(--glass-bg);
-  backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-shadow);
@@ -134,8 +90,8 @@ body {
 
 .glass-strong {
   background: var(--glass-bg-strong);
-  backdrop-filter: blur(32px) saturate(150%);
   -webkit-backdrop-filter: blur(32px) saturate(150%);
+  backdrop-filter: blur(32px) saturate(150%);
   border: 1px solid var(--glass-border);
 }
 
@@ -146,18 +102,25 @@ body {
    the underlying text is actually hidden. Do not use this for page cards. */
 .glass-overlay {
   background: var(--overlay-bg);
-  backdrop-filter: blur(28px) saturate(150%);
   -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(150%);
   border: 1px solid var(--overlay-border);
 }
 
 .glass-pill {
   background: var(--glass-bg);
-  backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid var(--glass-border);
   border-radius: 999px;
   box-shadow: var(--glass-shadow);
+}
+
+/* Blurred scrim behind dialogs and the mobile drawer. Replaces Tailwind's backdrop-blur-sm, whose generated order has the same
+   Lightning CSS problem described above (prefixed-only output, so no blur in Chrome / Edge / Firefox). */
+.scrim-blur {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 
 .glow-ring {
@@ -240,9 +203,20 @@ body {
   background: transparent;
 }
 
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 0.5s;
+/* P18: there is deliberately no View Transition on theme change. document.startViewTransition(...) on the root was the
+   cause of "all blurs disappear after picking a theme": it captures the root as a snapshot, and glass layers (backdrop-filter)
+   are not rendered correctly across it, in WebKit especially. ThemeProvider adds .theme-animating to <html> for ~450ms
+   instead, which only transitions color properties on the individual elements. Never put opacity, filter, transform,
+   mask or will-change on <html>, <body> or any wrapper of glass: each makes that ancestor a "backdrop root" that cuts
+   off the backdrop-filter of everything inside it. */
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-animating *,
+  html.theme-animating *::before,
+  html.theme-animating *::after {
+    transition-property: background-color, border-color, color, fill, stroke, box-shadow, text-decoration-color !important;
+    transition-duration: 0.4s !important;
+    transition-timing-function: ease !important;
+  }
 }
 
 /* ------------------------------------------------------------------------
@@ -318,12 +292,12 @@ body {
   .glass-card,
   .glass-pill,
   .glass-overlay {
-    backdrop-filter: blur(12px) saturate(130%);
     -webkit-backdrop-filter: blur(12px) saturate(130%);
+    backdrop-filter: blur(12px) saturate(130%);
   }
   .glass-strong {
-    backdrop-filter: blur(16px) saturate(130%);
     -webkit-backdrop-filter: blur(16px) saturate(130%);
+    backdrop-filter: blur(16px) saturate(130%);
   }
   /* The blobs are already soft radial gradients; the extra blur filter is pure GPU cost on a phone. */
   .bg-blob {
@@ -341,8 +315,8 @@ body {
   .glass-pill,
   .glass-overlay {
     background: color-mix(in srgb, var(--background) 94%, white 6%);
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
   .glass-overlay {
     background: color-mix(in srgb, var(--background) 98%, white 2%);
@@ -355,3 +329,57 @@ body {
     animation: none !important;
   }
 }
+
+/* ------------------------------------------------------------------------
+   Theme layer (P18)
+   ------------------------------------------------------------------------ */
+
+/* Every focusable element gets a visible ring in the theme's own fitted color (>= 3:1 on every surface, checked by the
+   contrast guard) unless the component draws its own. In @layer base so Tailwind's focus-visible:outline-none /
+   ring utilities still win where a component styles its own focus. */
+@layer base {
+  :where(a, button, input, select, textarea, summary, [tabindex], [role="button"], [role="radio"], [role="switch"], [role="checkbox"]):focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Light mode: components were written for dark, with translucent-white hover/fill tints and pastel status text
+   (text-red-300 ...). Rather than restyle every component, light mode flips the tints to translucent-black and uses the
+   deeper shades of the same hues. Unlayered on purpose, so these beat the Tailwind utilities (which live in a layer). */
+html[data-mode="light"] {
+  --color-red-100: oklch(44.4% 0.177 26.899);
+  --color-red-200: oklch(44.4% 0.177 26.899);
+  --color-red-300: oklch(50.5% 0.213 27.518);
+  --color-red-400: oklch(50.5% 0.213 27.518);
+  --color-amber-100: oklch(47.3% 0.137 46.201);
+  --color-amber-200: oklch(47.3% 0.137 46.201);
+  --color-amber-300: oklch(55.5% 0.163 48.4);
+  --color-amber-400: oklch(55.5% 0.163 48.4);
+  --color-emerald-200: oklch(43.2% 0.095 166.913);
+  --color-emerald-300: oklch(50.8% 0.118 165.612);
+  --color-emerald-400: oklch(50.8% 0.118 165.612);
+  --color-blue-200: oklch(42.4% 0.199 265.638);
+  --color-blue-300: oklch(48.8% 0.243 264.376);
+  --color-sky-200: oklch(44.3% 0.11 240.79);
+  --color-sky-300: oklch(50% 0.134 242.749);
+}
+html[data-mode="light"] .bg-white\/3 { background-color: rgba(var(--tint-rgb), 0.022); }
+html[data-mode="light"] .bg-white\/4 { background-color: rgba(var(--tint-rgb), 0.03); }
+html[data-mode="light"] .bg-white\/5 { background-color: rgba(var(--tint-rgb), 0.038); }
+html[data-mode="light"] .bg-white\/6 { background-color: rgba(var(--tint-rgb), 0.045); }
+html[data-mode="light"] .bg-white\/8 { background-color: rgba(var(--tint-rgb), 0.06); }
+html[data-mode="light"] .bg-white\/10 { background-color: rgba(var(--tint-rgb), 0.075); }
+html[data-mode="light"] .bg-white\/14 { background-color: rgba(var(--tint-rgb), 0.105); }
+html[data-mode="light"] .bg-white\/15 { background-color: rgba(var(--tint-rgb), 0.112); }
+html[data-mode="light"] .bg-white\/20 { background-color: rgba(var(--tint-rgb), 0.15); }
+html[data-mode="light"] .bg-white\/35 { background-color: rgba(var(--tint-rgb), 0.262); }
+html[data-mode="light"] .hover\:bg-white\/4:hover { background-color: rgba(var(--tint-rgb), 0.03); }
+html[data-mode="light"] .hover\:bg-white\/5:hover { background-color: rgba(var(--tint-rgb), 0.038); }
+html[data-mode="light"] .hover\:bg-white\/6:hover { background-color: rgba(var(--tint-rgb), 0.045); }
+html[data-mode="light"] .hover\:bg-white\/8:hover { background-color: rgba(var(--tint-rgb), 0.06); }
+html[data-mode="light"] .hover\:bg-white\/10:hover { background-color: rgba(var(--tint-rgb), 0.075); }
+html[data-mode="light"] .hover\:bg-white\/14:hover { background-color: rgba(var(--tint-rgb), 0.105); }
+html[data-mode="light"] .focus-visible\:bg-white\/5:focus-visible { background-color: rgba(var(--tint-rgb), 0.038); }
+html[data-mode="light"] .focus-visible\:bg-white\/10:focus-visible { background-color: rgba(var(--tint-rgb), 0.075); }
+html[data-mode="light"] .data-\[highlighted\]\:bg-white\/10[data-highlighted] { background-color: rgba(var(--tint-rgb), 0.075); }

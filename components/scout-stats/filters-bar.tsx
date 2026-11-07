@@ -26,7 +26,7 @@ function ChipToggle({ active, onClick, children }: { active: boolean; onClick: (
           ? "border-transparent text-[var(--color-primary-foreground)]"
           : "border-dashed border-[var(--glass-border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
       )}
-      style={active ? { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" } : undefined}
+      style={active ? { background: "var(--theme-gradient)" } : undefined}
     >
       {children}
     </button>

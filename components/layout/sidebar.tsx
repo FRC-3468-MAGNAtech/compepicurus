@@ -8,7 +8,8 @@ import { ChevronsLeft, ChevronsRight, LogOut, Trophy } from "lucide-react";
 import { mainNav, secondaryNav, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
-import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { ColorModeToggle } from "@/components/theme/color-mode-toggle";
+import { ConnectionChip } from "@/components/layout/connection-chip";
 import { GlassLayerButton } from "@/components/theme/glass-layer-slider";
 import type { ConnectionNotice } from "@/lib/connection-notice";
 import { Avatar } from "@/components/ui/avatar";
@@ -52,7 +53,7 @@ function NavLink({
             transition={spring}
             className="absolute inset-0 -z-10 rounded-2xl"
             style={{
-              background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))",
+              background: "var(--theme-gradient)",
               boxShadow: "0 8px 24px -6px rgba(var(--glow), 0.55)",
             }}
           />
@@ -93,25 +94,31 @@ export function Sidebar({ mobileOpen, onClose, connection = null }: { mobileOpen
 
   return (
     <>
+      {/* The outer aside only positions and sizes; the glass panel (which must clip its scrolling content) is an inner
+          box, and the collapse arrow is a sibling of it. That's what lets the arrow straddle the edge: with it inside the
+          overflow-hidden glass panel it was cut in half (P18). */}
       <motion.aside
         initial={false}
         animate={{ width: collapsed ? 84 : 272 }}
         transition={spring}
-        className="glass-panel sticky top-4 z-30 hidden h-[calc(100dvh-2rem)] flex-col gap-4 overflow-hidden p-4 lg:flex"
+        className="sticky top-4 z-30 hidden h-[calc(100dvh-2rem)] shrink-0 lg:block"
       >
-        <SidebarInner
-          collapsed={collapsed}
-          name={name}
-          primaryRole={profile?.primaryRole}
-          navItems={visibleSecondaryNav}
-          changelogUnread={changelogUnread}
-          connection={connection}
-          onLogout={handleLogout}
-          scope="desktop"
-        />
+        <div className="glass-panel flex h-full flex-col gap-4 overflow-hidden p-4">
+          <SidebarInner
+            collapsed={collapsed}
+            name={name}
+            primaryRole={profile?.primaryRole}
+            navItems={visibleSecondaryNav}
+            changelogUnread={changelogUnread}
+            connection={connection}
+            onLogout={handleLogout}
+            scope="desktop"
+          />
+        </div>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="glass-pill absolute -right-3 top-8 flex h-7 w-7 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          data-testid="sidebar-collapse"
+          className="glass-pill touch-compact absolute -right-3.5 top-8 z-10 flex h-7 w-7 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <ChevronsRight className="h-3.5 w-3.5" /> : <ChevronsLeft className="h-3.5 w-3.5" />}
@@ -126,7 +133,7 @@ export function Sidebar({ mobileOpen, onClose, connection = null }: { mobileOpen
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={spring}
-              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/50 scrim-blur"
               onClick={onClose}
             />
             <motion.aside
@@ -182,9 +189,9 @@ function SidebarInner({
       <Link href="/dashboard" className="flex items-center gap-2.5 px-1.5 py-1">
         <span
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-          style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+          style={{ background: "var(--theme-gradient)" }}
         >
-          <Trophy className="h-[18px] w-[18px] text-white" />
+          <Trophy className="h-[18px] w-[18px] text-[var(--color-primary-foreground)]" />
         </span>
         {!collapsed && (
           <div className="min-w-0">
@@ -205,10 +212,14 @@ function SidebarInner({
       </nav>
 
       <div className="flex flex-col gap-3 border-t border-[var(--glass-border)] pt-3">
-        <div className={cn("flex items-center gap-2", collapsed ? "justify-center" : "justify-between")}>
-          {!collapsed && <ThemeSwitcher compact />}
-          {/* FIX3: the "Online" label is gone. The droplet opens the glass slider and carries the offline / unsynced-submissions badge (only when needed). */}
-          <GlassLayerButton compact connection={connection} />
+        {/* P18: the internet status has its own always-visible spot (solid backing, no layout shift), and the theme picker
+            is gone from here: the sun/moon is only the light/dark mode, the droplet is the glass slider. */}
+        <div className={cn("flex", collapsed ? "justify-center" : "")}>
+          <ConnectionChip connection={connection} collapsed={collapsed} />
+        </div>
+        <div className={cn("flex items-center gap-2", collapsed ? "flex-col" : "justify-center")}>
+          <ColorModeToggle compact />
+          <GlassLayerButton compact />
         </div>
         <div className="flex items-center gap-2.5 px-1">
           <Avatar name={name} size="sm" />

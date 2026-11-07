@@ -198,7 +198,7 @@ export default function ChangelogPage() {
               <motion.li key={entry.id} className="relative list-none" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <span
                   className={cn("absolute -left-6 top-6 flex h-[18px] w-[18px] items-center justify-center rounded-full", entry.status === "draft" && "border border-dashed border-[var(--muted-foreground)]")}
-                  style={entry.status === "draft" ? undefined : { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+                  style={entry.status === "draft" ? undefined : { background: "var(--theme-gradient)" }}
                   aria-hidden
                 >
                   <GitCommitVertical className={cn("h-3 w-3", entry.status === "draft" ? "text-[var(--muted-foreground)]" : "text-white")} />

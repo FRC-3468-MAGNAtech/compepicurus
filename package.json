@@ -7,10 +7,13 @@
   },
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm run check:themes",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "check:themes": "vite-node scripts/check-theme-contrast.ts",
+    "test:e2e": "playwright test",
     "test:rules": "firebase emulators:exec --only firestore,auth \"vitest run --config vitest.rules.config.ts\""
   },
   "dependencies": {
@@ -40,6 +43,7 @@
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^6.0.0",
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -48,6 +52,7 @@
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
     "typescript": "^5",
+    "vite-node": "^2.1.9",
     "vitest": "^2.1.9"
   }
 }

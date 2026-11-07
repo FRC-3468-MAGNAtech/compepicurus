@@ -257,7 +257,7 @@ export function SessionScreen({
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={springSnappy}
-                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-2xl bg-black/70 backdrop-blur-sm"
+                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-2xl bg-black/70 scrim-blur"
                   >
                     <p className="text-sm font-medium text-white">
                       {robotIndex === 0 ? "Ready to scout?" : `Ready for Team ${teamNumber}?`}

@@ -382,7 +382,7 @@ function PickedCard({
   return (
     // The outer element animates button-driven moves (framer layout); the inner one is dnd-kit's own drag transform.
     <motion.div layout="position" transition={spring} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} className="relative">
-      {dropIndicator && <div className="absolute -top-1.5 left-2 right-2 z-10 h-1 rounded-full" style={{ background: "linear-gradient(90deg, var(--color-primary), var(--color-accent))" }} />}
+      {dropIndicator && <div className="absolute -top-1.5 left-2 right-2 z-10 h-1 rounded-full" style={{ background: "var(--theme-gradient-h)" }} />}
       <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn(isDragging && "opacity-40")}>
         <CardBody
           row={row}

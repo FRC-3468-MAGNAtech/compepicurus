@@ -30,19 +30,19 @@ export function FieldToggle({
       className={cn(
         "flex w-full items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left transition-colors duration-200",
         checked
-          ? "border-transparent text-white"
+          ? "border-transparent text-[var(--color-primary-foreground)]"
           : "glass-card border-[var(--glass-border)] text-[var(--foreground)]",
         disabled && "opacity-60 cursor-not-allowed"
       )}
       style={
         checked
-          ? { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }
+          ? { background: "var(--theme-gradient)" }
           : undefined
       }
     >
       <div>
         <div className="text-base font-semibold">{label}</div>
-        <div className={cn("text-xs", checked ? "text-white/80" : "text-[var(--muted-foreground)]")}>
+        <div className={cn("text-xs", checked ? "text-[var(--color-primary-foreground)] opacity-80" : "text-[var(--muted-foreground)]")}>
           +{pointsWhenOn} pts when on
         </div>
       </div>

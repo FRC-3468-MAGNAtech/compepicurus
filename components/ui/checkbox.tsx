@@ -27,9 +27,9 @@ export function Checkbox({
           animate={{ scale: props.checked ? 1 : 0, opacity: props.checked ? 1 : 0 }}
           transition={springSnappy}
           className="flex h-full w-full items-center justify-center rounded-lg"
-          style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+          style={{ background: "var(--theme-gradient)" }}
         >
-          <Check className="h-4 w-4 text-white" strokeWidth={3} />
+          <Check className="h-4 w-4 text-[var(--color-primary-foreground)]" strokeWidth={3} />
         </motion.span>
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>

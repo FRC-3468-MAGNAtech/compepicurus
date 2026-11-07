@@ -60,7 +60,7 @@ export function DialogContent({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={spring}
-                className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+                className="fixed inset-0 z-50 bg-black/50 scrim-blur"
               />
             </DialogPrimitive.Overlay>
             <DialogPrimitive.Content forceMount asChild {...props}>

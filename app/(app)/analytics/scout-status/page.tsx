@@ -77,7 +77,7 @@ export default function ScoutStatusPage() {
         <div role="tablist" aria-label="Form type" className="flex flex-wrap gap-1.5">
           {scoutStatusFormTypes.map((t) =>
             t.enabled ? (
-              <button key={t.id} type="button" role="tab" aria-selected className="rounded-full px-4 py-2 text-sm font-semibold text-[var(--color-primary-foreground)]" style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}>
+              <button key={t.id} type="button" role="tab" aria-selected className="rounded-full px-4 py-2 text-sm font-semibold text-[var(--color-primary-foreground)]" style={{ background: "var(--theme-gradient)" }}>
                 {t.label}
               </button>
             ) : (

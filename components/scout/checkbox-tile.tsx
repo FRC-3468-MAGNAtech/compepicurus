@@ -28,13 +28,13 @@ export function CheckboxTile({
       className={cn(
         "relative flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-medium transition-colors duration-200",
         checked
-          ? "border-transparent text-white"
+          ? "border-transparent text-[var(--color-primary-foreground)]"
           : "glass-card border-[var(--glass-border)] text-[var(--muted-foreground)]",
         disabled && "opacity-60 cursor-not-allowed"
       )}
       style={
         checked
-          ? { background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }
+          ? { background: "var(--theme-gradient)" }
           : undefined
       }
     >

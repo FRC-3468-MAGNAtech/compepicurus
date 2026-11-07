@@ -27,7 +27,7 @@ export function SectionNav({ sections, activeId }: { sections: ScoutSection[]; a
                 transition={spring}
                 className="absolute inset-0 -z-10 rounded-full"
                 style={{
-                  background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))",
+                  background: "var(--theme-gradient)",
                   boxShadow: "0 4px 18px -4px rgba(var(--glow), 0.6)",
                 }}
               />

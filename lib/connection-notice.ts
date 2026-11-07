@@ -26,3 +26,21 @@ export function connectionNotice(online: boolean, pending: number): ConnectionNo
   if (waiting > 0) return { tone: "syncing", pending: waiting, message: `${submissions(waiting)} still syncing to the server.` };
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// P18: the always-visible status chip. FIX3 hid the signal while everything was fine; P18 shows all three states,
+// in its own spot with a solid backing, so a scout can always see whether they're connected.
+
+export type ConnectionStatus = {
+  tone: "online" | "offline" | "syncing";
+  /** The chip's text: "Online", "Offline", "Offline · 3", "Syncing 3". */
+  label: string;
+  /** The sentence read to screen readers and shown in the collapsed-sidebar tooltip. */
+  detail: string;
+};
+
+export function connectionStatus(notice: ConnectionNotice | null): ConnectionStatus {
+  if (!notice) return { tone: "online", label: "Online", detail: "Online. Everything you submit syncs right away." };
+  if (notice.tone === "offline") return { tone: "offline", label: notice.pending > 0 ? `Offline · ${notice.pending}` : "Offline", detail: notice.message };
+  return { tone: "syncing", label: `Syncing ${notice.pending}`, detail: notice.message };
+}

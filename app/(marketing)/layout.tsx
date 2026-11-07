@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ThemeSwitcher } from "@/components/theme/theme-switcher";
+import { ColorModeToggle } from "@/components/theme/color-mode-toggle";
 import { GlassLayerButton } from "@/components/theme/glass-layer-slider";
 import { SiteFooter } from "@/components/layout/site-footer";
 
@@ -14,15 +14,15 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
         <Link href="/" className="flex items-center gap-2.5">
           <span
             className="flex h-9 w-9 items-center justify-center rounded-xl"
-            style={{ background: "linear-gradient(135deg, var(--color-primary), var(--color-accent))" }}
+            style={{ background: "var(--theme-gradient)" }}
           >
-            <Trophy className="h-[18px] w-[18px] text-white" />
+            <Trophy className="h-[18px] w-[18px] text-[var(--color-primary-foreground)]" />
           </span>
           <span className="text-sm font-semibold sm:text-base">CompEpicurus</span>
         </Link>
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="hidden sm:block">
-            <ThemeSwitcher compact />
+            <ColorModeToggle compact />
           </div>
           <GlassLayerButton compact side="bottom" />
           <Link href="/login">

@@ -7,7 +7,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         accent:
-          "text-[var(--color-primary-foreground)] bg-[linear-gradient(135deg,var(--color-primary),var(--color-accent))]",
+          "text-[var(--color-primary-foreground)] bg-[image:var(--theme-gradient)]",
         glass: "glass-pill text-[var(--foreground)]",
         outline: "border border-[var(--glass-border)] text-[var(--muted-foreground)]",
         success: "bg-emerald-500/15 text-emerald-300 border border-emerald-400/30",

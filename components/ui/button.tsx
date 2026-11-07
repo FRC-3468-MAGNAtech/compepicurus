@@ -49,7 +49,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           isPrimary
             ? {
                 background:
-                  "linear-gradient(135deg, var(--color-primary), var(--color-accent))",
+                  "var(--theme-gradient)",
                 ...style,
               }
             : style

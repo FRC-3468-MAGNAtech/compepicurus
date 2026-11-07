@@ -25,7 +25,7 @@ export function InlineBar({ value, max, digits = 1, emphasized }: { value: numbe
       <span className="h-1 w-full overflow-hidden rounded-full bg-white/10" aria-hidden>
         <span
           className="block h-full rounded-full"
-          style={{ width: `${pct}%`, background: "linear-gradient(90deg, var(--color-primary), var(--color-accent))" }}
+          style={{ width: `${pct}%`, background: "var(--theme-gradient-h)" }}
         />
       </span>
     </div>
