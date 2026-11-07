@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Avatar } from "@/components/ui/avatar";
@@ -64,9 +65,10 @@ export default function PeoplePage() {
           filtered.map((p) => {
             const primary = getRole(p.primaryRole);
             return (
-              <GlassPanel key={p.uid} interactive className="flex flex-col gap-3">
+              <Link key={p.uid} href={`/people/${p.uid}`} aria-label={`View ${p.name}'s profile`} data-testid="person-card" className="block rounded-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
+              <GlassPanel interactive className="flex h-full flex-col gap-3">
                 <div className="flex items-center gap-3">
-                  <Avatar name={p.name} size="lg" />
+                  <Avatar name={p.name} size="lg" avatar={p.avatar} />
                   <div className="min-w-0">
                     <div className="truncate font-semibold">{p.name}</div>
                     <div className="truncate text-xs text-[var(--muted-foreground)]">{p.email}</div>
@@ -101,6 +103,7 @@ export default function PeoplePage() {
                   )}
                 </div>
               </GlassPanel>
+              </Link>
             );
           })
         )}

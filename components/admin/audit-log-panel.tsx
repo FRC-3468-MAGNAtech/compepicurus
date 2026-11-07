@@ -42,6 +42,14 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   "unarchive-form": "Unarchive Form",
   "reset-form-to-builtin": "Reset Form to Built-in",
   "set-active-form": "Set Active Form",
+  "save-form-template": "Save Form Template",
+  "update-form-template": "Update Form Template",
+  "delete-form-template": "Delete Form Template",
+  "use-form-template": "Use Form Template",
+  "request-template-publish": "Request Public Template",
+  "unpublish-template": "Unpublish Template",
+  "template-reviewed": "Template Reviewed (platform)",
+  "clear-profile-text": "Cleared Profile Bio / Pronouns",
 };
 
 function toMillis(value: unknown): number {

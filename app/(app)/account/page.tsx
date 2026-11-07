@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GoogleButton } from "@/components/auth/google-button";
 import { AppearancePanel } from "@/components/theme/appearance-panel";
+import { PrivacyProfileSection } from "@/components/profile/privacy-profile-section";
 import { useAuth } from "@/lib/auth";
 import { getRole } from "@/lib/roles";
 
@@ -167,6 +168,12 @@ export default function AccountSettingsPage() {
           {nameSaved && <span className="text-sm text-emerald-400">Saved.</span>}
         </div>
       </GlassPanel>
+
+      {/* P25: the profile (picture, display name, pronouns, bio) and who can see it. */}
+      <section id="privacy-profile" className="flex scroll-mt-24 flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Privacy and profile</h2>
+        <PrivacyProfileSection />
+      </section>
 
       {/* P18: themes live only here (the sidebar has just the light/dark quick toggle). Saved per user as soon as you pick. */}
       <GlassPanel id="appearance" className="flex flex-col gap-4">

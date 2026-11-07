@@ -17,9 +17,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApplicationsPanel } from "@/components/admin/applications-panel";
 import { RecoveryPanel } from "@/components/admin/recovery-panel";
 import { FormsPanel } from "@/components/forms/forms-panel";
+import { ReviewPanelHost } from "@/components/templates/review-panel";
 import { usePendingApplicationCount } from "@/lib/applications-client";
 
-type AdminTab = "match-library" | "forms" | "sessions" | "rescore" | "audit-log" | "backups" | "applications" | "recovery";
+type AdminTab = "match-library" | "forms" | "sessions" | "rescore" | "audit-log" | "backups" | "applications" | "templates" | "recovery";
 
 const TAB_LABELS: Record<AdminTab, string> = {
   "match-library": "Match Library",
@@ -31,10 +32,11 @@ const TAB_LABELS: Record<AdminTab, string> = {
   backups: "Backups",
   // P20: platform owners only
   applications: "Team Applications",
+  templates: "Template Review",
   recovery: "Recovery",
 };
 
-const PLATFORM_TABS: AdminTab[] = ["applications", "recovery"];
+const PLATFORM_TABS: AdminTab[] = ["applications", "templates", "recovery"];
 
 export default function AdminPanelPage() {
   const router = useRouter();
@@ -133,6 +135,7 @@ export default function AdminPanelPage() {
       {tab === "audit-log" && <AuditLogPanel />}
       {tab === "backups" && <BackupsPanel />}
       {tab === "applications" && isPlatformOwner && <ApplicationsPanel />}
+      {tab === "templates" && isPlatformOwner && <ReviewPanelHost />}
       {tab === "recovery" && isPlatformOwner && <RecoveryPanel />}
     </div>
   );

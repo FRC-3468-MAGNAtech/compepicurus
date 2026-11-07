@@ -383,3 +383,11 @@ html[data-mode="light"] .hover\:bg-white\/14:hover { background-color: rgba(var(
 html[data-mode="light"] .focus-visible\:bg-white\/5:focus-visible { background-color: rgba(var(--tint-rgb), 0.038); }
 html[data-mode="light"] .focus-visible\:bg-white\/10:focus-visible { background-color: rgba(var(--tint-rgb), 0.075); }
 html[data-mode="light"] .data-\[highlighted\]\:bg-white\/10[data-highlighted] { background-color: rgba(var(--tint-rgb), 0.075); }
+
+/* P24: while the practice ScoutingWorkspace is mounted the page itself doesn't scroll: the workspace takes the rest of the window and scrolls its own form panel. */
+html[data-workspace] {
+  overflow: hidden;
+}
+html[data-workspace] body {
+  overflow: hidden;
+}

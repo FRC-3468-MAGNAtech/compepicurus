@@ -249,3 +249,27 @@ admin couldn't save a form until the rules are live). Nothing is migrated: exist
 
 To check the rules locally (needs Java and firebase-tools): `npm run test:rules`.
 
+## 11. Form templates (P23)
+
+No new environment variables or indexes (every query is equality-only on `visibility`, `ownerTeamId` and `hasPendingUpdate`, which Firestore serves from its automatic indexes). Deploy the rules **before or together with** the app:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+The new collection is `formTemplates` (with `updates`, `reports` and `imports` subcollections, written only by `/api/templates`). Then, once, as the platform owner (an email in `OWNER_EMAILS`), open **Admin Panel > Template Review** and
+press **Seed official templates**: it publishes the BIOBUZZ Match Scout and Blank (standard phases) templates. Press it again after an app update that changes BIOBUZZ and it adds a new version of the official template.
+
+Review notifications reuse the P20 setup: push to devices where a platform owner enabled notifications, and email to `OWNER_EMAILS` when `RESEND_API_KEY`, `EMAIL_FROM` and `APP_URL` are set (authors are emailed the decision the same way). With
+email unset nothing breaks: the Template Review tab always shows the queue.
+
+## 12. Member profiles (P25)
+
+No new environment variables or indexes (profiles are read by document id only). Deploy the rules **before or together with** the app, because the new Settings section and profile pages write and read `profiles/{uid}` and the `users/{uid}.avatar` mirror:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+Nothing needs migrating: a member has no profile document until they save one, and until then their profile is shown with the defaults (`DEFAULT_PROFILE_VISIBILITY` in `lib/profile/config.ts`, public to their team). Admins' and the owner's profiles are always visible to teammates whatever their saved preference says.
+Moderation clears are recorded in the Audit Log as "Cleared Profile Bio / Pronouns".

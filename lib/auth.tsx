@@ -24,6 +24,7 @@ import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { auth, db, isFirebaseConfigured } from "@/lib/firebase/client";
 import { syncFieldTeams, syncRoles } from "@/lib/team-enrollment";
 import type { RoleId } from "@/lib/roles";
+import type { AvatarChoice } from "@/lib/profile/config";
 
 const googleProvider = new GoogleAuthProvider();
 
@@ -82,6 +83,12 @@ export type UserDoc = {
   lastSeenChangelogAt?: unknown;
   /** FIX3: the layered-glass level (0.3-2, 1 = default), saved per user so it follows them across devices. See lib/glass-layer.tsx. */
   glassLayerLevel?: number;
+  /** P24: the practice workspace's form width as a share (0-1) of the workspace, saved per user. See lib/workspace/use-workspace-prefs.ts. */
+  workspaceFormWidth?: number;
+  /** P24: on phones, the video's share (0-1) of the practice workspace's height. */
+  workspacePhoneSplit?: number;
+  /** P25: the member's avatar choice, mirrored from their profile so teammates (and the limited "private profile" card) can show it. Absent = initials. */
+  avatar?: AvatarChoice;
 };
 
 export type GoogleLinkPrompt = { email: string };
@@ -102,7 +109,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
-  updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "activeFieldTeamId">>) => Promise<void>;
+  updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "activeFieldTeamId" | "avatar">>) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   /** FIX2: this account's email is in OWNER_EMAILS but isn't verified yet, so owner access hasn't been applied. Drives the "Verify your email to activate owner access" notice. */
   ownerPendingVerification: boolean;
@@ -311,7 +318,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLinkedProviders(auth.currentUser.providerData.map((p) => p.providerId));
   };
 
-  const updateUserProfile = async (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "activeFieldTeamId">>) => {
+  const updateUserProfile = async (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "activeFieldTeamId" | "avatar">>) => {
     if (!auth.currentUser) throw new Error("Not signed in.");
     await updateDoc(doc(db, "users", auth.currentUser.uid), patch);
   };

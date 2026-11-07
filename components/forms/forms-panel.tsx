@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Copy, Download, Eye, FilePlus2, GitCompare, Pencil, RotateCcw, Star } from "lucide-react";
+import { Archive, ArchiveRestore, BookmarkPlus, Copy, Download, Eye, FilePlus2, GitCompare, Pencil, RefreshCw, RotateCcw, Star } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { DiffView } from "@/components/forms/builder/diff-view";
 import { EditorHost, type EditorServices } from "@/components/forms/editor-host";
 import { NewFormDialog, type NewFormChoice } from "@/components/forms/new-form-dialog";
+import { TemplateLibrary } from "@/components/templates/template-library";
+import { TemplateDetailsDialog } from "@/components/templates/template-dialogs";
+import { UpdateAvailableDialog } from "@/components/templates/update-available-dialog";
+import { TemplatesProvider } from "@/lib/templates/firestore-service";
+import { useTemplates } from "@/lib/templates/service";
+import { formFromTemplate, updateAvailable, type FormTemplate } from "@/lib/templates/build";
 import { useFormAdmin } from "@/lib/forms/use-form-admin";
 import { archiveFormAction, createFormAction, resetFormAction, setActiveFormAction } from "@/lib/forms/actions";
 import { diffForms } from "@/lib/forms/diff";
@@ -49,12 +55,38 @@ export function FormsPanel({ onOpenRescore }: { onOpenRescore?: () => void }) {
     );
   }
   if (!services) return <div className="glass-card h-40 animate-pulse" />;
-  return <FormsPanelView services={services} onOpenRescore={onOpenRescore} />;
+  return (
+    <TemplatesProvider>
+      <FormsPanelView services={services} onOpenRescore={onOpenRescore} />
+    </TemplatesProvider>
+  );
 }
 
 /** The list itself, given its services (the Playwright fixture page supplies an in-memory store). */
 export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore?: () => void; services: EditorServices }) {
   const forms = useForms();
+
+  const tpl = useTemplates();
+  const [view, setView] = useState<"forms" | "templates">("forms");
+  const [templateTab, setTemplateTab] = useState<"public" | "mine">("public");
+  const [saveFor, setSaveFor] = useState<string | null>(null);
+  const [updateFor, setUpdateFor] = useState<string | null>(null);
+  /** The newest version of each template one of our forms came from (null: it's gone or we can't read it). */
+  const [sourceTemplates, setSourceTemplates] = useState<Record<string, FormTemplate | null>>({});
+  const effectiveForm = (id: string): Form | null => forms.latest(id) ?? svc.catalog.docs.get(id)?.draft ?? getBuiltinForm(id);
+  const templateIds = [...new Set(forms.summaries.map((x) => effectiveForm(x.id)?.templateId).filter((x): x is string => !!x))].sort().join(",");
+  const { getTemplate } = tpl;
+  useEffect(() => {
+    let alive = true;
+    for (const id of templateIds ? templateIds.split(",") : []) {
+      getTemplate(id)
+        .then((t) => alive && setSourceTemplates((prev) => ({ ...prev, [id]: t })))
+        .catch(() => alive && setSourceTemplates((prev) => ({ ...prev, [id]: null })));
+    }
+    return () => {
+      alive = false;
+    };
+  }, [templateIds, getTemplate]);
 
   const loadChanges = useCallback(async (id: string) => {
     const original = getBuiltinForm(id);
@@ -83,7 +115,7 @@ export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore
   const seasonsActiveFor = (id: string) => SEASONS.filter((se) => se.enabled && forms.activeFormIdFor(se.id) === id);
 
   /** What scouts see for a form now, or its draft when it was never published. */
-  const effective = (id: string): Form | null => forms.latest(id) ?? catalog.docs.get(id)?.draft ?? getBuiltinForm(id);
+  const effective = effectiveForm;
 
   const run = async (fn: () => Promise<void>, done?: string) => {
     setBusy(true);
@@ -97,6 +129,14 @@ export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore
     } finally {
       setBusy(false);
     }
+  };
+
+  const useTemplate = async (t: FormTemplate, name: string) => {
+    const full = await tpl.use(t.id);
+    const form = formFromTemplate(full, { name, taken: new Set(summaries.map((x) => x.id)), createdBy: actor.uid, now: Date.now() });
+    await createFormAction(actor, store, form, "template", { templateId: full.id, templateVersion: full.version });
+    setView("forms"); // closing the builder returns to the forms, where the new draft is
+    setEditing(form.id);
   };
 
   const create = async (choice: NewFormChoice) => {
@@ -139,6 +179,18 @@ export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore
         </p>
       )}
 
+      <div className="glass-pill inline-flex self-start p-0.5 text-sm" role="group" aria-label="Forms or templates">
+        {(["forms", "templates"] as const).map((v) => (
+          <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={cn("min-h-10 rounded-full px-5 font-medium", view === v && "text-[var(--color-primary-foreground)]")} style={view === v ? { background: "var(--theme-gradient)" } : undefined} data-testid={`view-${v}`}>
+            {v === "forms" ? "Forms" : "Templates"}
+          </button>
+        ))}
+      </div>
+
+      {view === "templates" ? (
+        <TemplateLibrary forms={summaries.map((x) => ({ id: x.id, name: x.name, form: effective(x.id) }))} onUse={useTemplate} tab={templateTab} onTabChange={setTemplateTab} />
+      ) : (
+      <>
       <ul className="grid gap-3 lg:grid-cols-2" aria-label="Forms">
         {visible.map((s) => {
           const doc = catalog.docs.get(s.id);
@@ -160,6 +212,7 @@ export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore
                     {s.hasDraft && s.status === "published" && <Badge variant="warning">Unpublished changes</Badge>}
                     {s.archived && <Badge variant="outline">Archived</Badge>}
                     {s.builtinChanged && <Badge variant="warning">Built-in changed</Badge>}
+                    {updateAvailable(eff ?? {}, eff?.templateId ? sourceTemplates[eff.templateId] : null) && <Badge variant="warning">Update available</Badge>}
                   </div>
                 </div>
 
@@ -200,6 +253,8 @@ export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore
                       })
                     }
                   />
+                  <Action icon={BookmarkPlus} label="Save as template" aria={`Save ${s.name} as a template`} disabled={!eff || busy} onClick={() => setSaveFor(s.id)} />
+                  {updateAvailable(eff ?? {}, eff?.templateId ? sourceTemplates[eff.templateId] : null) && <Action icon={RefreshCw} label="Review update" aria={`Review the template update for ${s.name}`} onClick={() => setUpdateFor(s.id)} />}
                   <Action icon={Download} label="Export JSON" aria={`Export ${s.name} as JSON`} disabled={!eff} onClick={() => eff && downloadTextFile(`${s.id}.form.json`, exportFormJson(eff), "application/json")} />
                   {editable && (
                     <Action icon={Star} label="Set as active" aria={`Set ${s.name} as active`} disabled={busy || !canBeActive(catalog, s.id)} title={!canBeActive(catalog, s.id) ? "Publish it first" : undefined} onClick={() => setActiveFor(s.id)} />
@@ -224,8 +279,40 @@ export function FormsPanelView({ onOpenRescore, services: svc }: { onOpenRescore
         </Button>
       )}
       <p className="text-xs text-[var(--muted-foreground)]">Forms are archived, never deleted: every saved entry keeps the form it was scouted with, so it can always be shown.</p>
+      </>
+      )}
 
+      <TemplateDetailsDialog
+        open={!!saveFor}
+        onClose={() => setSaveFor(null)}
+        title="Save as template"
+        intro="Saves a copy of this form as a private template that only your account can see. You can ask to publish it publicly from the Templates tab."
+        confirmLabel="Save template"
+        initial={{ name: saveFor ? nameOfForm(saveFor) : "", description: (saveFor && effective(saveFor)?.description) || "", tags: (saveFor && effective(saveFor)?.tags) || [] }}
+        onSave={async (v) => {
+          const form = saveFor ? effective(saveFor) : null;
+          if (!form) throw new Error("That form isn't available.");
+          await tpl.create({ form, ...v });
+          setNotice("Saved as a private template.");
+          setTemplateTab("mine");
+          setView("templates");
+        }}
+      />
+      <UpdateAvailableDialog
+        form={updateFor ? effective(updateFor) : null}
+        template={updateFor ? (sourceTemplates[effective(updateFor)?.templateId ?? ""] ?? null) : null}
+        onClose={() => setUpdateFor(null)}
+        onCreate={async (t) => {
+          const current = updateFor ? effective(updateFor) : null;
+          const full = await tpl.use(t.id);
+          const form = formFromTemplate(full, { name: `${current?.name ?? t.name} (v${full.version})`, taken: new Set(summaries.map((x) => x.id)), createdBy: actor.uid, now: Date.now() });
+          await createFormAction(actor, store, form, "template", { templateId: full.id, templateVersion: full.version, updateOf: updateFor });
+          setView("forms");
+          setEditing(form.id);
+        }}
+      />
       <NewFormDialog
+        onPickTemplate={() => setView("templates")}
         open={newOpen}
         onOpenChange={setNewOpen}
         existing={summaries.map((s) => ({ id: s.id, name: s.name, form: effective(s.id) }))}

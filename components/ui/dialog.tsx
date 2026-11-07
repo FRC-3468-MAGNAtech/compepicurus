@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { spring } from "@/lib/motion";
+import { portalContainer } from "@/lib/portal-container";
 import { cn } from "@/lib/utils";
 
 // Radix's own Presence (used internally by Dialog.Portal/Overlay/Content)
@@ -50,7 +51,7 @@ export function DialogContent({
   const open = useContext(DialogOpenContext);
 
   return (
-    <DialogPrimitive.Portal forceMount>
+    <DialogPrimitive.Portal forceMount container={portalContainer()}>
       <AnimatePresence>
         {open && (
           <>

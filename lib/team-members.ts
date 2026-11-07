@@ -6,6 +6,8 @@ import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import { buildAuditEntry, newAuditLogRef } from "@/lib/audit-log";
 import type { MemberAccess } from "@/lib/member-access";
 import type { RoleId } from "@/lib/roles";
+import { parseAvatar } from "@/lib/profile/model";
+import type { AvatarChoice } from "@/lib/profile/config";
 
 export type TeamMember = {
   uid: string;
@@ -18,7 +20,17 @@ export type TeamMember = {
   isOwner: boolean;
   /** P19: assigned FTC team ids; absent before the migration. Resolve with assignedFieldTeams() (lib/field-teams.ts) — empty counts as all teams. */
   fieldTeamIds?: string[];
+  /** P25: the member's avatar choice (mirrored on the user doc); initials when absent. */
+  avatar?: AvatarChoice;
+  /** P25: when the account joined the team (ms), from the user doc's createdAt; absent on old docs. */
+  joinedAtMs?: number;
 };
+
+/** A Firestore Timestamp (or anything with toMillis) as ms; undefined when it isn't one. */
+function timestampMs(value: unknown): number | undefined {
+  if (value && typeof value === "object" && "toMillis" in value && typeof (value as { toMillis: unknown }).toMillis === "function") return (value as { toMillis: () => number }).toMillis();
+  return undefined;
+}
 
 /** Realtime roster for a team — backs both Team Management (editable, admin-only) and People (read-only). */
 export function useTeamMembers(teamId: string | null) {
@@ -51,6 +63,8 @@ export function useTeamMembers(teamId: string | null) {
               isAdmin: !!data.isAdmin,
               isOwner: !!data.isOwner,
               fieldTeamIds: Array.isArray(data.fieldTeamIds) ? (data.fieldTeamIds as string[]) : undefined,
+              avatar: data.avatar ? parseAvatar(data.avatar) : undefined,
+              joinedAtMs: timestampMs(data.createdAt),
             };
           })
         );

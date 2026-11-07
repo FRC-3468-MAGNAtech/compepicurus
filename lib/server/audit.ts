@@ -16,7 +16,13 @@ export type PlatformAuditAction =
   | "reject-application"
   | "block-application"
   | "unblock"
-  | "force-transfer-ownership";
+  | "force-transfer-ownership"
+  | "approve-template"
+  | "reject-template"
+  | "takedown-template"
+  | "set-official-template"
+  | "dismiss-template-reports"
+  | "seed-official-templates";
 
 /** The platform owner's own log (`platformAuditLog`, readable only by platform owners): it may hold applicant details that must not appear in any team's Audit Log. */
 export function platformAuditDoc(action: PlatformAuditAction, actor: { uid: string; name: string }, details: Record<string, unknown>) {

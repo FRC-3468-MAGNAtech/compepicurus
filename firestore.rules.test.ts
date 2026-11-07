@@ -25,7 +25,7 @@ import {
 import { summarizeBulk, validateBulk } from "@/lib/library/bulk";
 import { buildManualMatchDoc, emptyRawMatch, validateRawMatch } from "@/lib/library/manual-match";
 import { applyPickOp, sanitizePicks, type PickOp } from "@/lib/pick-list/ops";
-import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, deleteField, collection, addDoc, writeBatch, runTransaction, query, where } from "firebase/firestore";
+import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, deleteField, collection, addDoc, writeBatch, runTransaction, query, where, serverTimestamp } from "firebase/firestore";
 
 // Unverified in this environment — no Java / firebase-tools available here
 // to run the Emulator Suite (see docs/ASSUMPTIONS.md, "P1: rules tests").
@@ -2564,6 +2564,274 @@ describe("FIX3: users/{uid}.glassLayerLevel (the layered-glass slider, saved per
   });
 });
 
+describe("P24: users/{uid}.workspaceFormWidth and workspacePhoneSplit (the practice workspace layout, saved per user)", () => {
+  const asScout = () => testEnv.authenticatedContext(SCOUT_UID).firestore();
+  const asAdmin = () => testEnv.authenticatedContext(ADMIN_UID).firestore();
+
+  it("lets a member save their own layout: the self-update rule already allows fields that aren't roles", async () => {
+    await assertSucceeds(updateDoc(doc(asScout(), "users", SCOUT_UID), { workspaceFormWidth: 0.42 }));
+    await assertSucceeds(updateDoc(doc(asScout(), "users", SCOUT_UID), { workspacePhoneSplit: 0.55 }));
+    await assertSucceeds(updateDoc(doc(asAdmin(), "users", ADMIN_UID), { workspaceFormWidth: 0.3, workspacePhoneSplit: 0.4 }));
+    await assertSucceeds(updateDoc(doc(testEnv.authenticatedContext(OWNER_UID).firestore(), "users", OWNER_UID), { workspaceFormWidth: 0.5 }));
+  });
+
+  it("doesn't let anyone set someone else's, or smuggle in a role change", async () => {
+    await assertFails(updateDoc(doc(asScout(), "users", ADMIN_UID), { workspaceFormWidth: 0.5 }));
+    await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { workspaceFormWidth: 0.5, isAdmin: true }));
+    await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { workspacePhoneSplit: 0.5, primaryRole: "lead-scout" }));
+  });
+});
+
+describe("P25: profiles/{uid} and the users/{uid}.avatar mirror", () => {
+  const MATE_UID = "mate-1"; // another non-admin teammate
+  const OUTSIDER_UID = "p25-outsider-1";
+  const asUid = (uid: string) => testEnv.authenticatedContext(uid).firestore();
+  const profile = (over: Record<string, unknown> = {}) => ({
+    teamId: TEAM_ID,
+    displayName: "Scouty",
+    bio: "Likes counting.",
+    pronouns: "they/them",
+    avatar: { type: "preset", value: "bot" },
+    visibility: "public",
+    updatedAt: serverTimestamp(),
+    ...over,
+  });
+  const seed = async (uid: string, over: Record<string, unknown> = {}) =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "profiles", uid), { ...profile(), updatedAt: new Date(), ...over });
+    });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "users", MATE_UID), { name: "Mate", email: "m@example.com", teamId: TEAM_ID, primaryRole: "pit-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
+      await setDoc(doc(db, "users", OUTSIDER_UID), { name: "Out", email: "o@example.com", teamId: OTHER_TEAM_ID, primaryRole: "match-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
+    });
+  });
+
+  describe("reading", () => {
+    it("a public profile is readable by teammates, the owner of it and admins — not by another team or signed-out visitors", async () => {
+      await seed(SCOUT_UID);
+      await assertSucceeds(getDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID)));
+      await assertSucceeds(getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID)));
+      await assertSucceeds(getDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID)));
+      await assertFails(getDoc(doc(asUid(OUTSIDER_UID), "profiles", SCOUT_UID)));
+      await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "profiles", SCOUT_UID)));
+    });
+
+    it("a private profile is NOT readable by a non-admin teammate, but always by its owner and by admins (and the account owner)", async () => {
+      await seed(SCOUT_UID, { visibility: "private" });
+      await assertFails(getDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID)));
+      await assertSucceeds(getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID)));
+      await assertSucceeds(getDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID)));
+      await assertSucceeds(getDoc(doc(asUid(OWNER_UID), "profiles", SCOUT_UID)));
+      await assertFails(getDoc(doc(asUid(OUTSIDER_UID), "profiles", SCOUT_UID)));
+    });
+
+    it("an admin's (or the owner's) profile is always readable by teammates, even when their saved preference is private", async () => {
+      await seed(ADMIN_UID, { visibility: "private" });
+      await seed(OWNER_UID, { visibility: "private" });
+      await assertSucceeds(getDoc(doc(asUid(MATE_UID), "profiles", ADMIN_UID)));
+      await assertSucceeds(getDoc(doc(asUid(MATE_UID), "profiles", OWNER_UID)));
+    });
+
+    it("promotion applies at once; demotion brings the saved preference back (nothing is rewritten)", async () => {
+      await seed(SCOUT_UID, { visibility: "private" });
+      await assertFails(getDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID)));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { isAdmin: true });
+      });
+      await assertSucceeds(getDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID)));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { isAdmin: false });
+      });
+      await assertFails(getDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID)));
+    });
+
+    it("a teammate can ask whether a profile exists yet (no denied error), and a member can read their own missing one; another team can't", async () => {
+      const snap = await assertSucceeds(getDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID)));
+      expect(snap.exists()).toBe(false);
+      await assertSucceeds(getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID)));
+      await assertFails(getDoc(doc(asUid(OUTSIDER_UID), "profiles", SCOUT_UID)));
+    });
+
+    it("can't be listed", async () => {
+      await seed(SCOUT_UID);
+      await assertFails(getDocs(collection(asUid(MATE_UID), "profiles")));
+      await assertFails(getDocs(query(collection(asUid(ADMIN_UID), "profiles"), where("teamId", "==", TEAM_ID))));
+    });
+  });
+
+  describe("writing your own", () => {
+    it("a member creates and edits their own profile", async () => {
+      await assertSucceeds(setDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), profile()));
+      await assertSucceeds(updateDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), { bio: "New bio", visibility: "private", updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), { avatar: { type: "initials", value: "" }, updatedAt: serverTimestamp() }));
+    });
+
+    it("nobody writes someone else's profile — not a teammate, not an admin, not the owner, not another team", async () => {
+      await assertFails(setDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID), profile()));
+      await assertFails(setDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID), profile()));
+      await assertFails(setDoc(doc(asUid(OWNER_UID), "profiles", SCOUT_UID), profile()));
+      await seed(SCOUT_UID);
+      await assertFails(updateDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID), { bio: "hi", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID), { bio: "Written by an admin", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(doc(asUid(OWNER_UID), "profiles", SCOUT_UID), { pronouns: "he/him", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(doc(asUid(OUTSIDER_UID), "profiles", SCOUT_UID), { bio: "", updatedAt: serverTimestamp() }));
+    });
+
+    it("can't be moved to another team, deleted, or carry extra fields", async () => {
+      await assertFails(setDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), profile({ teamId: OTHER_TEAM_ID })));
+      await assertFails(setDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), profile({ isAdmin: true })));
+      await seed(SCOUT_UID);
+      await assertFails(updateDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), { teamId: OTHER_TEAM_ID, updatedAt: serverTimestamp() }));
+      await assertFails(deleteDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID)));
+      await assertFails(deleteDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID)));
+    });
+
+    it("validates the fields: bio 280, pronouns 30, display name 40, visibility, a server timestamp", async () => {
+      const own = () => doc(asUid(SCOUT_UID), "profiles", SCOUT_UID);
+      await assertSucceeds(setDoc(own(), profile({ bio: "x".repeat(280), pronouns: "x".repeat(30), displayName: "x".repeat(40) })));
+      await assertFails(setDoc(own(), profile({ bio: "x".repeat(281) })));
+      await assertFails(setDoc(own(), profile({ pronouns: "x".repeat(31) })));
+      await assertFails(setDoc(own(), profile({ displayName: "x".repeat(41) })));
+      await assertFails(setDoc(own(), profile({ bio: 5 })));
+      await assertFails(setDoc(own(), profile({ visibility: "friends" })));
+      await assertFails(setDoc(own(), profile({ updatedAt: new Date("2020-01-01") })));
+    });
+
+    it("validates the avatar: google must be an https googleusercontent URL, presets an id, nothing else", async () => {
+      const own = () => doc(asUid(SCOUT_UID), "profiles", SCOUT_UID);
+      await assertSucceeds(setDoc(own(), profile({ avatar: { type: "google", value: "https://lh3.googleusercontent.com/a/abc=s96-c" } })));
+      await assertSucceeds(setDoc(own(), profile({ avatar: { type: "initials", value: "" } })));
+      await assertFails(setDoc(own(), profile({ avatar: { type: "google", value: "https://evil.example.com/x.png" } })));
+      await assertFails(setDoc(own(), profile({ avatar: { type: "google", value: "http://lh3.googleusercontent.com/a/abc" } })));
+      await assertFails(setDoc(own(), profile({ avatar: { type: "google", value: "https://lh3.googleusercontent.com.evil.com/a" } })));
+      await assertFails(setDoc(own(), profile({ avatar: { type: "preset", value: "Not A Preset!" } })));
+      await assertFails(setDoc(own(), profile({ avatar: { type: "upload", value: "x" } })));
+      await assertFails(setDoc(own(), profile({ avatar: { type: "preset", value: "bot", extra: 1 } })));
+      await assertFails(setDoc(own(), profile({ avatar: "bot" })));
+    });
+  });
+
+  describe("admins are always public", () => {
+    it("an admin can't switch their profile to private, on create or later; a non-admin can", async () => {
+      await assertFails(setDoc(doc(asUid(ADMIN_UID), "profiles", ADMIN_UID), profile({ visibility: "private" })));
+      await assertSucceeds(setDoc(doc(asUid(ADMIN_UID), "profiles", ADMIN_UID), profile({ visibility: "public" })));
+      await assertFails(updateDoc(doc(asUid(ADMIN_UID), "profiles", ADMIN_UID), { visibility: "private", updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(doc(asUid(ADMIN_UID), "profiles", ADMIN_UID), { bio: "Still editable", updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(doc(asUid(ADMIN_UID), "profiles", ADMIN_UID), { visibility: "public", updatedAt: serverTimestamp() }));
+      await assertSucceeds(setDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), profile({ visibility: "private" })));
+    });
+
+    it("the owner is held to the same rule", async () => {
+      await assertFails(setDoc(doc(asUid(OWNER_UID), "profiles", OWNER_UID), profile({ visibility: "private" })));
+      await assertSucceeds(setDoc(doc(asUid(OWNER_UID), "profiles", OWNER_UID), profile()));
+    });
+
+    it("an admin whose saved preference is private (set before promotion) keeps it while an admin: the toggle can't be changed, other edits can", async () => {
+      await seed(SCOUT_UID, { visibility: "private" });
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { isAdmin: true });
+      });
+      await assertFails(updateDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), { visibility: "public", updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID), { bio: "Edited as an admin", updatedAt: serverTimestamp() }));
+      expect((await getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID))).data()?.visibility).toBe("private");
+    });
+  });
+
+  describe("moderation: admins can only clear a teammate's bio and pronouns", () => {
+    it("an admin clears both (or one), and nothing else changes", async () => {
+      await seed(SCOUT_UID);
+      await assertSucceeds(updateDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+      const d = (await getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID))).data()!;
+      expect(d.bio).toBe("");
+      expect(d.pronouns).toBe("");
+      expect(d.displayName).toBe("Scouty");
+      expect(d.visibility).toBe("public");
+    });
+
+    it("a private profile can be cleared too (admins can read it)", async () => {
+      await seed(SCOUT_UID, { visibility: "private" });
+      await assertSucceeds(updateDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+    });
+
+    it("an admin can't write text, or change anything but bio / pronouns", async () => {
+      await seed(SCOUT_UID);
+      const ref = () => doc(asUid(ADMIN_UID), "profiles", SCOUT_UID);
+      await assertFails(updateDoc(ref(), { bio: "Replacement text", pronouns: "", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(), { bio: "", pronouns: "she/her", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(), { bio: "", pronouns: "", displayName: "", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(), { bio: "", pronouns: "", visibility: "private", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(), { bio: "", pronouns: "", avatar: { type: "initials", value: "" }, updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(), { bio: "", pronouns: "" })); // no fresh timestamp
+    });
+
+    it("a non-admin teammate can't clear anyone's", async () => {
+      await seed(SCOUT_UID);
+      await assertFails(updateDoc(doc(asUid(MATE_UID), "profiles", SCOUT_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+    });
+
+    it("an admin can't clear the owner's — only the owner edits that row", async () => {
+      await seed(OWNER_UID);
+      await assertFails(updateDoc(doc(asUid(ADMIN_UID), "profiles", OWNER_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(doc(asUid(OWNER_UID), "profiles", OWNER_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+    });
+
+    it("the owner (an admin too) can clear a teammate's, and an admin can clear another (non-owner) admin's", async () => {
+      await seed(SCOUT_UID);
+      await assertSucceeds(updateDoc(doc(asUid(OWNER_UID), "profiles", SCOUT_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+      await seed(ADMIN_UID);
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users", "admin-2"), { name: "A2", email: "a2@example.com", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: true, isOwner: false, themeId: "team" });
+      });
+      await assertSucceeds(updateDoc(doc(asUid("admin-2"), "profiles", ADMIN_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() }));
+    });
+
+    it("a clear and its audit entry commit together in one batch, as lib/profile/service.ts writes them", async () => {
+      await seed(SCOUT_UID);
+      const db = asUid(ADMIN_UID);
+      const batch = writeBatch(db);
+      batch.update(doc(db, "profiles", SCOUT_UID), { bio: "", pronouns: "", updatedAt: serverTimestamp() });
+      batch.set(doc(collection(db, "auditLog")), { teamId: TEAM_ID, uid: ADMIN_UID, actorName: "Admin Person", action: "clear-profile-text", target: { targetUid: SCOUT_UID, targetName: "Scout Person" }, before: { bio: "Likes counting.", pronouns: "they/them" }, after: { bio: "", pronouns: "" }, createdAt: serverTimestamp() });
+      await assertSucceeds(batch.commit());
+    });
+  });
+
+  describe("users/{uid}.avatar (the teammate-readable mirror)", () => {
+    it("a member saves a valid avatar on their own user doc", async () => {
+      await assertSucceeds(updateDoc(doc(asUid(SCOUT_UID), "users", SCOUT_UID), { avatar: { type: "preset", value: "rocket" } }));
+      await assertSucceeds(updateDoc(doc(asUid(SCOUT_UID), "users", SCOUT_UID), { avatar: { type: "google", value: "https://lh3.googleusercontent.com/a/x=s96-c" } }));
+      await assertSucceeds(updateDoc(doc(asUid(SCOUT_UID), "users", SCOUT_UID), { avatar: { type: "initials", value: "" } }));
+    });
+
+    it("rejects an arbitrary URL, an upload type and extra keys", async () => {
+      const ref = () => doc(asUid(SCOUT_UID), "users", SCOUT_UID);
+      await assertFails(updateDoc(ref(), { avatar: { type: "google", value: "https://evil.example.com/a.png" } }));
+      await assertFails(updateDoc(ref(), { avatar: { type: "upload", value: "x" } }));
+      await assertFails(updateDoc(ref(), { avatar: { type: "preset", value: "bot", url: "https://x" } }));
+    });
+
+    it("teammates read it (the private card shows it), but nobody — admins included — sets someone else's", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { avatar: { type: "preset", value: "bot" } });
+      });
+      const snap = await assertSucceeds(getDoc(doc(asUid(MATE_UID), "users", SCOUT_UID)));
+      expect(snap.data()?.avatar).toEqual({ type: "preset", value: "bot" });
+      await assertFails(updateDoc(doc(asUid(MATE_UID), "users", SCOUT_UID), { avatar: { type: "preset", value: "gear" } }));
+      await assertFails(updateDoc(doc(asUid(ADMIN_UID), "users", SCOUT_UID), { avatar: { type: "preset", value: "gear" } }));
+      await assertFails(updateDoc(doc(asUid(OWNER_UID), "users", SCOUT_UID), { avatar: { type: "preset", value: "gear" }, primaryRole: "match-scout" }));
+    });
+
+    it("an admin's role edit still works and leaves the avatar alone", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users", SCOUT_UID), { avatar: { type: "preset", value: "bot" } });
+      });
+      await assertSucceeds(updateDoc(doc(asUid(ADMIN_UID), "users", SCOUT_UID), { primaryRole: "pit-scout" }));
+    });
+  });
+});
+
 describe("P16: scoutTargets/{teamId}_{eventCode}", () => {
   const LEAD_UID = "lead-scout-1"; // primary role lead-scout
   const SECOND_LEAD_UID = "second-lead-1"; // primary match-scout, SECONDARY lead-scout
@@ -3238,6 +3506,203 @@ describe("P21: forms, form versions and teams.activeForms", () => {
       const id = await seedEntry(testEnv, entry(SCOUT_UID));
       await assertSucceeds(updateDoc(doc(asAdmin(), "scoutEntries", id), { values: { rating: 5, note: "fixed" } }));
       await assertFails(updateDoc(doc(asScout(), "scoutEntries", id), { values: { rating: 1 } }));
+    });
+  });
+});
+
+describe("P23: formTemplates", () => {
+  const PLATFORM = "platform-owner-1";
+  const asScout = () => testEnv.authenticatedContext(SCOUT_UID).firestore();
+  const asAdmin = () => testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const asOwner = () => testEnv.authenticatedContext(OWNER_UID).firestore();
+  const asOutsider = () => testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+  const asPlatformOwner = () => testEnv.authenticatedContext(PLATFORM, { platformOwner: true }).firestore();
+  const signedOut = () => testEnv.unauthenticatedContext().firestore();
+
+  const tpl = (over: Record<string, unknown> = {}) => ({
+    ownerTeamId: TEAM_ID,
+    authorName: "Team 3468",
+    visibility: "private",
+    official: false,
+    name: "Pit scouting",
+    description: "Robot inspection",
+    tags: ["pit"],
+    version: 1,
+    form: { id: "pit", name: "Pit", version: 0, sections: [] },
+    checksum: "abc123",
+    fieldCount: 4,
+    sectionCount: 5,
+    importCount: 0,
+    reportCount: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: true, isOwner: false, themeId: "team", primaryRole: "match-scout", secondaryRoles: [] };
+      await setDoc(doc(db, "users", OTHER_TEAM_UID), { ...base, name: "Outsider", teamId: OTHER_TEAM_ID });
+      await setDoc(doc(db, "users", PLATFORM), { ...base, name: "Platform", teamId: "platform-team", isPlatformOwner: true });
+    });
+  });
+
+  const seed = (id: string, over: Record<string, unknown> = {}) =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "formTemplates", id), tpl(over));
+    });
+
+  describe("reading: private templates never leak", () => {
+    it("lets the owning account (any member) read a private template, and list its own", async () => {
+      await seed("p1");
+      await assertSucceeds(getDoc(doc(asScout(), "formTemplates", "p1")));
+      await assertSucceeds(getDocs(query(collection(asScout(), "formTemplates"), where("ownerTeamId", "==", TEAM_ID))));
+    });
+
+    it("keeps another account, a signed-out user and the platform owner out of a private template", async () => {
+      await seed("p1");
+      await seed("r1", { visibility: "rejected", rejectionReason: "no" });
+      for (const id of ["p1", "r1"]) {
+        await assertFails(getDoc(doc(asOutsider(), "formTemplates", id)));
+        await assertFails(getDoc(doc(signedOut(), "formTemplates", id)));
+        await assertFails(getDoc(doc(asPlatformOwner(), "formTemplates", id)));
+      }
+      await assertFails(getDocs(query(collection(asOutsider(), "formTemplates"), where("ownerTeamId", "==", TEAM_ID))));
+      await assertFails(getDocs(query(collection(asPlatformOwner(), "formTemplates"), where("ownerTeamId", "==", TEAM_ID))));
+      await assertFails(getDocs(collection(asOutsider(), "formTemplates"))); // an unfiltered list would include private ones
+      // a public-only query returns none of them, and is allowed
+      const publicOnly = await assertSucceeds(getDocs(query(collection(asOutsider(), "formTemplates"), where("visibility", "==", "public"))));
+      expect(publicOnly.size).toBe(0);
+    });
+
+    it("lets any signed-in user read public templates (get and the public list), but not a signed-out user", async () => {
+      await seed("pub", { visibility: "public", publishedAt: 5 });
+      await seed("p1");
+      await assertSucceeds(getDoc(doc(asOutsider(), "formTemplates", "pub")));
+      await assertSucceeds(getDoc(doc(asScout(), "formTemplates", "pub")));
+      const list = await assertSucceeds(getDocs(query(collection(asOutsider(), "formTemplates"), where("visibility", "==", "public"))));
+      expect(list.docs.map((d) => d.id)).toEqual(["pub"]);
+      await assertFails(getDoc(doc(signedOut(), "formTemplates", "pub")));
+    });
+
+    it("lets the platform owner (and only them) read what is waiting for review", async () => {
+      await seed("w1", { visibility: "public-pending", requestedAt: 3 });
+      await assertSucceeds(getDoc(doc(asPlatformOwner(), "formTemplates", "w1")));
+      await assertSucceeds(getDocs(query(collection(asPlatformOwner(), "formTemplates"), where("visibility", "==", "public-pending"))));
+      await assertFails(getDoc(doc(asOutsider(), "formTemplates", "w1")));
+      await assertFails(getDocs(query(collection(asOutsider(), "formTemplates"), where("visibility", "==", "public-pending"))));
+      await assertSucceeds(getDoc(doc(asScout(), "formTemplates", "w1"))); // the author's own account still sees it
+    });
+  });
+
+  describe("creating and editing a private template", () => {
+    it("lets the owner and admins create one, and not a scout or another account", async () => {
+      await assertSucceeds(setDoc(doc(asAdmin(), "formTemplates", "a"), tpl()));
+      await assertSucceeds(setDoc(doc(asOwner(), "formTemplates", "b"), tpl({ name: "Other" })));
+      await assertFails(setDoc(doc(asScout(), "formTemplates", "c"), tpl()));
+      await assertFails(setDoc(doc(asOutsider(), "formTemplates", "d"), tpl())); // claims TEAM_ID
+      await assertFails(setDoc(doc(signedOut(), "formTemplates", "e"), tpl()));
+    });
+
+    it("refuses a template that starts public, official, used, reported, pending an update or past version 1", async () => {
+      for (const over of [{ visibility: "public" }, { visibility: "public-pending" }, { official: true }, { importCount: 9 }, { reportCount: 1 }, { version: 2 }, { hasPendingUpdate: true }]) {
+        await assertFails(setDoc(doc(asAdmin(), "formTemplates", "x"), tpl(over)));
+      }
+    });
+
+    it("checks the shape: name, description, tags, form and counts", async () => {
+      for (const over of [{ name: "" }, { name: "x".repeat(81) }, { description: "x".repeat(501) }, { tags: "pit" }, { tags: Array(11).fill("t") }, { form: "nope" }, { checksum: 5 }, { fieldCount: "4" }, { authorName: "x".repeat(81) }]) {
+        await assertFails(setDoc(doc(asAdmin(), "formTemplates", "x"), tpl(over)));
+      }
+    });
+
+    it("lets the author edit it (and bump its version) while it is private, but never change what is server-owned", async () => {
+      await seed("p1");
+      const ref = (db: ReturnType<typeof asAdmin>) => doc(db, "formTemplates", "p1");
+      await assertSucceeds(updateDoc(ref(asAdmin()), { name: "Renamed", version: 2, updatedAt: 2 }));
+      await assertFails(updateDoc(ref(asAdmin()), { version: 1 })); // never goes back
+      await assertFails(updateDoc(ref(asAdmin()), { visibility: "public" }));
+      await assertFails(updateDoc(ref(asAdmin()), { visibility: "public-pending" }));
+      await assertFails(updateDoc(ref(asAdmin()), { official: true }));
+      await assertFails(updateDoc(ref(asAdmin()), { importCount: 1000 }));
+      await assertFails(updateDoc(ref(asAdmin()), { reportCount: 0, importCount: 5 }));
+      await assertFails(updateDoc(ref(asAdmin()), { ownerTeamId: OTHER_TEAM_ID }));
+      await assertFails(updateDoc(ref(asAdmin()), { hasPendingUpdate: true }));
+      await assertFails(updateDoc(ref(asScout()), { name: "Hacked" }));
+      await assertFails(updateDoc(ref(asOutsider()), { name: "Hacked" }));
+    });
+
+    it("lets the author fix a rejected template (it becomes private again) but not touch one that is pending or public", async () => {
+      await seed("rej", { visibility: "rejected", rejectionReason: "needs work" });
+      await assertSucceeds(updateDoc(doc(asAdmin(), "formTemplates", "rej"), { visibility: "private", name: "Fixed" }));
+      await seed("pend", { visibility: "public-pending" });
+      await seed("pub", { visibility: "public" });
+      for (const id of ["pend", "pub"]) {
+        await assertFails(updateDoc(doc(asAdmin(), "formTemplates", id), { name: "Changed after approval" }));
+        await assertFails(updateDoc(doc(asAdmin(), "formTemplates", id), { visibility: "private" })); // unpublishing goes through the server
+        await assertFails(updateDoc(doc(asPlatformOwner(), "formTemplates", id), { visibility: "public", official: true })); // not even the platform owner from a browser
+      }
+    });
+  });
+
+  describe("deleting", () => {
+    it("lets the author delete a private or rejected template, and nothing that is pending or public", async () => {
+      await seed("p1");
+      await seed("r1", { visibility: "rejected" });
+      await seed("w1", { visibility: "public-pending" });
+      await seed("pub", { visibility: "public" });
+      await assertSucceeds(deleteDoc(doc(asAdmin(), "formTemplates", "p1")));
+      await assertSucceeds(deleteDoc(doc(asOwner(), "formTemplates", "r1")));
+      await assertFails(deleteDoc(doc(asAdmin(), "formTemplates", "w1")));
+      await assertFails(deleteDoc(doc(asAdmin(), "formTemplates", "pub")));
+    });
+
+    it("never lets a scout, another account or the platform owner delete one from a browser", async () => {
+      await seed("p1");
+      await assertFails(deleteDoc(doc(asScout(), "formTemplates", "p1")));
+      await assertFails(deleteDoc(doc(asOutsider(), "formTemplates", "p1")));
+      await assertFails(deleteDoc(doc(asPlatformOwner(), "formTemplates", "p1")));
+    });
+  });
+
+  describe("pending updates, reports and use counts (server-written)", () => {
+    const seedSubs = () =>
+      testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "formTemplates", "pub", "updates", "pending"), { version: 2, name: "New", form: {}, checksum: "x" });
+        await setDoc(doc(db, "formTemplates", "pub", "reports", OTHER_TEAM_ID), { teamId: OTHER_TEAM_ID, reason: "spam" });
+        await setDoc(doc(db, "formTemplates", "pub", "imports", OTHER_TEAM_ID), { teamId: OTHER_TEAM_ID });
+      });
+
+    it("shows a pending update to the author's account and the platform owner only", async () => {
+      await seed("pub", { visibility: "public", hasPendingUpdate: true });
+      await seedSubs();
+      await assertSucceeds(getDoc(doc(asScout(), "formTemplates", "pub", "updates", "pending")));
+      await assertSucceeds(getDoc(doc(asPlatformOwner(), "formTemplates", "pub", "updates", "pending")));
+      await assertFails(getDoc(doc(asOutsider(), "formTemplates", "pub", "updates", "pending")));
+      await assertFails(getDoc(doc(signedOut(), "formTemplates", "pub", "updates", "pending")));
+    });
+
+    it("shows reports and use counts to the platform owner only", async () => {
+      await seed("pub", { visibility: "public" });
+      await seedSubs();
+      for (const sub of ["reports", "imports"]) {
+        await assertSucceeds(getDocs(collection(asPlatformOwner(), "formTemplates", "pub", sub)));
+        await assertFails(getDocs(collection(asAdmin(), "formTemplates", "pub", sub)));
+        await assertFails(getDocs(collection(asOutsider(), "formTemplates", "pub", sub)));
+      }
+    });
+
+    it("lets nobody write any of them from a browser (so a report or a use can't be forged or inflated)", async () => {
+      await seed("pub", { visibility: "public" });
+      for (const who of [asAdmin(), asOwner(), asOutsider(), asPlatformOwner()]) {
+        await assertFails(setDoc(doc(who, "formTemplates", "pub", "updates", "pending"), { version: 2 }));
+        await assertFails(setDoc(doc(who, "formTemplates", "pub", "reports", "x"), { reason: "spam" }));
+        await assertFails(setDoc(doc(who, "formTemplates", "pub", "imports", "x"), { teamId: "x" }));
+        await assertFails(updateDoc(doc(who, "formTemplates", "pub"), { importCount: 999 }));
+        await assertFails(updateDoc(doc(who, "formTemplates", "pub"), { reportCount: 0 }));
+      }
     });
   });
 });

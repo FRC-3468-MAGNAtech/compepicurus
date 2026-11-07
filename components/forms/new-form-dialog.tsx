@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/input";
 import { SelectRow, TextRow } from "@/components/forms/builder/controls";
-import { duplicateAsNewForm, formFromImport, newFormFromScratch } from "@/lib/forms/create";
+import { ImportPreview } from "@/components/forms/import-preview";
+import { duplicateAsNewForm, formFromImport, newFormFromScratch, type ImportedDraft } from "@/lib/forms/create";
 import { FORM_LIMITS } from "@/lib/forms/validate";
 import type { Form } from "@/lib/forms/types";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ export function NewFormDialog({
   takenIds,
   createdBy,
   onCreate,
+  onPickTemplate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -33,6 +35,8 @@ export function NewFormDialog({
   takenIds: ReadonlySet<string>;
   createdBy: string;
   onCreate: (choice: NewFormChoice) => Promise<void>;
+  /** Opens the template library ("From template"). Without it the tile is shown disabled. */
+  onPickTemplate?: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("scratch");
   const [name, setName] = useState("");
@@ -40,16 +44,18 @@ export function NewFormDialog({
   const [sourceId, setSourceId] = useState<string | undefined>(existing.find((e) => e.form)?.id);
   const [text, setText] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [preview, setPreview] = useState<ImportedDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [repair, setRepair] = useState(false);
 
   const reset = () => {
     setName("");
     setDescription("");
     setText("");
     setErrors([]);
-    setWarnings([]);
+    setPreview(null);
+    setRepair(false);
   };
 
   const submit = async () => {
@@ -63,9 +69,10 @@ export function NewFormDialog({
       if (!src) return setErrors(["Pick a form to duplicate."]);
       choice = { how: "duplicate", from: src.id, form: duplicateAsNewForm(src, { name: name || `${src.name} (copy)`, taken: takenIds, createdBy, now }) };
     } else {
-      const r = formFromImport(text, { name, taken: takenIds, createdBy, now });
-      if (!r.ok) return setErrors(r.errors);
-      setWarnings(r.warnings);
+      // two steps: check the file and show what it would create, then create it
+      const r = formFromImport(text, { name, taken: takenIds, createdBy, now }, { repairDuplicates: repair });
+      if (!preview) return setPreview(r);
+      if (!r.ok) return setPreview(r);
       choice = { how: "import", form: r.form };
     }
     setBusy(true);
@@ -82,7 +89,7 @@ export function NewFormDialog({
 
   const tiles: { id: Mode | "template"; label: string; hint: string; icon: LucideIcon; disabled?: boolean }[] = [
     { id: "scratch", label: "Start from scratch", hint: "Pre-Match, Autonomous, Teleoperated, Endgame and Misc, with the locked system fields", icon: FilePlus2 },
-    { id: "template", label: "From template", hint: "The template library arrives with the next update", icon: LayoutTemplate, disabled: true },
+    { id: "template", label: "From template", hint: onPickTemplate ? "Public templates and your own" : "The template library isn't available here", icon: LayoutTemplate, disabled: !onPickTemplate },
     { id: "duplicate", label: "Duplicate a form", hint: "A copy of one you already have", icon: Copy },
     { id: "import", label: "Import JSON", hint: "A form exported from here or another team", icon: FileUp },
   ];
@@ -101,7 +108,15 @@ export function NewFormDialog({
               role="radio"
               aria-checked={mode === t.id}
               disabled={t.disabled}
-              onClick={() => t.id !== "template" && setMode(t.id)}
+              onClick={() => {
+                if (t.id === "template") {
+                  onOpenChange(false);
+                  onPickTemplate?.();
+                } else {
+                  setMode(t.id);
+                  setPreview(null);
+                }
+              }}
               className={cn("flex min-h-16 items-start gap-3 rounded-2xl border px-3 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50", mode === t.id ? "border-[var(--color-primary)] bg-white/[0.08]" : "border-[var(--glass-border)] bg-white/[0.03]")}
             >
               <t.icon className="mt-0.5 h-5 w-5 shrink-0" />
@@ -117,7 +132,20 @@ export function NewFormDialog({
           {mode === "duplicate" && (
             <SelectRow label="Duplicate which form?" value={sourceId} onChange={setSourceId} options={existing.filter((e) => e.form).map((e) => ({ value: e.id, label: e.name }))} />
           )}
-          {mode === "import" && (
+          {mode === "import" && preview && (
+            <ImportPreview
+              result={preview}
+              onBack={() => {
+                setPreview(null);
+                setRepair(false);
+              }}
+              onFix={() => {
+                setRepair(true);
+                setPreview(formFromImport(text, { name, taken: takenIds, createdBy, now: Date.now() }, { repairDuplicates: true }));
+              }}
+            />
+          )}
+          {mode === "import" && !preview && (
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -151,14 +179,13 @@ export function NewFormDialog({
               ))}
             </ul>
           )}
-          {warnings.length > 0 && <p className="text-xs text-amber-300">{warnings.length} tip{warnings.length === 1 ? "" : "s"} about the imported form; see Problems in the builder.</p>}
 
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={() => void submit()} disabled={busy || (mode === "scratch" && !name.trim()) || (mode === "import" && !text.trim())}>
-              {busy ? "Creating…" : mode === "import" ? "Import" : mode === "duplicate" ? "Duplicate" : "Create form"}
+            <Button onClick={() => void submit()} disabled={busy || (mode === "scratch" && !name.trim()) || (mode === "import" && (!text.trim() || (!!preview && !preview.ok)))}>
+              {busy ? "Creating…" : mode === "import" ? (preview ? "Create form" : "Check file") : mode === "duplicate" ? "Duplicate" : "Create form"}
             </Button>
           </div>
         </div>

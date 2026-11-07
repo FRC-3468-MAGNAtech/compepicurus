@@ -11,6 +11,8 @@ export type YouTubePlayerProps = {
   lockPause?: boolean;
   onEnded?: () => void;
   onPause?: () => void;
+  /** P24: fill the parent's box instead of being 16:9 at full width. */
+  fill?: boolean;
 };
 
 /**
@@ -24,7 +26,7 @@ export type YouTubePlayerProps = {
  * no official "disable pause" API.
  */
 export const YouTubePlayer = forwardRef<VideoPlayerHandle, YouTubePlayerProps>(function YouTubePlayer(
-  { video, lockPause, onEnded, onPause },
+  { video, lockPause, onEnded, onPause, fill },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -105,5 +107,5 @@ export const YouTubePlayer = forwardRef<VideoPlayerHandle, YouTubePlayerProps>(f
     );
   }
 
-  return <div ref={containerRef} className="aspect-video w-full overflow-hidden rounded-2xl" />;
+  return <div ref={containerRef} className={fill ? "h-full w-full overflow-hidden rounded-2xl" : "aspect-video w-full overflow-hidden rounded-2xl"} />;
 });

@@ -66,6 +66,33 @@ export const emailTemplates = {
     );
   },
 
+  templatePublishRequested(p: { to: string[]; templateName: string; authorName: string; update: boolean; queueUrl: string }): EmailMessage {
+    return message(
+      p.to,
+      `Template review: ${p.templateName}`,
+      p.update ? "A public template has an update to review" : "A template is waiting for review",
+      [`${p.authorName} ${p.update ? "sent a new version of" : "asked to publish"} the form template "${p.templateName}".`, "Open Template Review to preview it and approve or reject it."],
+      { label: "Open Template Review", url: p.queueUrl }
+    );
+  },
+
+  templateDecision(p: { to: string; name: string; templateName: string; decision: "approved" | "rejected" | "update-rejected" | "taken-down"; reason?: string; appUrl: string }): EmailMessage {
+    const headline = { approved: "Your template is public", rejected: "Your template wasn't approved", "update-rejected": "Your template update wasn't approved", "taken-down": "Your template was taken down" }[p.decision];
+    const line = {
+      approved: `"${p.templateName}" was approved. Other teams can now find and use it.`,
+      rejected: `"${p.templateName}" wasn't approved for the public library. It stays private to your account.`,
+      "update-rejected": `The new version of "${p.templateName}" wasn't approved. The version already public stays as it is.`,
+      "taken-down": `"${p.templateName}" was removed from the public library.`,
+    }[p.decision];
+    return message(
+      p.to,
+      `${headline}: ${p.templateName}`,
+      headline,
+      [`Hi ${p.name},`, line, ...(p.reason ? [`Reason: ${p.reason}`] : []), ...(p.decision === "approved" ? [] : ["You can edit the template and ask again."])],
+      { label: "Open CompEpicurus", url: p.appUrl }
+    );
+  },
+
   ownershipTransferRequested(p: { to: string; toName: string; fromName: string; teamLabel: string; expiresInDays: number; appUrl: string }): EmailMessage {
     return message(
       p.to,

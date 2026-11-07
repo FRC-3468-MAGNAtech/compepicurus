@@ -52,6 +52,10 @@ const { POST: transfer } = await import("@/app/api/team/transfer/route");
 const { GET: listTeams } = await import("@/app/api/admin/teams/route");
 const { POST: setTeamCreation } = await import("@/app/api/admin/team-creation/route");
 const serverTokens = await import("@/lib/server/application-token");
+const { POST: templatesRoute } = await import("@/app/api/templates/route");
+const templateLib = await import("@/lib/templates/build");
+const formLib = await import("@/lib/forms/new-form");
+const portableLib = await import("@/lib/forms/portable");
 const { FieldValue } = await import("firebase-admin/firestore");
 const { GET: publicConfig } = await import("@/app/api/public/config/route");
 const { getAdminAuth, getAdminFirestore } = await import("@/lib/firebase/admin");
@@ -984,9 +988,285 @@ describe("P20", () => {
       const t = teams.find((x: { fieldTeams: { number: number }[] }) => x.fieldTeams[0]?.number === 78);
       expect(t.admins.map((a: { email: string }) => a.email).sort()).toEqual(["adm78@example.com", "own78@example.com"]);
       expect(t.ownerName).toBe("Creator");
-      expect(JSON.stringify(teams)).not.toMatch(/joinCode|[A-Z2-9]{6}"/);
+      // no joinCode key, and none of the real join codes anywhere (matching a 6-character pattern would also hit the random 20-character team ids now and then)
+      const allCodes = (await getAdminFirestore()!.collection("teams").get()).docs.map((d) => d.data().joinCode as string).filter(Boolean);
+      expect(allCodes.length).toBeGreaterThan(0);
+      expect(JSON.stringify(teams)).not.toContain("joinCode");
+      for (const code of allCodes) expect(JSON.stringify(teams)).not.toContain(`"${code}"`);
       expect((await listTeams(asGet(await freshToken("own78@example.com")))).status).toBe(403);
       expect((await listTeams(asGet())).status).toBe(401);
     });
+  });
+});
+
+// the route's JSON answers and the stored documents are read loosely in these tests
+/* eslint-disable @typescript-eslint/no-explicit-any */
+describe("P23 templates", () => {
+  const templates = templatesRoute;
+  const build = templateLib.buildTemplateContent;
+  const blankForm = formLib.createBlankForm;
+
+  let team = 100;
+  const fresh = async (email: string) => {
+    await signInWithEmailAndPassword(clientAuth, email, "password123");
+    return clientAuth.currentUser!.getIdToken(true);
+  };
+  const call = async (body: Record<string, unknown>, token?: string) => {
+    const res = await templates(postJson(body, token));
+    return { status: res.status, body: (await res.json()) as Record<string, any> };
+  };
+  const doc = async (path: string) => (await getAdminFirestore()!.doc(path).get()).data();
+  const openCreation = () => getAdminFirestore()!.doc("appSettings/global").set({ teamCreationEnabled: true });
+
+  /** A team account whose creator is its owner and admin, plus a plain scout member. */
+  async function account(creatorEmail: string, scoutEmail?: string) {
+    const creator = await createTestUser(creatorEmail, { verified: true });
+    await openCreation();
+    const { teamId, joinCode } = await (await createTeam(postJson({ teamNumber: team++, teamName: "T", name: `Creator ${team}` }, creator))).json();
+    let scoutToken: string | undefined;
+    if (scoutEmail) {
+      scoutToken = await createTestUser(scoutEmail, { verified: true });
+      await joinTeam(postJson({ joinCode, name: "Scout" }, scoutToken));
+    }
+    return { teamId, token: await fresh(creatorEmail), scoutToken: scoutEmail ? await fresh(scoutEmail) : undefined };
+  }
+
+  async function platformOwner() {
+    const first = await createTestUser("owner@example.com", { verified: true });
+    await openCreation();
+    const { teamId } = await (await createTeam(postJson({ teamNumber: 1, teamName: "Platform", name: "Pat" }, first))).json();
+    await syncRoles(postJson({}, first));
+    return { teamId, token: await fresh("owner@example.com") };
+  }
+
+  /** What a client write leaves behind: a private template of `teamId`. */
+  async function seed(id: string, teamId: string, over: Record<string, unknown> = {}, formOver?: (f: ReturnType<typeof blankForm>) => ReturnType<typeof blankForm>) {
+    const base = { ...blankForm({ id: "pit", name: "Pit", createdBy: "u" }), scoringEnabled: false };
+    const built = build({ form: formOver ? formOver(base) : base, name: "Pit scouting", description: "Robot inspection", tags: ["pit"] });
+    if (!built.ok) throw new Error(built.errors.join());
+    await getAdminFirestore()!.doc(`formTemplates/${id}`).set({ ownerTeamId: teamId, authorName: "Team", visibility: "private", official: false, version: 1, importCount: 0, reportCount: 0, createdAt: 1, updatedAt: 1, ...built.content, ...over });
+  }
+
+  const audit = async (teamId: string) => (await getAdminFirestore()!.collection("auditLog").where("teamId", "==", teamId).get()).docs.map((d) => d.data().action as string);
+
+  describe("asking to publish", () => {
+    it("moves a private template to review for its owner and admins only, and logs it in the account's audit log", async () => {
+      const a = await account("a-owner@example.com", "a-scout@example.com");
+      await seed("t1", a.teamId);
+      expect((await call({ action: "request-publish", id: "t1" }, a.scoutToken)).status).toBe(403); // a scout can't
+      expect((await call({ action: "request-publish", id: "t1" })).status).toBe(401);
+      const other = await account("b-owner@example.com");
+      expect((await call({ action: "request-publish", id: "t1" }, other.token)).status).toBe(403); // not their template
+      const ok = await call({ action: "request-publish", id: "t1" }, a.token);
+      expect(ok.status).toBe(200);
+      expect(await doc("formTemplates/t1")).toMatchObject({ visibility: "public-pending" });
+      expect(await audit(a.teamId)).toContain("request-template-publish");
+      expect((await call({ action: "request-publish", id: "t1" }, a.token)).body.code).toBe("wrong-state");
+    });
+
+    it("re-validates on the server: a tampered checksum or HTML in the text is refused", async () => {
+      const a = await account("c-owner@example.com");
+      await seed("bad-sum", a.teamId, { checksum: "0000000000000000" });
+      expect((await call({ action: "request-publish", id: "bad-sum" }, a.token)).body.code).toBe("damaged");
+      // HTML smuggled into a stored template (a client can write private templates directly): the checksum is right, the text is not clean
+      const { formChecksum } = portableLib;
+      const dirty = portableLib.exportForm({ ...blankForm({ id: "pit", name: "Pit", createdBy: "" }), scoringEnabled: false, description: "A <b>pit</b> form" }).form;
+      await getAdminFirestore()!.doc("formTemplates/dirty").set({ ownerTeamId: a.teamId, authorName: "T", visibility: "private", official: false, version: 1, importCount: 0, reportCount: 0, name: "Dirty", description: "d", tags: [], form: dirty, checksum: formChecksum(dirty), fieldCount: 1, sectionCount: 5 });
+      expect((await call({ action: "request-publish", id: "dirty" }, a.token)).body.code).toBe("unsafe-text");
+      // a form with a blocking problem (scoring on, nothing scores)
+      const broken = portableLib.exportForm({ ...blankForm({ id: "pit", name: "Pit", createdBy: "" }), scoringEnabled: true }).form; // building one is refused, but a client can write a private template directly
+      await getAdminFirestore()!.doc("formTemplates/broken").set({ ownerTeamId: a.teamId, authorName: "T", visibility: "private", official: false, version: 1, importCount: 0, reportCount: 0, name: "Broken", description: "d", tags: [], form: broken, checksum: formChecksum(broken), fieldCount: 1, sectionCount: 5 });
+      expect((await call({ action: "request-publish", id: "broken" }, a.token)).body.code).toBe("invalid-template");
+    });
+
+    it("limits requests to 3 an hour and 5 waiting per account", async () => {
+      const a = await account("d-owner@example.com");
+      for (let i = 0; i < 4; i++) await seed(`r${i}`, a.teamId);
+      for (let i = 0; i < 3; i++) expect((await call({ action: "request-publish", id: `r${i}` }, a.token)).status).toBe(200);
+      const fourth = await call({ action: "request-publish", id: "r3" }, a.token);
+      expect(fourth.status).toBe(429);
+      expect(fourth.body.code).toBe("rate-limited");
+
+      const b = await account("e-owner@example.com");
+      for (let i = 0; i < 5; i++) await seed(`w${i}`, b.teamId, { visibility: "public-pending" });
+      await seed("one-more", b.teamId);
+      const capped = await call({ action: "request-publish", id: "one-more" }, b.token);
+      expect(capped.status).toBe(429);
+      expect(capped.body.code).toBe("pending-cap");
+    });
+  });
+
+  describe("review", () => {
+    it("only the platform owner approves; an approved template is public and its author is told in the audit log", async () => {
+      const a = await account("f-owner@example.com");
+      const p = await platformOwner();
+      await seed("t1", a.teamId);
+      await call({ action: "request-publish", id: "t1" }, a.token);
+      expect((await call({ action: "approve", id: "t1" }, a.token)).status).toBe(403);
+      expect((await call({ action: "approve", id: "t1" })).status).toBe(401);
+      expect((await call({ action: "approve", id: "t1" }, p.token)).status).toBe(200);
+      expect(await doc("formTemplates/t1")).toMatchObject({ visibility: "public" });
+      expect(await audit(a.teamId)).toContain("template-reviewed");
+      expect((await getAdminFirestore()!.collection("platformAuditLog").get()).docs.map((d) => d.data().action)).toContain("approve-template");
+      expect((await call({ action: "approve", id: "t1" }, p.token)).body.code).toBe("wrong-state");
+    });
+
+    it("rejecting needs a reason, sends it back to the author with it, and the author can fix and ask again", async () => {
+      const a = await account("g-owner@example.com");
+      const p = await platformOwner();
+      await seed("t1", a.teamId);
+      await call({ action: "request-publish", id: "t1" }, a.token);
+      expect((await call({ action: "reject", id: "t1" }, p.token)).body.code).toBe("reason-required");
+      expect((await call({ action: "reject", id: "t1", reason: "ok" }, p.token)).status).toBe(400);
+      expect((await call({ action: "reject", id: "t1", reason: "Too generic: add scoring" }, p.token)).status).toBe(200);
+      expect(await doc("formTemplates/t1")).toMatchObject({ visibility: "rejected", rejectionReason: "Too generic: add scoring" });
+      // the author edits (rules allow rejected -> private) and asks again
+      await getAdminFirestore()!.doc("formTemplates/t1").update({ visibility: "private" });
+      expect((await call({ action: "request-publish", id: "t1" }, a.token)).status).toBe(200);
+    });
+
+    it("a platform owner can take a public template down (with a reason), and an author can unpublish their own", async () => {
+      const a = await account("h-owner@example.com");
+      const p = await platformOwner();
+      await seed("t1", a.teamId, { visibility: "public", official: true });
+      await seed("t2", a.teamId, { visibility: "public" });
+      expect((await call({ action: "take-down", id: "t1", reason: "" }, p.token)).body.code).toBe("reason-required");
+      expect((await call({ action: "take-down", id: "t1", reason: "Contains a broken link" }, a.token)).status).toBe(403);
+      expect((await call({ action: "take-down", id: "t1", reason: "Contains a broken link" }, p.token)).status).toBe(200);
+      expect(await doc("formTemplates/t1")).toMatchObject({ visibility: "rejected", official: false, rejectionReason: "Contains a broken link" });
+      expect((await call({ action: "unpublish", id: "t2" }, a.token)).status).toBe(200);
+      expect(await doc("formTemplates/t2")).toMatchObject({ visibility: "private" });
+      expect(await audit(a.teamId)).toEqual(expect.arrayContaining(["unpublish-template", "template-reviewed"]));
+      const b = await account("i-owner@example.com");
+      await seed("t3", a.teamId, { visibility: "public" });
+      expect((await call({ action: "unpublish", id: "t3" }, b.token)).status).toBe(403);
+    });
+
+    it("only the platform owner marks a public template official", async () => {
+      const a = await account("j-owner@example.com");
+      const p = await platformOwner();
+      await seed("pub", a.teamId, { visibility: "public" });
+      await seed("priv", a.teamId);
+      expect((await call({ action: "set-official", id: "pub", official: true }, a.token)).status).toBe(403);
+      expect((await call({ action: "set-official", id: "priv", official: true }, p.token)).body.code).toBe("wrong-state");
+      expect((await call({ action: "set-official", id: "pub", official: true }, p.token)).status).toBe(200);
+      expect(await doc("formTemplates/pub")).toMatchObject({ official: true });
+    });
+  });
+
+  describe("updating a public template", () => {
+    it("holds the new version for review while the approved one stays live, then promotes or discards it", async () => {
+      const a = await account("k-owner@example.com");
+      const p = await platformOwner();
+      await seed("pub", a.teamId, { visibility: "public", publishedAt: 5 });
+      const current = (await doc("formTemplates/pub"))!.form;
+      const next = { ...current, sections: current.sections.map((s: any) => (s.id === "misc" ? { ...s, title: "Extras" } : s)) };
+      const sent = await call({ action: "update-public", id: "pub", form: next, name: "Pit scouting v2" }, a.token);
+      expect(sent.status).toBe(200);
+      expect(sent.body.pendingVersion).toBe(2);
+      expect(await doc("formTemplates/pub")).toMatchObject({ version: 1, name: "Pit scouting", hasPendingUpdate: true });
+      expect(await doc("formTemplates/pub/updates/pending")).toMatchObject({ version: 2, name: "Pit scouting v2" });
+      expect((await call({ action: "update-public", id: "pub" }, a.token)).body.code).toBe("no-change"); // nothing new
+      expect((await call({ action: "approve", id: "pub" }, p.token)).status).toBe(200);
+      const after = await doc("formTemplates/pub");
+      expect(after).toMatchObject({ version: 2, name: "Pit scouting v2", visibility: "public" });
+      expect(after?.hasPendingUpdate).toBeUndefined();
+      expect(after?.form.sections.some((s: any) => s.title === "Extras")).toBe(true);
+      expect(await doc("formTemplates/pub/updates/pending")).toBeUndefined();
+
+      const again = { ...next, sections: next.sections.map((s: any) => (s.id === "misc" ? { ...s, title: "Other" } : s)) };
+      await call({ action: "update-public", id: "pub", form: again }, a.token);
+      expect((await call({ action: "reject", id: "pub", reason: "Not an improvement" }, p.token)).body.decision).toBe("update-rejected");
+      expect(await doc("formTemplates/pub")).toMatchObject({ version: 2, visibility: "public" });
+      expect((await doc("formTemplates/pub"))?.hasPendingUpdate).toBeUndefined();
+    });
+
+    it("validates the new version like a new template, and only its author can send one", async () => {
+      const a = await account("l-owner@example.com");
+      const b = await account("m-owner@example.com");
+      await seed("pub", a.teamId, { visibility: "public" });
+      const current = (await doc("formTemplates/pub"))!.form;
+      const bad = { ...current, sections: current.sections.map((s: any) => ({ ...s, fields: s.fields.map((f: any) => ({ ...f, type: f.type === "textarea" ? "hologram" : f.type })) })) };
+      expect((await call({ action: "update-public", id: "pub", form: bad }, a.token)).body.code).toBe("invalid-template");
+      expect((await call({ action: "update-public", id: "pub", name: "Mine now" }, b.token)).status).toBe(403);
+      await seed("priv", a.teamId);
+      expect((await call({ action: "update-public", id: "priv", name: "x" }, a.token)).body.code).toBe("wrong-state");
+    });
+  });
+
+  describe("using, counting and reporting", () => {
+    it("returns a public template to any account and counts each account once; the author's own use isn't counted", async () => {
+      const a = await account("n-owner@example.com");
+      const b = await account("o-owner@example.com");
+      await seed("pub", a.teamId, { visibility: "public" });
+      const first = await call({ action: "import", id: "pub" }, b.token);
+      expect(first.status).toBe(200);
+      expect(first.body.template).toMatchObject({ id: "pub", version: 1, name: "Pit scouting" });
+      expect(first.body.template.form.sections).toHaveLength(5);
+      await call({ action: "import", id: "pub" }, b.token);
+      await call({ action: "import", id: "pub" }, a.token);
+      expect(await doc("formTemplates/pub")).toMatchObject({ importCount: 1 });
+      const c = await account("p-owner@example.com");
+      await call({ action: "import", id: "pub" }, c.token);
+      expect(await doc("formTemplates/pub")).toMatchObject({ importCount: 2 });
+    });
+
+    it("never returns a private, pending or rejected template to another account, but does to its own", async () => {
+      const a = await account("q-owner@example.com");
+      const b = await account("r-owner@example.com");
+      for (const [id, visibility] of [["pr", "private"], ["pe", "public-pending"], ["re", "rejected"]] as const) {
+        await seed(id, a.teamId, { visibility });
+        expect((await call({ action: "import", id }, b.token)).status).toBe(403);
+        expect((await call({ action: "import", id }, a.token)).status).toBe(200);
+      }
+      expect(await doc("formTemplates/pr")).toMatchObject({ importCount: 0 });
+      expect((await call({ action: "import", id: "nope" }, a.token)).status).toBe(404);
+    });
+
+    it("lets another account report a public template once, never its own, with a reason; the platform owner can dismiss them", async () => {
+      const a = await account("s-owner@example.com");
+      const b = await account("t-owner@example.com", "t-scout@example.com");
+      const p = await platformOwner();
+      await seed("pub", a.teamId, { visibility: "public" });
+      expect((await call({ action: "report", id: "pub", reason: "Spam" }, a.token)).body.code).toBe("own-template");
+      expect((await call({ action: "report", id: "pub", reason: "Spam" }, b.scoutToken)).status).toBe(403);
+      expect((await call({ action: "report", id: "pub", reason: "" }, b.token)).body.code).toBe("reason-required");
+      expect((await call({ action: "report", id: "pub", reason: "Links to a bad site <script>" }, b.token)).status).toBe(200);
+      expect((await call({ action: "report", id: "pub", reason: "Again" }, b.token)).body.code).toBe("already-reported");
+      expect(await doc("formTemplates/pub")).toMatchObject({ reportCount: 1 });
+      expect((await doc(`formTemplates/pub/reports/${b.teamId}`))?.reason).toBe("Links to a bad site");
+      await seed("priv", a.teamId);
+      expect((await call({ action: "report", id: "priv", reason: "x y z" }, b.token)).body.code).toBe("wrong-state");
+      expect((await call({ action: "dismiss-reports", id: "pub" }, b.token)).status).toBe(403);
+      expect((await call({ action: "dismiss-reports", id: "pub" }, p.token)).body.dismissed).toBe(1);
+      expect(await doc("formTemplates/pub")).toMatchObject({ reportCount: 0 });
+    });
+  });
+
+  describe("official templates", () => {
+    it("seeds BIOBUZZ and the Blank starter once, for the platform owner only, and adds a version when the content changes", async () => {
+      const a = await account("u-owner@example.com");
+      const p = await platformOwner();
+      expect((await call({ action: "seed-official" }, a.token)).status).toBe(403);
+      const first = await call({ action: "seed-official" }, p.token);
+      expect(first.body.results).toEqual([{ id: "official-biobuzz", result: "created" }, { id: "official-blank", result: "created" }]);
+      expect(await doc("formTemplates/official-biobuzz")).toMatchObject({ visibility: "public", official: true, version: 1, authorName: "CompEpicurus", importCount: 0 });
+      expect((await doc("formTemplates/official-blank"))?.form.sections.map((s: any) => s.title)).toEqual(["Pre-Match", "Autonomous", "Teleoperated", "Endgame", "Misc"]);
+      expect((await call({ action: "seed-official" }, p.token)).body.results.every((r: any) => r.result === "unchanged")).toBe(true);
+
+      await call({ action: "import", id: "official-biobuzz" }, a.token);
+      await getAdminFirestore()!.doc("formTemplates/official-biobuzz").update({ checksum: "stale" }); // the code-defined content moved on
+      const again = await call({ action: "seed-official" }, p.token);
+      expect(again.body.results[0]).toEqual({ id: "official-biobuzz", result: "updated" });
+      expect(await doc("formTemplates/official-biobuzz")).toMatchObject({ version: 2, importCount: 1, official: true });
+    });
+  });
+
+  it("refuses the unknown, the unsigned and the oversized", async () => {
+    const a = await account("v-owner@example.com");
+    expect((await call({ action: "nope" }, a.token)).status).toBe(400);
+    expect((await call({ action: "approve", id: "x" })).status).toBe(401);
+    const big = await templates(new Request("http://localhost/api", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${a.token}` }, body: JSON.stringify({ action: "update-public", id: "x", pad: "x".repeat(400_000) }) }));
+    expect(big.status).toBe(413);
   });
 });

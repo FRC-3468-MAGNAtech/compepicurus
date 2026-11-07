@@ -16,9 +16,13 @@ import { useConnectionNotice } from "@/lib/use-connection-state";
 import { FieldTeamsProvider } from "@/lib/field-teams-context";
 import { FormsProvider } from "@/lib/forms/forms-context";
 import { OwnershipTransferBanner } from "@/components/layout/ownership-transfer-banner";
+import { ImmersiveContext, useImmersiveValue } from "@/lib/shell-immersive";
 
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // P24: the practice workspace's Focus mode hides the sidebar and the mobile top bar (lib/shell-immersive.tsx).
+  const [immersive, setImmersive] = useState(false);
+  const immersiveValue = useImmersiveValue(immersive, setImmersive);
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile, loading } = useAuth();
@@ -40,6 +44,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     "/dashboard",
     "/analytics/teams",
     "/people",
+    "/profile",
     "/team-management",
     "/team-settings",
     "/account",
@@ -73,10 +78,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     // P19: one shared subscription to the account's FTC teams for the whole signed-in app.
     <FieldTeamsProvider>
       <FormsProvider>
+      <ImmersiveContext.Provider value={immersiveValue}>
       <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
-        <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} connection={connection} />
+        {!immersive && <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} connection={connection} />}
         <div className="min-w-0 flex-1">
-          <Topbar onMenuClick={() => setMobileNavOpen(true)} connection={connection} />
+          {!immersive && <Topbar onMenuClick={() => setMobileNavOpen(true)} connection={connection} />}
           <main className="min-w-0">
             <VerifyEmailBanner className="mb-4" />
             <OwnershipTransferBanner className="mb-4" />
@@ -89,6 +95,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         <ScoresReadyWatcher />
         {profile.isAdmin && <LibraryBackfill />}
       </div>
+      </ImmersiveContext.Provider>
       </FormsProvider>
     </FieldTeamsProvider>
   );

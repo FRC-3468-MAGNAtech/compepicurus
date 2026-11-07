@@ -3213,6 +3213,90 @@ for the caller to name and save.
 
 **P22-11. Not built (didn't fit cleanly).** Bulk edit exists as a pure operation (`updateFields`) with tests but has no multi-select UI on the canvas; per-field edits and Duplicate cover the common cases. Categories reorder by buttons, not by dragging (fields and palette items do drag).
 
+## P23 — Form templates
+
+**P23-0. Questions and defaults** (all taken as recommended): a top-level `formTemplates` collection; official ones seeded by a platform-owner button; the checksum is a corruption/edit detector only; 3 requests/hour, 5 pending, 256 KB; one report per account per template, never an automatic takedown; a new version of a public template is re-reviewed while the approved one stays live; updates are offered, never applied; the BIOBUZZ template keeps its season tags; platform owners are notified (push + email) and authors emailed.
+
+**P23-1. Private means private, to the platform owner too.** Rules let the platform owner read only `public-pending` and public templates. A private or rejected template can't be read by anyone outside its own account. Moderation never needs more: a request is reviewed in the state `public-pending`, and a pending *update* sits in a subcollection readable by its author and the platform owner.
+
+**P23-2. Why most template writes go through the server.** Browsers can create, edit and delete only a private template (rules). Publishing, updating a public one, unpublishing, every moderation decision, reports and use-counting are `/api/templates` actions, so `importCount`, `official` and `visibility` can't be set from a console, rate limits and the pending cap can't be skipped, and every publish is re-validated server-side (rules can't validate the nested form).
+
+**P23-3. A public template's update is a separate pending version.** The approved version stays readable and usable until the platform owner approves the new one (which then replaces it and bumps `version`) or rejects it (it's discarded and the public version is untouched). The author can't edit a public template directly: they unpublish it (back to private) or send an update.
+
+**P23-4. "Official" belongs to the platform owner.** It can't be set on create or edit (rules), only by `set-official` / `seed-official` (server, platform owner), and a take-down clears it. Official templates are owned by the platform owner's account and shown under the author name "CompEpicurus". Seeding again changes nothing unless the code-defined content (its checksum) changed; then it adds a version, so accounts that used it see "Update available".
+
+**P23-5. The Blank starter has scoring off.** A form that scores but has nothing scoring can't be published, so the starter turns scoring off and says so; turn it on in Form settings when you add points.
+
+**P23-6. Uses are counted once per account.** The first time an account uses a public template (including by updating from it) its count goes up by one; using it again doesn't, and the author's own use doesn't count. The counter is a server transaction with a per-account marker (`imports/{teamId}`), so a browser can't inflate it.
+
+**P23-7. Text is cleaned, links are https only.** Templates and imported files have HTML tags stripped (and it's said so), and any `http://`, `javascript:`, `data:`, `mailto:` or similar link in any text is refused rather than rewritten. A bare "<" in text ("under < 5") is not HTML and is kept.
+
+**P23-8. Checksum mismatch is a warning.** A hand-edited export legitimately doesn't match, and a checksum anyone can recompute isn't a signature, so a mismatch warns in the import preview and never blocks (the file still has to pass the strict parse, sanitizing and `checkForm`). A *stored* template whose checksum doesn't match its form is refused for publishing and for use.
+
+**P23-9. Import is two steps.** "Check file" parses and validates the text and shows what would be created; nothing is saved until "Create form". "Fix automatically" appears only when the sole errors are duplicate ids or keys, and renames the later duplicate; it never touches anything else.
+
+**P23-10. Update available compares your form with the new template version**, not old template with new: the old template snapshot isn't kept. The dialog's diff is what the new version differs by from what you have, which is what you need to decide. Applying creates a new draft named "<your form> (vN)" and leaves your form, its versions and its entries alone.
+
+**P23-11. Notifications.** Platform owners get a push (devices with notifications on) and an email (when email is configured) for each new publish request or public update; the Template Review tab lists the queue live and has no badge count. Authors are emailed each decision, with the reason.
+
+**P23-12. Not built.** A count badge for the queue on the Admin tab or sidebar; a public "author's other templates" view; editing a template's form inside the builder (you update a template from a form instead); a "Seed official templates" deploy-time step (it's a button).
+
+## P24 — Practice scouting workspace
+
+**P24-0. Questions and defaults** (all as recommended): widths stored as shares of the workspace, on the user doc with a `localStorage` fallback; Focus mode also hides the app sidebar and Fullscreen takes the whole workspace; `F`, `C` and `Esc` as the shortcuts; side-by-side from 768px with the phone layout below; the comments drawer binds to the field with the `comments` role through `commentsMode`; a `fill` prop on the players; the browser tests run against a fixture page rather than the three real (signed-in) screens.
+
+**P24-1. The three real screens aren't driven end to end by a browser test.** They need a signed-in account and Firestore. They are covered by the type check, by a unit test that each renders `<ScoutingWorkspace`, and by the fixture, which runs the same workspace and `ScoutForm` in the same two-robot flow and action bar. Check once by hand on a real session (see the report).
+
+**P24-2. The drawer pushes the video aside instead of overlaying it** on tablet and desktop. The prompt says Trial's controls mustn't be covered by the drawer; an overlay would cover the right-hand controls of a YouTube player, so the video re-fits beside the drawer (it shrinks while the drawer is open). On phones the drawer is a sheet over the form area (the video stays visible above it), never over the action bar.
+
+**P24-3. No rules change for the saved layout.** A member can already update their own non-role fields; the values are validated when read (a number strictly between 0 and 1, then clamped), so a hand-edited value can't break the layout. A value only this browser had is saved to the account once.
+
+**P24-4. Focus mode is a tablet/desktop feature.** On phones the video's collapse-to-mini button does that job, `F` does nothing, and the sidebar and top bar stay (the top bar is sticky and small).
+
+**P24-5. Fullscreen needs the browser to allow it** (`document.fullscreenEnabled`); where it doesn't (some iPhones) the button isn't shown. Dialogs and dropdowns opened in fullscreen portal into the fullscreen element so they're visible.
+
+**P24-6. A window shorter than 520px keeps its page scroll.** Locking the page there would clip the workspace; the workspace's minimum height is 420px.
+
+**P24-7. Live and lobby comments are labelled `Robot: #1234`** (they have one robot); the solo screen's are `Robot 1: #1234` / `Robot 2: #5678` and cleared for each robot. The comments text is the form's `comments` value, so it's saved with the entry exactly like the old inline field, including the Live and lobby entries.
+
+**P24-8. The form hides the comments field only when it can be edited elsewhere.** `commentsMode="popout"` without `onCommentsChange`, or a form with no `comments`-role field, shows the field inline as before.
+
+**P24-9. Not built.** Remembering the focus/mini state between sessions (the layout widths are remembered, the modes are per visit); a separate layout for tablet portrait (it uses the side-by-side layout at 768px and up, with the form at its 320px minimum or more).
+
+## P25 — Member profiles
+
+**P25-0. Questions and defaults** (all as recommended): the avatar is saved on the profile and mirrored on the user doc; `visibility` stores the preference and the effective value is computed (admin or owner => public); admins can clear bio and pronouns of non-owner members, each clear is audited; `displayName` is profile-only;
+"Joined" comes from the user doc's `createdAt` and "Last active" is computed from sessions and entries (no new writes); the accuracy rows reuse `computeScoutStats`; the streak is consecutive local-time days; the badges are one config list; the pages are `/people/:uid` and `/profile`, with "Privacy and profile" as a section of Account Settings.
+
+**P25-1. "Public" means public to the member's own team.** Nothing here is readable outside the account (the rules require the same team), and nothing is indexable.
+
+**P25-2. A non-admin teammate looking at a private profile gets "permission denied" from Firestore, and the page shows that as the limited card.** The limited card (picture, account name, primary role, "This profile is private") is built from the user doc, which every teammate can already read. It deliberately shows the **account name**, not the profile's display name,
+because the display name lives in the profile doc they can't read. The activity section is not mounted for them.
+
+**P25-3. The honest limits (also stated in Settings).** Private covers the profile page and its own text (display name, bio, pronouns). It does **not** hide anything the team already shares: a private member's entries, practice sessions, accuracy and rank still show in Analytics, Scout Accuracy, Scout Status, Assignments, the leaderboards
+and the Team Management / People lists (name, email, roles), and admins can always see the profile. Making that data private would change how scouting works for the whole team, which this prompt doesn't do.
+
+**P25-4. Admins and the owner are always public.** The toggle is disabled with an explanation and the rules refuse a change. Their saved preference is kept (a first save as an admin is `public`), so a demotion restores it with no write. If someone is promoted while private, their profile is visible at once (the rules read the target's admin flag).
+`DEFAULT_PROFILE_VISIBILITY` is read by the UI; the rules' "first save as an admin is public" and "no profile yet is readable" are fixed, so change the constant and re-check the rules together if you ever make the default private.
+
+**P25-5. Admins can only clear.** The rule allows an update that sets `bio` and `pronouns` to `''` and changes nothing else (`displayName` and `avatar` are not moderated; the prompt names only bio and pronouns). The owner's profile can only be edited by the owner. A rule can't prove the audit entry exists, so the client writes both in one batch.
+
+**P25-6. Google pictures are limited to `https://lh*.googleusercontent.com`.** The rules and the UI both check it, so a profile can't point at an arbitrary URL (a tracking pixel). The image is loaded with `referrerPolicy="no-referrer"` and falls back to initials if it fails. The Google option appears only for a member signed in with Google.
+
+**P25-7. Text is sanitized on save and rendered as text.** HTML tags and control characters are stripped, blank-line runs collapsed and the length capped (280 / 30 / 40); the rules cap the lengths too. The page shows it with `whitespace-pre-wrap` as plain text; links aren't made clickable.
+
+**P25-8. Target completion at the current event is a simple version of Scout Status.** It uses the primary active event, and the member's manual targets (summed over categories) if an admin set any, else the number of distinct matches Assignments gives them, against the number of Real Event entries they've scouted there (excluded ones left out).
+Scout Status's per-category match ranges and category switches are not re-applied (a profile has no controls for them), so the figure can differ from Scout Status when ranges are set. It is hidden when the member isn't part of that event (not attending, no entries, no target).
+
+**P25-9. Streak and activity.** A "day" is the viewer's local calendar day; the streak is alive if the last practice day is today or yesterday. It counts completed solo Trial/Competitive sessions (the same sessions the accuracy cards count, including excluded ones: excluded sessions still count as practice done). "Last active" is the latest of the member's session
+end times and entry times (not logins). "Joined" is hidden for accounts whose user doc has no `createdAt`.
+
+**P25-10. A rule change on `users`.** A member's own update now validates `avatar`, and the admin role-edit rule requires `avatar` to be unchanged, so an admin can't set or clear someone's picture. Nothing else about those rules changed.
+
+**P25-11. Where pictures show.** The profile pages, Settings, the sidebar, People, Team Management rows and the member editor. The leaderboards, the credits board and the assignments picker keep the initials discs (they work from data that doesn't carry the avatar); say if you want them upgraded.
+
+**P25-12. Not built.** Notifications, per-field privacy (only the whole profile), blocking individual teammates, a profile search, editing a profile on someone's behalf, and a way for a teammate to report a profile.
+
 ## Commands to run locally
 
 ```bash
@@ -3617,6 +3701,19 @@ npm run test:rules   # needs Java + firebase-tools; 275 tests across both files,
 #   npx playwright install chromium webkit   (first time)
 #   npm run test:e2e                         (includes e2e/form-builder.e2e.ts)
 # Try it: Admin Panel > Forms > Edit BIOBUZZ (needs the P21 rules deployed to save drafts).
+
+# P23 (templates): no env or index changes. Deploy the rules (formTemplates), then, once, as the platform owner:
+#   Admin Panel > Template Review > Seed official templates   (publishes the BIOBUZZ and Blank templates)
+#   npm run test:rules   # now 400+ tests across both emulator files, incl. the template rules and /api/templates
+
+# P24 (practice workspace): no env, rules or index changes. Browser tests (screenshots land in e2e/screenshots/):
+#   npm run test:e2e   # includes e2e/practice-workspace.e2e.ts
+# Check once by hand on a real session: Practice Scouting > solo / Live / lobby: resize the divider, Focus (F), Fullscreen, Comments (C), reload to see the width kept.
+
+# P25 (profiles): no env or index changes; the rules changed (profiles/{uid} and the users avatar checks), so deploy them with the app. Tests:
+#   npm run test:rules   # now includes 'P25: profiles/{uid}...' (25 tests)
+#   npm run test:e2e     # includes e2e/profiles.e2e.ts
+# Check once by hand with two real accounts: set one to Private in Account Settings > Privacy and profile, open /people/<their uid> as the other, and as an admin.
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

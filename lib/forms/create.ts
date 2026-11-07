@@ -1,6 +1,6 @@
 import type { Form } from "@/lib/forms/types";
 import { createBlankForm, slugifyFormId } from "@/lib/forms/new-form";
-import { importForm } from "@/lib/forms/portable";
+import { importForm, type ImportOptions } from "@/lib/forms/portable";
 import { FORM_LIMITS } from "@/lib/forms/validate";
 
 // P22: the three ways to start a new form from the Forms list (from scratch, duplicate an existing one, import a file), as pure functions that
@@ -40,15 +40,47 @@ export function duplicateAsNewForm(source: Form, input: Common): Form {
 }
 
 /** The result of importing a form file for the list: the draft to save, or readable errors. */
-export type ImportedDraft = { ok: true; form: Form; warnings: string[] } | { ok: false; errors: string[] };
+export type ImportedDraft = { ok: true; form: Form; warnings: string[]; /** What was removed or fixed on the way in. */ changes: string[] } | { ok: false; errors: string[]; /** Only duplicate ids or keys are wrong, so "Fix automatically" can repair it. */ repairable: boolean };
 
-export function formFromImport(text: string, input: Common): ImportedDraft {
-  const r = importForm(text);
-  if (!r.ok) return { ok: false, errors: r.errors };
+const REPAIRABLE = new Set(["duplicate-key", "duplicate-id", "duplicate-section-id", "duplicate-group-id"]);
+
+export function formFromImport(text: string, input: Common, options: ImportOptions = {}): ImportedDraft {
+  const r = importForm(text, options);
+  if (!r.ok) {
+    const errorIssues = r.issues.filter((i) => "severity" in i && i.severity === "error");
+    return { ok: false, errors: r.errors, repairable: !options.repairDuplicates && errorIssues.length > 0 && errorIssues.every((i) => "code" in i && REPAIRABLE.has(i.code)) };
+  }
   const name = clampName(input.name, r.form.name);
   return {
     ok: true,
     form: { ...r.form, id: slugifyFormId(name, input.taken), name, createdBy: input.createdBy, createdAt: input.now, updatedAt: input.now },
     warnings: r.warnings.map((w) => w.message),
+    changes: r.changes,
+  };
+}
+
+/** What importing a form would create, in numbers, for the preview before anything is saved. */
+export type ImportSummary = {
+  name: string;
+  categories: { title: string; fields: number }[];
+  fieldCount: number;
+  scoringEnabled: boolean;
+  scoringFields: number;
+  conditions: number;
+  aliases: number;
+  customPhases: string[];
+};
+
+export function summarizeForm(form: Form): ImportSummary {
+  const fields = form.sections.flatMap((s) => s.fields);
+  return {
+    name: form.name,
+    categories: form.sections.map((s) => ({ title: s.title, fields: s.fields.length })),
+    fieldCount: fields.length,
+    scoringEnabled: form.scoringEnabled,
+    scoringFields: fields.filter((f) => f.scoring && f.scoring.mode !== "none").length,
+    conditions: fields.filter((f) => !!f.visibleWhen).length,
+    aliases: Object.keys(form.keyAliases ?? {}).length,
+    customPhases: [...new Set(form.sections.map((s) => s.phase).filter((p) => !["prematch", "auto", "teleop", "endgame", "misc"].includes(p)))].map((p) => form.phaseLabels?.[p] ?? p),
   };
 }

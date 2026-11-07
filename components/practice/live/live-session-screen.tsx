@@ -6,6 +6,7 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ScoutForm, type ScoutFormHandle } from "@/components/scout/scout-form";
+import { ScoutingWorkspace } from "@/components/practice/scouting-workspace";
 import { embedUrlFor, parseStreamUrl } from "@/lib/live/stream";
 import { LIVE_CONFIG } from "@/lib/live/config";
 import { liveMatchKey, removePresence, upsertPresence } from "@/lib/live-presence";
@@ -44,6 +45,8 @@ export function LiveSessionScreen({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<FirestoreFailure | null>(null);
   const scoutFormRef = useRef<ScoutFormHandle>(null);
+  // the comments drawer's text, which is the form's `comments` value (ScoutForm commentsMode="popout")
+  const [comments, setComments] = useState("");
 
   const stream = parseStreamUrl(streamUrl);
   const matchKey = session.eventCode && session.matchType && session.matchNumber !== null ? liveMatchKey(session.eventCode, session.matchType, session.matchNumber) : null;
@@ -123,24 +126,15 @@ export function LiveSessionScreen({
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <div className="lg:w-[58%] lg:shrink-0">
-          {stream && stream.platform === "youtube" ? (
-            <iframe
-              src={embedUrlFor(stream)}
-              className="aspect-video w-full rounded-2xl"
-              allow="autoplay; encrypted-media"
-              allowFullScreen
-            />
+    <div className="flex flex-col gap-2">
+      <ScoutingWorkspace
+        video={
+          stream && stream.platform === "youtube" ? (
+            <iframe src={embedUrlFor(stream)} title="Live stream" className="h-full w-full" allow="autoplay; encrypted-media" allowFullScreen />
           ) : stream && stream.platform === "twitch" ? (
-            <iframe
-              src={embedUrlFor(stream, typeof window !== "undefined" ? window.location.hostname : undefined)}
-              className="aspect-video w-full rounded-2xl"
-              allowFullScreen
-            />
+            <iframe src={embedUrlFor(stream, typeof window !== "undefined" ? window.location.hostname : undefined)} title="Live stream" className="h-full w-full" allowFullScreen />
           ) : (
-            <GlassPanel className="flex aspect-video flex-col items-center justify-center gap-3 text-center">
+            <GlassPanel className="flex h-full w-full flex-col items-center justify-center gap-3 text-center">
               <p className="text-sm text-[var(--muted-foreground)]">Can&apos;t embed this stream.</p>
               <a href={streamUrl} target="_blank" rel="noreferrer">
                 <Button variant="glass" className="gap-2">
@@ -148,10 +142,9 @@ export function LiveSessionScreen({
                 </Button>
               </a>
             </GlassPanel>
-          )}
-        </div>
-
-        <div className="min-w-0 flex-1">
+          )
+        }
+        form={
           <ScoutForm
             key={`${form.id}@${form.version}`}
             schema={form}
@@ -162,21 +155,29 @@ export function LiveSessionScreen({
             showSubmitButton={false}
             lockedFields={["teamNumber"]}
             prefill={{ teamNumber, scoutName: session.scoutName }}
+            commentsMode="popout"
+            comments={comments}
+            onCommentsChange={setComments}
           />
-          {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before submitting.</p>}
-        </div>
-      </div>
-
-      {error && <LoadError failure={error} />}
-
-      <div className="glass-strong sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex items-center justify-between gap-3 rounded-full px-5 py-3 shadow-2xl">
-        <Button variant="ghost" className="gap-1.5 text-red-300" onClick={() => setCancelConfirmOpen(true)}>
-          <X className="h-4 w-4" /> Cancel
-        </Button>
-        <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={submitting}>
-          <Send className="h-4 w-4" /> {submitting ? "Submitting…" : "Submit Scouting"}
-        </Button>
-      </div>
+        }
+        comments={{ value: comments, onChange: setComments, label: `Robot: #${teamNumber}` }}
+        notice={
+          <>
+            {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before submitting.</p>}
+            {error && <LoadError failure={error} />}
+          </>
+        }
+        actions={
+          <>
+            <Button variant="ghost" className="gap-1.5 text-red-300" onClick={() => setCancelConfirmOpen(true)}>
+              <X className="h-4 w-4" /> Cancel
+            </Button>
+            <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={submitting}>
+              <Send className="h-4 w-4" /> {submitting ? "Submitting…" : "Submit Scouting"}
+            </Button>
+          </>
+        }
+      />
 
       <Dialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
         <DialogContent>

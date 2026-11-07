@@ -61,7 +61,7 @@ export function MemberRow({
             className="h-7 w-7"
           />
         )}
-        <Avatar name={member.name} size="sm" />
+        <Avatar name={member.name} size="sm" avatar={member.avatar} />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">{member.name}</span>

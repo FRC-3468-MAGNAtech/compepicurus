@@ -203,6 +203,7 @@ function SidebarInner({
   scope: string;
 }) {
   const role = primaryRole ? getRole(primaryRole) : null;
+  const { profile: me } = useAuth();
   const { accountName } = useFieldTeams();
   // P20: the platform owner sees how many team applications are waiting, on the Admin Panel item.
   const { isPlatformOwner } = usePermissions();
@@ -250,13 +251,16 @@ function SidebarInner({
           <GlassLayerButton compact />
         </div>
         <div className="flex items-center gap-2.5 px-1">
-          <Avatar name={name} size="sm" />
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{name}</div>
-              {role && <div className={cn("mt-0.5 inline-block truncate rounded-full px-2 py-0.5 text-[10px] font-medium", role.className)}>{role.label}</div>}
-            </div>
-          )}
+          {/* P25: the name and picture open your profile. */}
+          <Link href="/profile" onClick={onNavigate} aria-label="Your profile" className={cn("flex min-w-0 items-center gap-2.5", !collapsed && "flex-1")}>
+            <Avatar name={name} size="sm" avatar={me?.avatar} />
+            {!collapsed && (
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{name}</div>
+                {role && <div className={cn("mt-0.5 inline-block truncate rounded-full px-2 py-0.5 text-[10px] font-medium", role.className)}>{role.label}</div>}
+              </div>
+            )}
+          </Link>
           <button
             onClick={onLogout}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] transition-colors hover:bg-white/8 hover:text-[var(--foreground)]"

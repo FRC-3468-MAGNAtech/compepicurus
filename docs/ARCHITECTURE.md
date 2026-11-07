@@ -2163,6 +2163,126 @@ icon list). New `checkForm` warnings: a pick-one with more than 6 tiles, a dropd
 (an in-memory store with 12 BIOBUZZ entries, no login; 404 unless `E2E_THEME_CHECK=1`): list actions, new/duplicate/import, the copy-on-write notice, add/rename/autosave/undo/redo, the five default categories and locked fields,
 points/conditions/analytics/scoring panels, the preview, publish with the affected-entries confirmation, history, restore, reset, set active, audit entries, buttons and shortcuts, and the phone layout; Chromium and WebKit, desktop and phone.
 
+## P23 — Form templates
+
+**Collection `formTemplates/{id}`** (`FormTemplate` in `lib/templates/build.ts`; times are epoch ms): `visibility` (`private | public-pending | public | rejected`), `ownerTeamId`, `authorName` (the account name, else
+"FTC 3468 Name"; "CompEpicurus" for official ones), `official`, `name`, `description`, `tags`, `version` (starts at 1), `form` (the `exportForm` snapshot: no author, dates, status or built-in link), `checksum`
+(`formChecksum(form)`), `fieldCount`, `sectionCount`, `importCount`, `reportCount`, `hasPendingUpdate?`, `rejectionReason?`, `createdAt/updatedAt/publishedAt/requestedAt`. Subcollections, all server-written:
+`updates/pending` (a public template's next version, `{...content, version, requestedAt}`), `reports/{teamId}` (one per account: `reason`, `at`), `imports/{teamId}` (one per account: counts a use once).
+Official templates have fixed ids `official-biobuzz` and `official-blank`.
+
+**Rules** (`firestore.rules`, tests in `firestore.rules.test.ts` "P23: formTemplates"):
+- Read: any signed-in user reads `public`; an account reads all of its own (any state); the platform owner reads `public-pending` (to review) and public ones. **A private or rejected template is readable only by its own account:
+  not by another account, not by a signed-out user, not even by the platform owner.** List queries must carry the filter (`visibility == 'public'`, `ownerTeamId == my team`, or `public-pending` for the platform owner).
+- Write from a browser: the account's admins/owner **create** a template (private, version 1, no uses or reports, not official, no pending update) and **edit/delete only while it is private or rejected** (editing a rejected
+  one makes it private again; version never goes down; `importCount`, `reportCount`, `official`, `ownerTeamId` can't change). Everything else is server-only: asking to publish, updates to a public template,
+  approve/reject/take down/official/seed, reports and counting a use. So `importCount`, `official` and `visibility` can't be forged, and moderation can't be bypassed. Subcollections: `updates` readable by the author's account
+  and the platform owner; `reports` and `imports` by the platform owner only; none writable.
+
+**Server route `POST /api/templates`** (`app/api/templates/route.ts`, logic in `lib/server/templates.ts`, Admin SDK, body capped at 320 KB), actions:
+- Author (owner/admin of the owning account): `request-publish` (private/rejected -> `public-pending`), `update-public` (a new version of a public template is stored in `updates/pending` and `hasPendingUpdate` set; the approved
+  version stays live), `unpublish` (public/pending -> private, drops a pending update).
+- Any account's owner/admin: `import` (returns the template to copy and counts the use once per account, never the author's own) and `report` (a public template that isn't yours, one report per account, reason 3-300 chars).
+- Platform owner (live `OWNER_EMAILS` + verified email, same check as P20): `approve` (first review, or promotes a pending update), `reject` (needs a reason: a first review goes to `rejected`; an update is discarded and the public
+  version stays), `take-down` (public -> `rejected`, with a reason, unofficial), `set-official`, `dismiss-reports`, `seed-official` (creates BIOBUZZ and Blank from code, or adds a version when their content changed).
+- Every request re-validates the template: checksum matches, strict parse, no blocking `checkForm` problems, text free of HTML and links https only, size. Limits (`TEMPLATE_LIMITS`): 3 publish requests/updates per account per hour
+  (`rateLimits`), 5 waiting per account, 256 KB per template, reports 10/hour/account. Decisions are written to `platformAuditLog` (`approve-template`, `reject-template`, `takedown-template`, `set-official-template`,
+  `dismiss-template-reports`, `seed-official-templates`) and to the author's own audit log (`request-template-publish`, `unpublish-template`, `template-reviewed`); the platform owner is notified (push + email, no-ops when unconfigured)
+  of new requests, and the author is emailed the decision (`templatePublishRequested`, `templateDecision`).
+
+**Shared pure code** (`lib/templates/build.ts`, `official.ts`, `lib/forms/sanitize.ts`, `portable.ts`): `buildTemplateContent` (portable snapshot, tags tidied, HTML stripped, https-only links, validated, size-limited),
+`formFromTemplate` (a new draft: origin `template`, `templateId` + `templateVersion` recorded, unique id, tags kept), `updateAvailable`, `filterTemplates`/`templateTags` (search over name, description, tags and author; tag filter;
+newest or most used), `officialTemplates` (BIOBUZZ built from the built-in form; Blank = the five categories and system fields, scoring off). `exportForm` now carries a content `checksum`; `importForm(input, { repairDuplicates })` strips
+HTML (reported in `changes`), refuses non-https links, warns on a checksum mismatch (a warning, not a refusal: it's a damage/edit detector, not a signature), and can repair duplicate ids/keys (`repairDuplicates` in `lib/forms/edit.ts`
+renames the later duplicate).
+
+**Client.** `lib/templates/service.tsx` defines `TemplateService` (live lists: public, this account's, the platform owner's queue; create/update/remove for private ones; request/update/unpublish/report/use; the platform
+owner's approve/reject/takeDown/setOfficial/dismissReports/seedOfficial). `firestore-service.tsx` is the real implementation (`TemplatesProvider`: direct Firestore writes only for private templates, `/api/templates` for the rest,
+audit entries `save-form-template`, `update-form-template`, `delete-form-template`, `use-form-template`); `memory-service.ts` is an in-memory twin for the Playwright fixture. UI (`components/templates/`): `template-library.tsx` (Public /
+My templates tabs; search, tag chips, sort; Preview with the real form and a test fill, Use template, Export JSON, Report; own: Edit details, Update from a form, Request to publish, Send an update, Unpublish, Delete),
+`template-card.tsx`, `template-dialogs.tsx`, `update-available-dialog.tsx`, `review-panel.tsx` (Admin Panel > **Template Review**, platform owners only: waiting for review, updates waiting (with a diff), reported (with reasons),
+all public templates, Seed official templates). In the Forms tab: a Forms / Templates switch, **Save as template** on every form card, "From template" in New form, and **Update available** (badge + Review update) on a form whose source
+template has a newer version: the dialog shows `diffForms(your form, new version)` and creates a **new draft**; it never changes your form. New form > Import JSON is now two steps: **Check file** shows what will be created
+(`components/forms/import-preview.tsx`: categories, field and scoring counts, what was stripped or fixed, warnings, or the errors, with "Fix automatically" when only duplicates are wrong), then **Create form**.
+
+**Tests.** `lib/templates/templates.test.ts` (sanitizing, building, using, update-available, library search/tags/sort, import/export checksum, HTML, https, duplicates, official templates), `firestore.rules.test.ts` (read matrix including
+no private leakage, create/edit/delete rules, server-only fields and subcollections), `api-routes.emulator.test.ts` "P23 templates" (publish requests, server re-validation, rate and pending limits, approve/reject/take-down/official,
+public updates held for review then promoted or discarded, use counting once per account, no access to others' private templates, reports, seeding and version bumps), and `e2e/templates.e2e.ts` (the library, review panel, update
+flow and import preview in Chromium and WebKit, desktop and phone).
+
+## P24 — The practice scouting workspace
+
+**One shared layout** (`components/practice/scouting-workspace.tsx`, `ScoutingWorkspace`) used by the solo practice screen (`session-screen.tsx`), Live (`live/live-session-screen.tsx`) and the lobby
+(`lobby/lobby-session-screen.tsx`). The screens keep their own header chips, state, saving and dialogs and hand the workspace content: `video` (a node, or `null` for a lobby host who isn't the displayer), `videoNote`
+(small toolbar text such as the Competitive note), `form`, `actions` (the buttons of the pinned bar), `notice` (error banners, shown above the bar) and `comments` (turns the drawer on). Tests assert all three screens render it.
+
+- **Page lock.** While mounted the workspace sets `html[data-workspace]` (`overflow: hidden`, in `app/globals.css`), sizes itself to the rest of the window (`max(420px, 100dvh - its top - 0.75rem)`, re-measured with a
+  ResizeObserver and on resize), and puts the page back at the top if anything nudges it (`scrollIntoView`, focus). A window shorter than 520px keeps its page scroll instead of clipping the workspace.
+- **Video.** `VideoStage` measures its pane (ResizeObserver, coalesced to one update per frame) and sizes a box to the largest 16:9 that fits (`fitContain`, `lib/workspace/layout.ts`), centered both ways on a subtle dark
+  letterbox. `VideoPlayer`, `MockVideoPlayer` and `YouTubePlayer` take a `fill` prop and fill that box (the mock's picture area takes the room its controls leave); the Live iframes are `h-full w-full` in it.
+- **Form pane (tablet and desktop, >= 768px).** `video pane | divider | form panel`. The divider is `role="separator"` (vertical), focusable, with a hover/drag/focus glow; drag it, use ArrowLeft (form grows) / ArrowRight
+  (shrinks), Shift for big steps, Home (minimum) / End (maximum), double-click to reset. Limits: at least 320px and at most 60% of the workspace (`clampFormWidth`). The width is stored as a share of the workspace
+  (so a resized window keeps the proportion), saved per user in `users/{uid}.workspaceFormWidth` (debounced) and in `localStorage` as the fallback; the account's value wins, and a value only this browser had is saved to the
+  account once. The value used at pointer-up is the last one dragged to (kept in a ref: a fast drag can end before React re-renders the last move).
+- **Phone (< 768px).** The video pinned at the top, a row with the comments button, a drag handle (`role="separator"`, horizontal: drag, ArrowUp/ArrowDown, Home/End, double-click resets; the video's share of the
+  height is clamped to 20-70% and saved in `workspacePhoneSplit`) and a button that shrinks the video to a 96px mini player; the form below scrolls in its panel with the action bar pinned.
+- **Form panel.** The form scrolls in its own box (`workspace-form-scroll`); the action bar is a separate, non-scrolling sibling under it (so it stays pinned), and the score bar sticks to the bottom of the scroll box,
+  above it. `ScoutForm` in the side-panel layout now has sticky section headers (`glass-strong`).
+- **Focus mode.** The Focus button or `F` collapses the form to a 44px strip (and hides the app sidebar and mobile top bar through `lib/shell-immersive.tsx`, which `app/(app)/layout.tsx` owns); the strip or `F` brings it back.
+  The form stays mounted while hidden, so nothing entered is lost. **Fullscreen** fullscreens the whole workspace (video and form). Because only the fullscreen element is visible, `Dialog` and `SelectContent` portal into
+  `document.fullscreenElement` when there is one (`lib/portal-container.ts`), so the break menu and confirms still show.
+- **Comments drawer.** `commentsMode` on `ScoutForm` (`'inline'` | `'popout'`; default `'popout'` for `layout="side-panel"`, `'inline'` otherwise, and inline whenever there's no `onCommentsChange` or the form has no field
+  with the `comments` stat role). In popout mode the form leaves that field out and uses `comments` / `onCommentsChange` as its value (the caller owns the text; the value still goes into the submitted entry like any
+  field). The workspace shows a tab on the video pane's right edge (a button in the handle row on phones) with a dot when there's text, and opens a drawer with an auto-growing textarea, headed with the robot
+  (`Robot 1: #1234`). On tablet and desktop it **pushes the video aside** (the stage re-fits beside it) instead of covering the player's controls; on phones it is a sheet over the form area, above the action bar. It is
+  non-modal (no focus trap), never touches playback, takes focus only when opened (tab or `C`), and `Esc` closes it (and lets go of its text box, so `C` works again). The solo screen clears it for each robot.
+- **Shortcuts** (`shortcutFor`, pure): `F` Focus, `C` comments, `Esc` closes the drawer; ignored while typing in a field, with Ctrl/Cmd/Alt, and while a dialog is open.
+- **Competitive / Trial.** Nothing here adds a pause control or scrubbing; the player's own lock (`lockPause`) is untouched. The divider, drawer and action bar don't overlap the player's controls (a test checks it).
+
+**Persistence.** `lib/workspace/use-workspace-prefs.ts`; two new optional fields on the user doc (`UserDoc.workspaceFormWidth`, `workspacePhoneSplit`, shares between 0 and 1). The existing "a member updates their own
+non-role fields" rule already allows them (no rules change); `firestore.rules.test.ts` ("P24: users/{uid}.workspaceFormWidth…") proves a member can save theirs and can't set anyone else's or smuggle in a role.
+
+**Tests.** `lib/workspace/layout.test.ts` (fit, clamping, share conversion, resolving and storing, keyboard steps, phone split, shortcuts, blocked storage); `e2e/practice-workspace.e2e.ts` on the fixture page
+`/e2e/practice-workspace` (404 unless `E2E_THEME_CHECK=1`: the real workspace, `ScoutForm` and placeholder video in the two-robot flow): the video is 16:9, centered and as large as fits; the page doesn't scroll; the form scrolls
+inside its panel with the video and action bar fixed; tablet size; divider limits, keyboard and double-click; persistence across a reload; Focus and fullscreen; comments per robot ending up in the submitted entry for the
+right robot; Competitive and Trial; the phone's handle, mini player and sheet. Screenshots go to `e2e/screenshots/` (git-ignored). `lib/mobile.test.ts` (P17) now checks the workspace carries the safe-area padding and that all three
+screens use it.
+
+## P25 — Member profiles (public / private)
+
+**Data.** `profiles/{uid}` (one per member, created on their first save; until then the defaults apply): `teamId`, `displayName` (<= 40, profile only), `bio` (<= 280, plain text), `pronouns` (<= 30), `avatar {type: 'google'|'initials'|'preset', value}`,
+`visibility: 'public'|'private'` and `updatedAt`. No uploads exist anywhere: a Google picture is an `https://lh*.googleusercontent.com/...` URL, a preset is an id from `AVATAR_PRESETS` (a gradient and a glyph drawn in the browser), initials are computed. The avatar is
+**also mirrored on `users/{uid}.avatar`** (written in the same batch) because teammates can always read user docs and the limited "private" card must still show a picture; bio, pronouns and display name live only in the profile doc.
+
+**Code** (`lib/profile/`): `config.ts` (**`DEFAULT_PROFILE_VISIBILITY`** — the one constant that sets what a profile is before its owner chooses —, the length limits, the presets, `RECENT_SESSIONS_SHOWN`, the badge thresholds), `model.ts` (the doc, `parseProfile`, `sanitizeBio/Pronouns/DisplayName`,
+`effectiveVisibility`, `profileAccess`, `canModerateProfile`, `visibilityToSave`, avatar validation), `streak.ts`, `badges.ts` (the single list of achievements), `stats.ts` (`computeProfileStats`, `eventTargetProgress`), `format.ts`, `service.tsx` (`useProfile`, `saveOwnProfile`, `clearProfileText`).
+All the logic is pure and unit-tested (`lib/profile/profile.test.ts`); the hooks only wire it to Firestore.
+
+**Visibility.** `visibility` stores the member's **preference**; what applies is computed: `effectiveVisibility()` is public for an admin (the owner's admin flag always stays on) and the preference otherwise. The rules compute the same thing from the target's user doc,
+so **promoting someone applies at once and demoting them brings their saved preference back, with nothing rewritten**. An admin's toggle in Settings is disabled with an explanation, and the rules refuse an admin changing `visibility` (their first save is `public`).
+
+**Rules** (`firestore.rules`, `profiles/{uid}`): `get` only (no list) by the member, by an admin of the same team, or by a teammate when the profile is public or its owner is an admin; `resource == null` is readable by a teammate (so "no profile yet" is not an error). Create/update only by the member,
+with the field list, lengths, avatar shape and a server `updatedAt` validated. The one other write is **moderation**: an admin of the same team can update a teammate's profile **only** to clear `bio` and `pronouns` to `''` (nothing else may change), never the owner's. Deletes are denied. The `users` rules gained
+`validUserAvatar` on a member's own update, and an admin's role edit can no longer touch another member's `avatar`.
+
+**Pages.** `/people/:uid` and `/profile` (your own) both render `ProfileView` (`components/profile/profile-view.tsx`): the data adapter (members, `useProfile`) over `ProfileScreen` (`profile-screen.tsx`, the page chrome and the one privacy decision), which shows `LimitedProfileCard` or
+`ProfileBody` (header + activity). A denied read (a private profile seen by a non-admin teammate) is treated as "private", never as an error, and **the activity section is not mounted** in that case, so that viewer's browser doesn't load the scouting data for it either. Your own page has **Edit**
+(→ `/account#privacy-profile`) and **View as others see it**, which re-runs the same access decision as a non-admin teammate and says what they would see. The People page cards link to `/people/:uid`, and the sidebar name and picture open `/profile`. `Avatar` (`components/ui/avatar.tsx`) takes an optional `avatar`
+(the Team Management rows and People now show them; leaderboards and the credits board still use initials).
+**Settings > Privacy and profile** (`components/profile/privacy-profile-section.tsx`, a section of the Account page): picture picker, display name, pronouns, bio with a counter, the visibility choice and the honest-limits note (see P25-3).
+
+**Profile content.** Header (avatar, name, pronouns, primary role in its colour, secondary roles, FTC team chips from P19, Owner/Admin badge, bio, "Joined" from the user doc's `createdAt`, "Last active"). **Accuracy**: Trial / Competitive / Real Event cards are the existing `MyScoutingCard`, fed by
+`computeScoutStats` (the engine Scout Accuracy and My Scouting use, called per category with `rankingBasis: "preserve"` and the default Real Event scope), so exclusions, the default calculation and the rank are exactly theirs. **Practice scouting**: the last five sessions across Trial and Competitive with a PC/Mobile badge,
+the session count and the practice streak. **Events**: events attended (the attendance list), Real Event entries per event, and **target completion at the current event** (the primary active event) from the P16 setup: the member's manual targets, else the matches Assignments gives them. **Achievements**: computed in the browser
+from `BADGES` (First Session, 10 Sessions, 50 Sessions, 100% Session, Excellent status, 5-Day Streak, Event Veteran, Perfect Alliance); nothing is stored. Every section has an empty state, and a skeleton holds the page's shape while the team's data loads.
+
+**Moderation.** An admin sees **Clear bio & pronouns** on a teammate's profile when there is text, with a confirmation. `clearProfileText` writes the profile update and a `clear-profile-text` `auditLog` entry (what was removed) in **one batch**. The rules allow only that clear and never new text. (Rules can't require the audit entry to exist; the client
+always writes both in the batch, and the Audit Log tab lists them as "Cleared Profile Bio / Pronouns".)
+
+**Tests.** `lib/profile/profile.test.ts` (visibility, sanitization, avatars, streaks, badges, the stats adapter over fixtures, target progress, display helpers); `firestore.rules.test.ts` ("P25: profiles/{uid} and the users/{uid}.avatar mirror": public/private reads, owner/admin reads, forced-public admins, promotion and demotion,
+create/edit rules, no one writing someone else's, validation, moderation limits, the owner protection, the audit batch, the avatar mirror); `e2e/profiles.e2e.ts` on the fixture `/e2e/profiles` (all four browser projects: the full profile with fixed data, the private card with nothing else in the DOM, admin and own views, the preview toggle, empty states,
+no layout shift, moderation, the Settings editor incl. an admin's disabled toggle, sanitized saves and failures, light and dark screenshots).
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

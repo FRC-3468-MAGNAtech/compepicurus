@@ -35,3 +35,23 @@ export async function notifyPlatformOwnersOfApplication(
     await sendEmail(emailTemplates.newApplicationForOwner({ to, ...app, queueUrl: `${appBaseUrl()}/admin` }));
   }
 }
+
+/**
+ * P23: tells the platform owner(s) a form template is waiting for review (a new publish request, or a new version of a public template). Same two
+ * best-effort channels as applications (push to their devices, email to OWNER_EMAILS); the Template Review tab needs no sending, it reads the queue live.
+ */
+export async function notifyPlatformOwnersOfTemplate(db: Firestore, t: { templateId: string; templateName: string; authorName: string; update: boolean }): Promise<void> {
+  const title = t.update ? `Template update: ${t.templateName}` : `Template to review: ${t.templateName}`;
+  try {
+    const messaging = getAdminMessaging();
+    if (messaging) {
+      const owners = await db.collection("users").where("isPlatformOwner", "==", true).get();
+      const tokens = [...new Set(owners.docs.flatMap((d) => (Array.isArray(d.data().fcmTokens) ? (d.data().fcmTokens as string[]) : [])))];
+      if (tokens.length > 0) await messaging.sendEachForMulticast({ tokens, notification: { title, body: `${t.authorName} sent a template for review.` }, data: { templateId: t.templateId, url: "/admin" } });
+    }
+  } catch (err) {
+    console.error("template push failed:", err instanceof Error ? err.message : err);
+  }
+  const to = platformOwnerEmails();
+  if (to.length > 0) await sendEmail(emailTemplates.templatePublishRequested({ to, templateName: t.templateName, authorName: t.authorName, update: t.update, queueUrl: `${appBaseUrl()}/admin` }));
+}

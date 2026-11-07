@@ -54,6 +54,31 @@ service cloud.firestore {
       return isAdmin() || isOwner();
     }
 
+    // P25: an avatar choice ({type, value}), on a profile and mirrored on the user doc. No uploads exist: a Google
+    // picture is an https URL on googleusercontent.com, a preset is one of the app's ids, initials carry nothing.
+    function validAvatar(a) {
+      return a is map && a.keys().hasOnly(['type', 'value']) && a.keys().hasAll(['type', 'value'])
+        && a.type in ['google', 'initials', 'preset']
+        && a.value is string && a.value.size() <= 500
+        && (a.type == 'google' ? a.value.matches('^https://lh[0-9]\\.googleusercontent\\.com/[^ ]*$')
+          : (a.type == 'preset' ? a.value.matches('^[a-z0-9-]{1,24}$') : a.value.size() <= 4));
+    }
+
+    // P25: an absent avatar is fine (initials apply); a present one must be valid.
+    function validUserAvatar(d) {
+      return d.get('avatar', null) == null || validAvatar(d.avatar);
+    }
+
+    // P25: another member's user doc, for "are they an admin / the owner".
+    function userDocOf(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    // P25: is this uid the owner of the account (teams.ownerUid, or the legacy flag until one is set)?
+    function isOwnerUid(uid, teamId) {
+      return ownerUidOf(teamId) == uid || (ownerUidOf(teamId) == null && userDocOf(uid).get('isOwner', false) == true);
+    }
+
     // FIX1: the ids in lib/roles.ts's ROLES — keep in sync when a role is added.
     function validRoleIds() {
       return ['match-scout', 'pit-scout', 'pit-team', 'drive-team', 'lead-scout',
@@ -179,7 +204,9 @@ service cloud.firestore {
         && request.resource.data.get('isPlatformOwner', false) == resource.data.get('isPlatformOwner', false)
         // P19: which FTC teams a member is assigned to is admin-only — you can't change your own
         // (an admin changes theirs through the rule below). `.get` because pre-migration docs lack it.
-        && request.resource.data.get('fieldTeamIds', null) == resource.data.get('fieldTeamIds', null);
+        && request.resource.data.get('fieldTeamIds', null) == resource.data.get('fieldTeamIds', null)
+        // P25: the avatar mirror is the member's own, and must be a valid choice.
+        && validUserAvatar(request.resource.data);
 
       // Team Management's role editor — the matrix is mirrored by canEditMember()
       // in lib/member-access.ts, so keep the two in sync:
@@ -201,6 +228,8 @@ service cloud.firestore {
         && request.resource.data.isOwner == resource.data.isOwner
         && request.resource.data.get('isPlatformOwner', false) == resource.data.get('isPlatformOwner', false)
         && request.resource.data.teamId == resource.data.teamId
+        // P25: an admin's edit of someone's roles can't touch their avatar (that is the member's own choice).
+        && request.resource.data.get('avatar', null) == resource.data.get('avatar', null)
         && request.resource.data.isAdmin is bool
         && request.resource.data.primaryRole in validRoleIds()
         && request.resource.data.secondaryRoles is list
@@ -211,6 +240,57 @@ service cloud.firestore {
         && (isOwnerRow(uid, resource.data.teamId)
           ? (request.auth.uid == uid && isOwner() && request.resource.data.isAdmin == true)
           : (request.auth.uid != uid || request.resource.data.isAdmin == true));
+
+      allow delete: if false;
+    }
+
+    // P25: profiles/{uid} — a member's public/private profile (display name, bio, pronouns, avatar, visibility).
+    // Readable by:
+    //  - the member themself (always), and a teammate who is an admin (always);
+    //  - any other teammate when the profile is public — or when the member is an admin or the owner, who are always
+    //    treated as public whatever their saved preference says (so promotion applies at once and demotion brings
+    //    their preference back without a write).
+    // A teammate who may not read it gets "permission denied" (the page shows the limited "This profile is private"
+    // card from the account's own user doc: name, role, avatar). `resource == null` is allowed for a teammate so
+    // "has no profile yet" isn't an error. Only the member writes their own profile; an admin can only CLEAR a
+    // teammate's bio and pronouns (never write them, never touch the owner's), and the client logs each clear to
+    // auditLog in the same batch. An admin's visibility can't be changed while they are an admin (the toggle is
+    // disabled; the saved preference is kept for after a demotion). Never deleted.
+    function validProfile(d) {
+      return d.keys().hasOnly(['teamId', 'displayName', 'bio', 'pronouns', 'avatar', 'visibility', 'updatedAt'])
+        && d.keys().hasAll(['teamId', 'displayName', 'bio', 'pronouns', 'avatar', 'visibility', 'updatedAt'])
+        && d.displayName is string && d.displayName.size() <= 40
+        && d.bio is string && d.bio.size() <= 280
+        && d.pronouns is string && d.pronouns.size() <= 30
+        && validAvatar(d.avatar)
+        && d.visibility in ['public', 'private']
+        && d.updatedAt == request.time;
+    }
+
+    match /profiles/{uid} {
+      allow get: if isSignedIn() && (
+        request.auth.uid == uid
+        || (resource == null
+          ? sameTeam(userDocOf(uid).teamId)
+          : (sameTeam(resource.data.teamId)
+            && (isAdmin() || resource.data.visibility == 'public' || userDocOf(uid).get('isAdmin', false) == true))));
+
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.teamId == myProfile().teamId
+        && validProfile(request.resource.data)
+        && (!isAdmin() || request.resource.data.visibility == 'public');
+
+      allow update: if isSignedIn() && (
+        (request.auth.uid == uid
+          && request.resource.data.teamId == resource.data.teamId
+          && validProfile(request.resource.data)
+          && (!isAdmin() || request.resource.data.visibility == resource.data.visibility))
+        || (request.auth.uid != uid
+          && isAdmin() && sameTeam(resource.data.teamId)
+          && !isOwnerUid(uid, resource.data.teamId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bio', 'pronouns', 'updatedAt'])
+          && request.resource.data.bio == '' && request.resource.data.pronouns == ''
+          && request.resource.data.updatedAt == request.time));
 
       allow delete: if false;
     }
@@ -507,6 +587,75 @@ service cloud.firestore {
             || get(/databases/$(database)/documents/forms/$(docId)).data.publishedVersion == null
             || get(/databases/$(database)/documents/forms/$(docId)).data.publishedVersion < request.resource.data.version);
         allow update, delete: if false;
+      }
+    }
+
+    // P23: formTemplates/{id}: a form saved as a template. Visibility: private (only the owning account), public-pending (waiting for the platform
+    // owner), public (any signed-in user can read it), rejected (back with the author, with a reason).
+    //  - A signed-in user reads `public` templates; an account reads its own in any state; the platform owner reads `public-pending` ones (to review
+    //    them) and public ones. Nobody else can read a private or rejected template: not another account, and not the platform owner either. List
+    //    queries must carry the matching filter (visibility == 'public', ownerTeamId == my team, or visibility == 'public-pending' for the platform owner).
+    //  - An account's admins and owner create a template (private, version 1, no uses or reports) and edit or delete it **only while it is private or
+    //    rejected**; editing a rejected one makes it private again. Everything else is server-only (app/api/templates, Admin SDK): asking to publish,
+    //    sending an update to a public template, approving, rejecting, taking down, marking official, reports and counting a use (so `importCount`,
+    //    `official` and `visibility` can't be forged from a browser).
+    //  - Rules can't validate the nested form, so the server re-validates it (strict parse, no blocking problems, sanitized text, size) before anything
+    //    becomes public; a private template is only ever seen by its own account.
+    function validTemplateShape(d) {
+      return d.ownerTeamId is string && d.authorName is string && d.authorName.size() <= 80
+        && d.name is string && d.name.size() >= 1 && d.name.size() <= 80
+        && d.description is string && d.description.size() <= 500
+        && d.tags is list && d.tags.size() <= 10
+        && d.version is int && d.version >= 1
+        && d.form is map && d.form.id is string
+        && d.checksum is string && d.checksum.size() <= 64
+        && d.fieldCount is int && d.sectionCount is int;
+    }
+
+    match /formTemplates/{id} {
+      allow get, list: if isSignedIn() && (resource.data.visibility == 'public'
+        || sameTeam(resource.data.ownerTeamId)
+        || (isPlatformOwner() && resource.data.visibility == 'public-pending'));
+
+      allow create: if canManageMembers()
+        && sameTeam(request.resource.data.ownerTeamId)
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.version == 1
+        && request.resource.data.importCount == 0
+        && request.resource.data.reportCount == 0
+        && request.resource.data.official == false
+        && !('hasPendingUpdate' in request.resource.data)
+        && validTemplateShape(request.resource.data);
+
+      allow update: if canManageMembers()
+        && sameTeam(resource.data.ownerTeamId)
+        && resource.data.visibility in ['private', 'rejected']
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.ownerTeamId == resource.data.ownerTeamId
+        && request.resource.data.official == false
+        && request.resource.data.importCount == resource.data.importCount
+        && request.resource.data.reportCount == resource.data.reportCount
+        && request.resource.data.version >= resource.data.version
+        && !('hasPendingUpdate' in request.resource.data)
+        && validTemplateShape(request.resource.data);
+
+      allow delete: if canManageMembers()
+        && sameTeam(resource.data.ownerTeamId)
+        && resource.data.visibility in ['private', 'rejected'];
+
+      // A public template's pending update (server-written). Its author's account and the platform owner can read it.
+      match /updates/{n} {
+        allow read: if isPlatformOwner() || (isSignedIn() && sameTeam(get(/databases/$(database)/documents/formTemplates/$(id)).data.ownerTeamId));
+        allow write: if false;
+      }
+      // Reports and use-counts: server-written, readable by the platform owner only.
+      match /reports/{teamId} {
+        allow read: if isPlatformOwner();
+        allow write: if false;
+      }
+      match /imports/{teamId} {
+        allow read: if isPlatformOwner();
+        allow write: if false;
       }
     }
 

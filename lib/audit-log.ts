@@ -44,7 +44,17 @@ export type AuditAction =
   | "archive-form"
   | "unarchive-form"
   | "reset-form-to-builtin"
-  | "set-active-form";
+  | "set-active-form"
+  // P23: form templates
+  | "save-form-template"
+  | "update-form-template"
+  | "delete-form-template"
+  | "use-form-template"
+  | "request-template-publish"
+  | "unpublish-template"
+  | "template-reviewed"
+  // P25: an admin cleared a teammate's profile bio / pronouns (moderation; admins can clear, never write)
+  | "clear-profile-text";
 
 export type AuditLogEntry = {
   id: string;

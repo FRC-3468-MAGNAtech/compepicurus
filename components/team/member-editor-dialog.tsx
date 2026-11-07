@@ -102,7 +102,7 @@ export function MemberEditorDialog({
           className="-m-6 rounded-[28px] p-6"
         >
           <div className="flex items-center gap-3 pr-8">
-            <Avatar name={member.name} size="md" />
+            <Avatar name={member.name} size="md" avatar={member.avatar} />
             <div className="min-w-0">
               <DialogTitle className="truncate">Edit {member.name}</DialogTitle>
               <DialogDescription className="truncate">{member.email}</DialogDescription>

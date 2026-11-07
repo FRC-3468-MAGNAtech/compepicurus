@@ -43,11 +43,11 @@ test.describe("Forms list", () => {
     await expect(card.getByRole("button", { name: "Archive BIOBUZZ" })).toBeDisabled();
   });
 
-  test("the New form dialog offers the four starts, with the template library shown but not yet available", async ({ page }) => {
+  test("the New form dialog offers the four starts, the template library among them", async ({ page }) => {
     await openForms(page);
     await page.getByTestId("new-form").click();
     for (const name of [/Start from scratch/, /From template/, /Duplicate a form/, /Import JSON/]) await expect(page.getByRole("radio", { name })).toBeVisible();
-    await expect(page.getByRole("radio", { name: /From template/ })).toBeDisabled();
+    await expect(page.getByRole("radio", { name: /From template/ })).toBeEnabled();
   });
 
   test("duplicates a form into a new custom draft and opens it", async ({ page }) => {
@@ -66,11 +66,12 @@ test.describe("Forms list", () => {
     await page.getByTestId("new-form").click();
     await page.getByRole("radio", { name: /Import JSON/ }).click();
     await page.getByLabel("Form JSON").fill("{not json");
-    await page.getByRole("button", { name: "Import", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText("isn't valid JSON");
+    await page.getByRole("button", { name: "Check file" }).click();
+    await expect(page.getByTestId("import-preview")).toContainText("isn't valid JSON");
+    await page.getByRole("button", { name: "Choose another file" }).click();
     await page.getByLabel("Form JSON").fill(JSON.stringify({ format: "other" }));
-    await page.getByRole("button", { name: "Import", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText("isn't a CompEpicurus form export");
+    await page.getByRole("button", { name: "Check file" }).click();
+    await expect(page.getByTestId("import-preview")).toContainText("isn't a CompEpicurus form export");
   });
 });
 

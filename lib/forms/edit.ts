@@ -573,3 +573,67 @@ export function changeFieldType(form: Form, fieldId: string, type: UserFieldType
     return next;
   });
 }
+
+// --- repairing a file with duplicate ids or keys (P23 import) ----------------------------------------------------------------
+
+/**
+ * Makes ids and keys unique without touching anything else: the first use of an id or key keeps it, later duplicates get fresh ones (keys keep their
+ * text with a number after it). Conditions keep pointing at the first field with that key. Used by "Fix automatically" in the import preview, so a
+ * template with a copy-paste slip imports instead of being refused. Returns what it changed, in words.
+ */
+export function repairDuplicates(form: Form, rand?: () => number): { form: Form; fixes: string[] } {
+  const fixes: string[] = [];
+  const taken = allIds(form);
+  const seenSection = new Set<string>();
+  const seenField = new Set<string>();
+  const seenKey = new Set<string>();
+  const reserved = new Set<string>();
+  for (const [from, to] of Object.entries(form.keyAliases ?? {})) {
+    reserved.add(from);
+    reserved.add(to);
+  }
+  const fresh = (prefix: string): string => {
+    const id = newId(prefix, taken, rand);
+    taken.add(id);
+    return id;
+  };
+  const sections = form.sections.map((s) => {
+    let id = s.id;
+    if (seenSection.has(id)) {
+      id = fresh("s");
+      fixes.push(`Two categories shared an id: "${s.title}" got a new one.`);
+    }
+    seenSection.add(id);
+    const groupSeen = new Set<string>();
+    const groupMap = new Map<string, string>();
+    const groups = s.groups?.map((g) => {
+      if (!groupSeen.has(g.id)) {
+        groupSeen.add(g.id);
+        return g;
+      }
+      const gid = fresh("g");
+      fixes.push(`Two groups in "${s.title}" shared an id: "${g.title}" got a new one.`);
+      groupMap.set(g.id, gid);
+      return { ...g, id: gid };
+    });
+    const fields = s.fields.map((f) => {
+      let next = f;
+      if (seenField.has(f.id)) {
+        next = { ...next, id: fresh("f") };
+        fixes.push(`Two fields shared an id: "${f.label}" got a new one.`);
+      }
+      seenField.add(next.id);
+      if (seenKey.has(next.key)) {
+        let n = 2;
+        const base = next.key.slice(0, 36);
+        while (seenKey.has(`${base}${n}`) || reserved.has(`${base}${n}`)) n++;
+        fixes.push(`Two fields used the key "${next.key}": "${next.label}" is now "${base}${n}".`);
+        next = { ...next, key: `${base}${n}` };
+      }
+      seenKey.add(next.key);
+      return next;
+    });
+    return { ...s, id, ...(groups ? { groups } : {}), fields };
+  });
+  return { form: fixes.length > 0 ? { ...form, sections } : form, fixes };
+}

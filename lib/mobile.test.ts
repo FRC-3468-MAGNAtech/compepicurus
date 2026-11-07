@@ -107,8 +107,12 @@ describe("dialogs, bars, and units on a phone", () => {
   });
 
   it("sticky bottom bars clear the home indicator", () => {
-    for (const f of ["components/scout/score-bar.tsx", "components/practice/session-screen.tsx", "components/practice/lobby/lobby-session-screen.tsx", "components/practice/live/live-session-screen.tsx"]) {
+    // P24: the practice screens' action bar is the shared ScoutingWorkspace's, so the bar (and the score bar) carry the safe area, and every practice screen uses the workspace
+    for (const f of ["components/scout/score-bar.tsx", "components/practice/scouting-workspace.tsx"]) {
       expect(read(f), f).toContain("env(safe-area-inset-bottom)");
+    }
+    for (const f of ["components/practice/session-screen.tsx", "components/practice/lobby/lobby-session-screen.tsx", "components/practice/live/live-session-screen.tsx"]) {
+      expect(read(f), f).toContain("<ScoutingWorkspace");
     }
   });
 

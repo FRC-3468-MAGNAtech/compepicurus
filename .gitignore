@@ -43,3 +43,6 @@ next-env.d.ts
 # playwright (P18)
 /test-results/
 /playwright-report/
+
+# P24: Playwright screenshots of the practice workspace
+/e2e/screenshots/

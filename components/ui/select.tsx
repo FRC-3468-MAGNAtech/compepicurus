@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useGlassOverlap } from "@/lib/use-glass-overlap";
+import { portalContainer } from "@/lib/portal-container";
 
 // Radix's own Presence only recognizes CSS animations/transitions when
 // deciding whether to keep a closed element mounted — it can't see Framer
@@ -97,7 +98,7 @@ export function SelectContent({
   const overGlass = useGlassOverlap(contentRef, open);
 
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={portalContainer()}>
       <AnimatePresence>
         {open && (
           <SelectPrimitive.Content

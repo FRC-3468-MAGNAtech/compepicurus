@@ -12,6 +12,8 @@ export type MockVideoPlayerProps = {
   lockPause?: boolean;
   onEnded?: () => void;
   onPause?: () => void;
+  /** P24: fill the parent's box (the picture area grows to take the room the controls leave). */
+  fill?: boolean;
 };
 
 function formatTime(totalSeconds: number): string {
@@ -28,7 +30,7 @@ function formatTime(totalSeconds: number): string {
  * explicit "Placeholder video" label).
  */
 export const MockVideoPlayer = forwardRef<VideoPlayerHandle, MockVideoPlayerProps>(function MockVideoPlayer(
-  { lockPause, onEnded, onPause },
+  { lockPause, onEnded, onPause, fill },
   ref
 ) {
   const [currentTime, setCurrentTime] = useState(0);
@@ -86,8 +88,8 @@ export const MockVideoPlayer = forwardRef<VideoPlayerHandle, MockVideoPlayerProp
   const progress = currentTime / MOCK_VIDEO_DURATION_SEC;
 
   return (
-    <div className="glass-card flex flex-col gap-3 p-4">
-      <div className="relative flex h-40 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-[var(--glass-border)] bg-black/30">
+    <div className={`glass-card flex flex-col gap-3 p-4 ${fill ? "h-full w-full" : ""}`}>
+      <div className={`relative flex items-center justify-center overflow-hidden rounded-2xl border border-dashed border-[var(--glass-border)] bg-black/30 ${fill ? "min-h-0 flex-1" : "h-40"}`}>
         <div className="flex flex-col items-center gap-2 text-[var(--muted-foreground)]">
           <Clapperboard className="h-8 w-8" />
           <span className="text-xs font-semibold uppercase tracking-wide">Placeholder video</span>

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, ChevronDown, ChevronUp, Play, Send, X } from "lucide-react";
+import { CheckCircle2, Play, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { clipProgress, windowStart } from "@/lib/library/video-window";
 import { MOCK_VIDEO_DURATION_SEC } from "@/components/video/mock-video-player";
 import type { VideoPlayerHandle } from "@/components/video/types";
 import { BreakMenu } from "@/components/practice/break-menu";
+import { ScoutingWorkspace } from "@/components/practice/scouting-workspace";
 import { ChipSummary } from "@/components/practice/chip-summary";
 import { springSnappy } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -53,7 +54,8 @@ export function SessionScreen({
   const [robotIndex, setRobotIndex] = useState(session.completedRobots.length);
   const [readyOverlay, setReadyOverlay] = useState(true);
   const [videoEnded, setVideoEnded] = useState(false);
-  const [videoCollapsed, setVideoCollapsed] = useState(false);
+  // The comments drawer's text for the robot being scouted: it is the form's `comments` value (ScoutForm commentsMode="popout"), cleared for each robot.
+  const [comments, setComments] = useState("");
   const [breakMenuOpen, setBreakMenuOpen] = useState(false);
   const [pendingRobot, setPendingRobot] = useState<PendingRobot | null>(null);
   const [changeMatchConfirmOpen, setChangeMatchConfirmOpen] = useState(false);
@@ -173,6 +175,7 @@ export function SessionScreen({
       setBreakMenuOpen(false);
       setPendingRobot(null);
       setRobotIndex((i) => i + 1);
+      setComments("");
       setReadyOverlay(true);
       setVideoEnded(false);
       videoRef.current?.seek(windowStart(libraryMatch.video));
@@ -209,7 +212,7 @@ export function SessionScreen({
   const allianceTextClass = alliance === "red" ? "text-red-300" : "text-blue-300";
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <ChipSummary seasonName={season.name} mode={session.mode} difficulty={session.difficulty} />
@@ -228,60 +231,32 @@ export function SessionScreen({
         </Button>
       </div>
 
-      {session.mode === "competitive" && (
-        <p className="text-xs text-[var(--muted-foreground)]">Competitive: video can&apos;t be paused.</p>
-      )}
-
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <div className={cn("lg:w-[58%] lg:shrink-0", "sticky top-[calc(env(safe-area-inset-top)+5rem)] z-10 lg:static")}>
-          <div className="flex items-center justify-between lg:hidden">
-            <span className="text-xs font-medium text-[var(--muted-foreground)]">Video</span>
-            <button
-              type="button"
-              onClick={() => setVideoCollapsed((v) => !v)}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--muted-foreground)] hover:bg-white/8"
-              aria-label={videoCollapsed ? "Expand video" : "Collapse video"}
-            >
-              {videoCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-            </button>
-          </div>
-          {!videoCollapsed && (
-            <div className="relative">
-              <VideoPlayer
-                ref={videoRef}
-                video={libraryMatch.video}
-                usePlaceholder={usePlaceholder}
-                lockPause={session.mode === "competitive"}
-                onEnded={() => setVideoEnded(true)}
-              />
-              <AnimatePresence>
-                {readyOverlay && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={springSnappy}
-                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-2xl bg-black/70 scrim-blur"
-                  >
-                    <p className="text-sm font-medium text-white">
-                      {robotIndex === 0 ? "Ready to scout?" : `Ready for Team ${teamNumber}?`}
-                    </p>
-                    <Button size="lg" className="gap-2" onClick={handleStart}>
-                      <Play className="h-4 w-4" /> Start
-                    </Button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-              {videoEnded && !readyOverlay && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Match ended &mdash; finish whenever you&apos;re ready.
-                </div>
+      <ScoutingWorkspace
+        video={
+          <div className="relative h-full w-full">
+            <VideoPlayer ref={videoRef} fill video={libraryMatch.video} usePlaceholder={usePlaceholder} lockPause={session.mode === "competitive"} onEnded={() => setVideoEnded(true)} />
+            <AnimatePresence>
+              {readyOverlay && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={springSnappy} className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/70 scrim-blur">
+                  <p className="text-sm font-medium text-white">{robotIndex === 0 ? "Ready to scout?" : `Ready for Team ${teamNumber}?`}</p>
+                  <Button size="lg" className="gap-2" onClick={handleStart}>
+                    <Play className="h-4 w-4" /> Start
+                  </Button>
+                </motion.div>
               )}
-            </div>
-          )}
-        </div>
-
-        <div className="min-w-0 flex-1">
+            </AnimatePresence>
+          </div>
+        }
+        videoNote={
+          videoEnded && !readyOverlay ? (
+            <span className="inline-flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Match ended: finish whenever you&apos;re ready.
+            </span>
+          ) : session.mode === "competitive" ? (
+            "Competitive: video can't be paused."
+          ) : null
+        }
+        form={
           <ScoutForm
             key={`${robotIndex}-${form.id}@${form.version}`}
             schema={form}
@@ -292,22 +267,30 @@ export function SessionScreen({
             showSubmitButton={false}
             lockedFields={["teamNumber"]}
             prefill={{ teamNumber, scoutName: session.scoutName }}
+            commentsMode="popout"
+            comments={comments}
+            onCommentsChange={setComments}
           />
-          {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before continuing.</p>}
-        </div>
-      </div>
-
-      {error && <LoadError failure={error} />}
-
-      <div className="glass-strong sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex items-center justify-between gap-3 rounded-full px-5 py-3 shadow-2xl">
-        <Button variant="ghost" className="gap-1.5 text-red-300" onClick={() => setCancelConfirmOpen(true)}>
-          <X className="h-4 w-4" /> Cancel
-        </Button>
-        <Button size="lg" className="gap-2" onClick={handleNextOrFinish} disabled={saving}>
-          <Send className="h-4 w-4" />
-          {saving ? "Saving…" : isLastRobot ? "Finish Session" : `Next Robot (${robotIndex + 1}/${session.robots.length})`}
-        </Button>
-      </div>
+        }
+        comments={{ value: comments, onChange: setComments, label: `Robot ${robotIndex + 1}: #${teamNumber}` }}
+        notice={
+          <>
+            {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before continuing.</p>}
+            {error && <LoadError failure={error} />}
+          </>
+        }
+        actions={
+          <>
+            <Button variant="ghost" className="gap-1.5 text-red-300" onClick={() => setCancelConfirmOpen(true)}>
+              <X className="h-4 w-4" /> Cancel
+            </Button>
+            <Button size="lg" className="gap-2" onClick={handleNextOrFinish} disabled={saving}>
+              <Send className="h-4 w-4" />
+              {saving ? "Saving…" : isLastRobot ? "Finish Session" : `Next Robot (${robotIndex + 1}/${session.robots.length})`}
+            </Button>
+          </>
+        }
+      />
 
       <BreakMenu
         open={breakMenuOpen}

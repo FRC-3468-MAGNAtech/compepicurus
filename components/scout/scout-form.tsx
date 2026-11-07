@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { BIOBUZZ_FORM } from "@/lib/forms/builtin";
 import { calculateScore, type ScoreResult } from "@/lib/forms/scoring";
 import { defaultValues, validateValues } from "@/lib/forms/values";
+import { fieldWithRole } from "@/lib/forms/meta";
 import { visibleFieldKeys } from "@/lib/forms/visibility";
 import { phaseLabel, SYSTEM_FIELD_TYPES, type FieldValue, type Form, type FormField, type FormSection, type FormValues } from "@/lib/forms/types";
 import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
@@ -72,6 +73,15 @@ export type ScoutFormProps = {
   /** 'side-panel' is a compact, scrollable variant for sitting beside a video — no section nav, tighter spacing. */
   layout?: ScoutFormLayout;
   onChange?: (values: ScoutFormValues, score: ScoreResult) => void;
+  /**
+   * P24: where the comments field lives. `'inline'` (the Match Scout Form page) renders it with the other fields. `'popout'` (the practice workspace) leaves it out of the form:
+   * the workspace's comments drawer edits it instead, through `comments` / `onCommentsChange` (the value still goes into the submitted entry like any field). Defaults to
+   * `'popout'` for the side-panel layout and `'inline'` otherwise; a popout without `onCommentsChange`, or a form with no comments field, falls back to inline so the comments are never unreachable.
+   */
+  commentsMode?: "inline" | "popout";
+  /** The comments text, controlled by the caller, in popout mode. */
+  comments?: string;
+  onCommentsChange?: (text: string) => void;
   /** May return a Promise (e.g. the parent's saveEntry()) — the success animation and reset only fire once it resolves. A thrown/rejected call leaves the form as-is so the parent can show its own error state. */
   onSubmit?: (values: ScoutFormValues, score: ScoreResult) => void | Promise<void>;
 };
@@ -252,12 +262,19 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
     layout = "page",
     onChange,
     onSubmit,
+    commentsMode,
+    comments,
+    onCommentsChange,
   },
   ref
 ) {
   const [assignedMatch, setAssignedMatch] = useState<AssignedMatch | null>(prefill?.match ?? null);
   const [teamNumber, setTeamNumber] = useState<number | null>(prefill?.teamNumber ?? null);
-  const [values, setValues] = useState<FormValues>(() => ({ ...defaultValues(schema), ...prefill?.values } as FormValues));
+  const commentsField = useMemo(() => fieldWithRole(schema, "comments"), [schema]);
+  const popout = (commentsMode ?? (layout === "side-panel" ? "popout" : "inline")) === "popout" && !!commentsField && !!onCommentsChange;
+  const [rawValues, setValues] = useState<FormValues>(() => ({ ...defaultValues(schema), ...prefill?.values, ...(commentsField && comments !== undefined ? { [commentsField.key]: comments } : {}) } as FormValues));
+  // In popout mode the comments text is the caller's (the drawer edits it), so it overrides whatever the form holds for that field.
+  const values = useMemo<FormValues>(() => (popout && commentsField ? { ...rawValues, [commentsField.key]: comments ?? "" } : rawValues), [rawValues, popout, commentsField, comments]);
 
   const [matchDialogOpen, setMatchDialogOpen] = useState(false);
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
@@ -300,6 +317,7 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
     setAssignedMatch(prefill?.match ?? null);
     setTeamNumber(prefill?.teamNumber ?? null);
     setValues({ ...defaultValues(schema), ...prefill?.values } as FormValues);
+    if (popout) onCommentsChange?.(typeof prefill?.values?.[commentsField!.key] === "string" ? (prefill.values[commentsField!.key] as string) : "");
     setValidation({});
     setFieldErrors({});
   };
@@ -336,12 +354,13 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
       const fields = section.fields.filter((f) => {
         if (f.type === "matchPicker") return !hideMatchPicker;
         if (isSystemField(f)) return true;
+        if (popout && commentsField && f.key === commentsField.key) return false;
         return visible.has(f.key);
       });
       if (fields.length > 0) out.push({ section, fields });
     }
     return out;
-  }, [schema, visible, hideMatchPicker]);
+  }, [schema, visible, hideMatchPicker, popout, commentsField]);
 
   useEffect(() => {
     if (layout !== "page") return;
@@ -360,6 +379,10 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
   }, [layout, renderedSections]);
 
   const setFieldValue = (key: string, value: FieldValue) => {
+    if (popout && commentsField && key === commentsField.key) {
+      onCommentsChange?.(String(value));
+      return;
+    }
     setValues((v) => ({ ...v, [key]: value }));
     setFieldErrors((e) => {
       if (!(key in e)) return e;
@@ -524,7 +547,7 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
         return (
           <section key={section.id} id={section.id} className="scroll-mt-20">
             <GlassPanel className="flex flex-col gap-4" style={section.accent && section.accent !== "default" ? { borderLeft: `4px solid ${ACCENT_TOKENS[section.accent]}` } : undefined}>
-              <h2 className="text-lg font-bold">{section.title}</h2>
+              <h2 className={compact ? "glass-strong sticky top-0 z-10 -mx-2 -mt-2 rounded-xl px-3 py-2 text-base font-bold" : "text-lg font-bold"}>{section.title}</h2>
               {showFlagNote && <p className="text-xs text-[var(--muted-foreground)]">{FLAG_SECTION_NOTE}</p>}
               {renderBlocks(ungrouped)}
               {grouped.map(({ group, fields: groupFields }) => (

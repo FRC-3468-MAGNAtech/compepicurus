@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScoutForm, type ScoutFormHandle } from "@/components/scout/scout-form";
 import { VideoPlayer } from "@/components/video/video-player";
+import { ScoutingWorkspace } from "@/components/practice/scouting-workspace";
 import { clipDurationOrFallback } from "@/lib/library/video-window";
 import { MOCK_VIDEO_DURATION_SEC } from "@/components/video/mock-video-player";
 import { ChipSummary } from "@/components/practice/chip-summary";
@@ -62,6 +63,8 @@ export function LobbySessionScreen({
   const [validationError, setValidationError] = useState(false);
   const [error, setError] = useState<FirestoreFailure | null>(null);
   const [ending, setEnding] = useState(false);
+  // the comments drawer's text, which is the form's `comments` value (ScoutForm commentsMode="popout")
+  const [comments, setComments] = useState("");
   const resolveTriggered = useRef(false);
   const scoutFormRef = useRef<ScoutFormHandle>(null);
 
@@ -252,13 +255,10 @@ export function LobbySessionScreen({
               <p className="text-xs text-[var(--muted-foreground)]">Waiting on the rest of the lobby to finish…</p>
             </GlassPanel>
           ) : (
-            <div className="flex flex-col gap-4 lg:flex-row">
-              {showVideo && (
-                <div className="lg:w-[58%] lg:shrink-0">
-                  <VideoPlayer video={chosenMatch?.video ?? null} usePlaceholder={usePlaceholder} lockPause={lobby.mode === "competitive"} />
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
+            <ScoutingWorkspace
+              video={showVideo ? <VideoPlayer fill video={chosenMatch?.video ?? null} usePlaceholder={usePlaceholder} lockPause={lobby.mode === "competitive"} /> : null}
+              videoNote={lobby.mode === "competitive" ? "Competitive: video can't be paused." : null}
+              form={
                 <ScoutForm
                   key={`${form.id}@${form.version}`}
                   schema={form}
@@ -269,21 +269,27 @@ export function LobbySessionScreen({
                   showSubmitButton={false}
                   lockedFields={["teamNumber"]}
                   prefill={{ teamNumber: myRobot, scoutName: profile?.name ?? "" }}
+                  commentsMode="popout"
+                  comments={comments}
+                  onCommentsChange={setComments}
                 />
-                {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before submitting.</p>}
-              </div>
-            </div>
+              }
+              comments={{ value: comments, onChange: setComments, label: `Robot: #${myRobot}` }}
+              notice={
+                <>
+                  {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before submitting.</p>}
+                  {error && <LoadError failure={error} />}
+                </>
+              }
+              actions={
+                <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={submitting || !mySession}>
+                  <Send className="h-4 w-4" /> {submitting ? "Submitting…" : "Submit"}
+                </Button>
+              }
+            />
           )}
 
-          {error && <LoadError failure={error} />}
-
-          {!alreadySubmitted && (
-            <div className="glass-strong sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 mt-2 flex items-center justify-end gap-3 rounded-full px-5 py-3 shadow-2xl">
-              <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={submitting || !mySession}>
-                <Send className="h-4 w-4" /> {submitting ? "Submitting…" : "Submit"}
-              </Button>
-            </div>
-          )}
+          {alreadySubmitted && error && <LoadError failure={error} />}
         </>
       )}
     </div>
