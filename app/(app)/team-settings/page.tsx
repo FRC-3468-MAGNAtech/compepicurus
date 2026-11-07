@@ -1,6 +1,7 @@
 "use client";
 
 import { FieldTeamsEditor } from "@/components/team/field-teams-editor";
+import { OwnershipSection } from "@/components/team/ownership-section";
 
 export default function TeamSettingsPage() {
   return (
@@ -10,6 +11,7 @@ export default function TeamSettingsPage() {
         <p className="text-sm text-[var(--muted-foreground)]">The account name and the FTC teams on this account.</p>
       </div>
       <FieldTeamsEditor />
+      <OwnershipSection />
     </div>
   );
 }

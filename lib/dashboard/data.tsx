@@ -20,7 +20,8 @@ import { usePickList, type PickListDoc } from "@/lib/pick-list/store";
 import { useAllTeamPracticeSessions, type PracticeSession } from "@/lib/practice-sessions";
 import type { RoleId } from "@/lib/roles";
 import { useTeamScoutEntries, type ScoutEntry } from "@/lib/scout-entries";
-import { getFormSchema, type ScoutFormSchema } from "@/lib/scout-form/schema";
+import type { Form } from "@/lib/forms/types";
+import { useGameFormIds, useSchemaForEntries } from "@/lib/forms/forms-context";
 import { computeScoutStats } from "@/lib/scout-stats/engine";
 import type { ScoutCategory, ScoutStatsResult } from "@/lib/scout-stats/types";
 import { useActiveFieldTeam } from "@/lib/field-teams-context";
@@ -75,7 +76,7 @@ export type DashboardData = {
   eventEntries: ScoutEntry[];
   /** The same, minus excluded entries — what stats are built from. */
   usedEntries: AnalyticsEntry[];
-  schema: ScoutFormSchema;
+  schema: Form;
   teamStats: TeamStats[];
   /** `rankTeams` by average total; teams under the minimum sample are listed unranked. */
   ranked: RankedTeam[];
@@ -145,7 +146,7 @@ export function DashboardProvider({ role, children }: { role: RoleId; children: 
 
   // --- scout entries: always (every role's header strip and most widgets read them) ------------
   const { entries: allEntries, loaded: entriesLoaded } = useTeamScoutEntries(teamId);
-  const schema = useMemo(() => getFormSchema(), []);
+  const gameFormIds = useGameFormIds(DEFAULT_FILTERS.gameId);
 
   const eventEntries = useMemo(() => (eventCode ? allEntries.filter((e) => e.source === "event" && e.eventCode === eventCode) : []), [allEntries, eventCode]);
   const usedEntries = useMemo(
@@ -156,10 +157,12 @@ export function DashboardProvider({ role, children }: { role: RoleId; children: 
             sessionsById: new Map(),
             filters: { ...DEFAULT_FILTERS, events: { kind: "custom", codes: [eventCode] } },
             activeEventCodes: [],
+            gameFormIds,
           }).used
         : [],
-    [allEntries, eventCode]
+    [allEntries, eventCode, gameFormIds]
   );
+  const { schema } = useSchemaForEntries(usedEntries, DEFAULT_FILTERS.gameId);
   const teamStats = useMemo(() => buildAllTeamStats(usedEntries, schema, teamNames), [usedEntries, schema, teamNames]);
   const ranked = useMemo(() => rankTeams(teamStats, "avgTotal"), [teamStats]);
   const ourStats = useMemo(() => teamStats.find((t) => t.teamNumber === ourNumber) ?? null, [teamStats, ourNumber]);

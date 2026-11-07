@@ -14,9 +14,10 @@ import { useAuth } from "@/lib/auth";
 import { useTeamDoc } from "@/lib/team";
 import { detectPlatform } from "@/lib/platform";
 import { useLibraryMatchesBySeason } from "@/lib/match-library";
-import { BIOBUZZ_FORM_SCHEMA, calculateScore, valuesToScoutEntryFields } from "@/lib/scout-form/schema";
+import { calculateScore } from "@/lib/forms/scoring";
+import { useLockedForm } from "@/lib/forms/forms-context";
 import { claimSessionId, updatePracticeSession } from "@/lib/practice-sessions";
-import { getEntriesForSession, saveEntry } from "@/lib/scout-entries";
+import { entryPayloadFor, getEntriesForSession, saveEntry } from "@/lib/scout-entries";
 import { markPlayerSubmitted, useLobbySessions, type LobbyDoc, type LobbyPlayer } from "@/lib/lobby";
 import { LOBBY_CONFIG } from "@/lib/lobby/config";
 import { LoadError } from "@/components/practice/load-error";
@@ -47,6 +48,7 @@ export function LobbySessionScreen({
   onExit: () => void;
 }) {
   const { user, profile } = useAuth();
+  const form = useLockedForm(lobby.seasonId);
   const { team } = useTeamDoc(lobby.teamId);
   const usePlaceholder = team?.usePlaceholderVideo ?? false;
   const { matches } = useLibraryMatchesBySeason(lobby.seasonId);
@@ -161,16 +163,14 @@ export function LobbySessionScreen({
     setError(null);
     try {
       const values = handle.getValues();
-      const score = calculateScore(BIOBUZZ_FORM_SCHEMA, values.fields);
+      const score = calculateScore(form, values.values);
       await saveEntry(lobby.teamId, user.uid, {
         scoutName: mySession.scoutName,
         eventCode: mySession.eventCode!,
         matchType: mySession.matchType!,
         matchNumber: mySession.matchNumber!,
         teamNumber: myRobot,
-        fields: valuesToScoutEntryFields(values.fields),
-        score,
-        comments: String(values.fields.comments ?? ""),
+        ...entryPayloadFor(form, values.values, score),
         source: "practice",
         mode: lobby.mode,
         sessionId: mySession.id,
@@ -260,6 +260,8 @@ export function LobbySessionScreen({
               )}
               <div className="min-w-0 flex-1">
                 <ScoutForm
+                  key={`${form.id}@${form.version}`}
+                  schema={form}
                   ref={scoutFormRef}
                   mode="lobby"
                   layout="side-panel"

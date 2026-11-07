@@ -4,7 +4,9 @@ import { formatMatch, matchSortValue } from "@/lib/analytics/game-schema";
 import { schemaFieldMeta } from "@/lib/analytics/team-stats";
 import type { FtcMatch, MatchType } from "@/lib/ftc/types";
 import type { LibraryMatch } from "@/lib/match-library";
-import type { ScoutFormSchema } from "@/lib/scout-form/schema";
+import type { Form } from "@/lib/forms/types";
+import { elementOf } from "@/lib/forms/meta";
+import { entryValues } from "@/lib/forms/legacy";
 
 // Pure model behind Match Breakdown (P11): official matches joined to the
 // scouted entries for them, per alliance. The UI only renders what this
@@ -273,16 +275,17 @@ export type EntrySummary = {
 };
 
 /** Schema-driven: key game-element counts, toggles, and incidents for one entry. */
-export function summarizeEntry(entry: AnalyticsEntry, schema: ScoutFormSchema): EntrySummary {
+export function summarizeEntry(entry: AnalyticsEntry, schema: Form): EntrySummary {
   const meta = schemaFieldMeta(schema);
-  const value = (key: string) => (entry.fields as unknown as Record<string, unknown>)[key];
+  const values = entryValues(entry, schema);
+  const value = (key: string) => values[key];
 
   const counts = new Map<string, number>();
   for (const m of meta) {
     if (m.field.type !== "counter") continue;
     const n = value(m.field.key);
     if (typeof n !== "number" || n <= 0) continue;
-    const element = m.field.element ?? m.groupLabel ?? m.field.label;
+    const element = elementOf(m);
     counts.set(element, (counts.get(element) ?? 0) + n);
   }
 
@@ -291,7 +294,7 @@ export function summarizeEntry(entry: AnalyticsEntry, schema: ScoutFormSchema): 
   for (const m of toggleFields) labelCounts.set(m.field.label, (labelCounts.get(m.field.label) ?? 0) + 1);
   const toggles = toggleFields
     .filter((m) => value(m.field.key) === true)
-    .map((m) => ((labelCounts.get(m.field.label) ?? 0) > 1 && m.field.phase ? `${m.field.label} (${m.field.phase})` : m.field.label));
+    .map((m) => ((labelCounts.get(m.field.label) ?? 0) > 1 && m.phase ? `${m.field.label} (${m.phase})` : m.field.label));
 
   const incidents = meta.filter((m) => m.field.type === "checkbox" && value(m.field.key) === true).map((m) => m.field.label);
 

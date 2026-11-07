@@ -32,6 +32,7 @@ Variables, for both **Production** and **Preview**. Names must match
 | `NEXT_PUBLIC_FIREBASE_APP_ID` | same |
 | `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | same (optional — only if Analytics is enabled) |
 | `NEXT_PUBLIC_FIREBASE_VAPID_KEY` | Firebase Console → Project Settings → Cloud Messaging → Web Push certificates → Generate key pair |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key (P20; the prompt called it `VITE_TURNSTILE_SITE_KEY`, but this is a Next.js app). Optional but strongly recommended: see §9. |
 
 These aren't secret — Firebase's web config is designed to be public; actual
 security comes from `firestore.rules`. They're still kept out of the repo
@@ -48,8 +49,13 @@ Firebase project for testing) can use different values without a commit.
 | `FIREBASE_ADMIN_CLIENT_EMAIL` | Same JSON file → `client_email` field |
 | `FIREBASE_ADMIN_PRIVATE_KEY` | Same JSON file → `private_key` field — see the gotcha below |
 | `CRON_SECRET` | Any random string you generate (e.g. `openssl rand -hex 32`). Required by `app/api/cron/poll-live-scores` (P7) — the job's request must send it as `Authorization: Bearer <CRON_SECRET>`. See §8 below for scheduling it. |
-| `OWNER_EMAILS` | Comma-separated emails (e.g. `you@example.com,mentor@example.com`) that should always have owner + admin access, synced on every login by `app/api/auth/sync-roles` — **after** that email verifies. Set it to your own email before you first sign up. |
+| `OWNER_EMAILS` | Comma-separated emails (e.g. `you@example.com`) that are **platform owners** (P20): they approve team applications, switch public team creation on/off and can recover accounts, and are always admins of their own account. Synced on every login by `app/api/auth/sync-roles` — **after** that email verifies. This is *not* team ownership: each account's owner is `teams/{teamId}.ownerUid` and is transferable (see §9). |
 | `ADMIN_EMAILS` | Comma-separated emails that should get admin (not owner) the same way. Optional. |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret key (P20), server-only. Verifies the CAPTCHA on team applications. Optional: without it applications still run every other protection and the platform owner sees a warning. See §9. |
+| `RESEND_API_KEY` | Resend API key (P20), for application and ownership-transfer emails. Optional: without it (or `EMAIL_FROM`) no email is sent and everything still shows in the app. See §9. |
+| `EMAIL_FROM` | The sender, e.g. `CompEpicurus <notify@yourdomain.org>`, on a domain you verified in Resend. Optional (see above). |
+| `APP_URL` | Your public URL, e.g. `https://compepicurus.vercel.app`, used for links in emails. Optional: falls back to Vercel's own URL variables. |
+| `APPLICATION_SECRET` | Any long random string (P20). Signs the application form's start token and keys the stored IP/email hashes. Optional: derived from `FIREBASE_ADMIN_PRIVATE_KEY` when unset. |
 
 **Pasting the private key:** the downloaded JSON's `private_key` field is a
 single string with literal `\n` sequences marking line breaks (it is *not*
@@ -183,3 +189,63 @@ scout's app is open with a pending live session) needs no scheduler setup
 at all — it only helps while someone's actually using the app, which is
 why the cron route above still matters for the "nobody has the app open
 right now" case.
+
+## 9. Team applications and ownership (P20)
+
+Public team creation stays **off**. Other teams apply at `/apply` (reached from Sign up → *Apply to create a team*), and the
+platform owner approves each one under **Admin Panel → Team Applications**. Approval is never automatic.
+
+### 9a. Two kinds of owner
+
+- **Platform owner**: an email in `OWNER_EMAILS` (verified). Gets the `platformOwner` custom claim; approves applications; turns public
+  creation on/off; can force-transfer an account for recovery (Admin Panel → Recovery). It opens the application tools and nothing else:
+  it gives no access to any account's scouting data.
+- **Team owner**: `teams/{teamId}.ownerUid`. What the Owner badge and the owner protections follow. Transferable from
+  **Team Settings → Ownership**. `sync-roles` only ever sets it for an account that has none (the one-time bootstrap: the user already
+  flagged as owner keeps it, so you aren't locked out) and never takes it back after a transfer.
+
+The first sign-in after deploy runs the bootstrap automatically. After that, sign out and in once so your token carries the new
+`platformOwner` claim (the old `owner` claim is removed).
+
+### 9b. Create a Cloudflare Turnstile site (the CAPTCHA)
+
+1. Sign in at <https://dash.cloudflare.com> (a free account is enough) → **Turnstile** → **Add site**.
+2. Name it (e.g. *CompEpicurus applications*), add your production domain (and your Vercel preview domain if you want to test there; add `localhost` for local
+   development), widget mode **Managed**.
+3. Copy the **Site key** into `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and the **Secret key** into `TURNSTILE_SECRET_KEY` (Vercel → Project Settings → Environment Variables,
+   Production and Preview), then redeploy.
+4. Set both or neither. The Team Applications tab warns you if the server has a secret but the browser has no site key (every application would be refused) or
+   if neither is set (applications run unchallenged, protected only by the honeypot, timing check, rate limits and disposable-email filter).
+
+For local testing without your own site, Cloudflare publishes always-pass test keys (site key `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`).
+
+### 9c. Email (optional)
+
+Email is used for: a new application (to `OWNER_EMAILS`), the applicant's receipt and decision, and ownership-transfer notices. Create an account at
+<https://resend.com>, **verify a sending domain**, create an API key, then set `RESEND_API_KEY` and `EMAIL_FROM` (a sender on that domain) and `APP_URL`.
+With any of the first two unset, nothing is sent and nothing breaks: every notice is also shown in the app, and an email failure never fails a request.
+
+### 9d. Firestore rules and cleanup
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+Deploy the rules **before or together with** the app. New collections (all written only by server routes): `teamApplications`, `applicationPrivate`,
+`applicationBlocks`, `platformAuditLog`, `rateLimits`. Optional: add a Firestore **TTL policy** on the `expiresAt` field of the `rateLimits` collection group
+(Firebase Console → Firestore → TTL) so the small rate-limit counters clean themselves up. Nothing depends on it.
+
+## 10. Form schema v2 (P21)
+
+No new environment variables. The only deploy step is the Firestore rules (new `forms` collection and its write-once `versions` subcollection, and validation of `teams.activeForms`):
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+Deploy the rules **before or together with** the app: the app reads `forms` on every screen after sign-in (a missing rule shows as an empty forms list, so scouting still falls back to the built-in BIOBUZZ form, but an
+admin couldn't save a form until the rules are live). Nothing is migrated: existing entries keep their stored shape and are read through an adapter, and BIOBUZZ keeps working exactly as before. No index is needed
+(the only query is `forms` where `teamId ==` the account's id).
+
+To check the rules locally (needs Java and firebase-tools): `npm run test:rules`.
+

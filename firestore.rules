@@ -21,15 +21,31 @@ service cloud.firestore {
       return isSignedIn() && myProfile().isAdmin == true;
     }
 
-    // FIX2: an owner is anyone whose ID token carries the `owner` custom claim
-    // OR whose own user doc says `isOwner == true`. The claim is set by
-    // app/api/auth/sync-roles and can be missing or stale (e.g. right after
-    // the owner flag was granted, until the token refreshes); the doc flag is
-    // read live, so either one is enough and a stale token can never lock the
-    // owner out. Clients can never write `isOwner` (both update rules below pin it).
+    // P20: the account's team owner (what "owner" means inside a team account; FIX2's protections follow
+    // it). `teams/{teamId}.ownerUid` is authoritative and only the server routes write it (sync-roles'
+    // bootstrap, the transfer routes, team creation/approval). Until an account has an `ownerUid` (the
+    // bootstrap hasn't reached it yet) the legacy per-user `isOwner` flag still counts, so the existing
+    // owner is never locked out in between. After that, a stale flag counts for nothing.
+    function ownerUidOf(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data.get('ownerUid', null);
+    }
+
     function isOwner() {
-      return isSignedIn() && (('owner' in request.auth.token && request.auth.token.owner == true)
-        || myProfile().isOwner == true);
+      return isSignedIn() && (ownerUidOf(myProfile().teamId) == request.auth.uid
+        || (ownerUidOf(myProfile().teamId) == null && myProfile().get('isOwner', false) == true));
+    }
+
+    // P20: is this user doc's owner of its account? (the same rule, for the row being edited)
+    function isOwnerRow(uid, teamId) {
+      return ownerUidOf(teamId) == uid || (ownerUidOf(teamId) == null && resource.data.get('isOwner', false) == true);
+    }
+
+    // P20: the platform owner (an email in the server-only OWNER_EMAILS, verified). Carried as the
+    // `platformOwner` custom claim that app/api/auth/sync-roles sets; the claim is the only thing rules can
+    // see, and it grants access to the application tools only (see teamApplications below), never to
+    // another account's scouting data.
+    function isPlatformOwner() {
+      return isSignedIn() && 'platformOwner' in request.auth.token && request.auth.token.platformOwner == true;
     }
 
     // FIX2: who may use the member-management powers below — admins, and owners
@@ -92,6 +108,19 @@ service cloud.firestore {
             && d.fieldTeamIds.hasOnly(getAfter(/databases/$(database)/documents/teams/$(teamId)).data.get('fieldTeamIdList', [])));
     }
 
+    // P21: `teams.activeForms` maps a season id to the form scouts fill in for it ({ biobuzz: "my-form" }). Only checked
+    // when the resulting doc carries it. The season ids are the code-defined ones in lib/seasons.ts: keep in sync when a
+    // season is added. (Whether the named form exists is the writer's job (lib/forms/firestore-store.ts setActiveForm
+    // checks) and readers fall back to the season's built-in form when it doesn't.)
+    function validActiveForms() {
+      let d = request.resource.data;
+      return !('activeForms' in d) || (
+        d.activeForms is map
+        && d.activeForms.keys().hasOnly(['biobuzz'])
+        && (!('biobuzz' in d.activeForms) || (d.activeForms.biobuzz is string && d.activeForms.biobuzz.size() >= 1 && d.activeForms.biobuzz.size() <= 40))
+      );
+    }
+
     // P12: who may edit the shared Pick List — admins, or members whose primary
     // OR secondary role is one of these. Mirrors lib/pick-list/permissions.ts's
     // PICK_LIST_EDITOR_ROLES: keep both in sync.
@@ -118,7 +147,11 @@ service cloud.firestore {
       // (active events/season — see lib/team.ts's setActiveEvents) the same
       // way as P1, FIX1 adding the active-events shape check above. P19: `fieldTeams` /
       // `accountName` ride the same rule (admins and the owner), with their shape check.
-      allow update: if sameTeam(teamId) && canManageMembers() && validActiveEvents() && validFieldTeams();
+      // P20: `ownerUid` and `pendingTransfer` are server-only (the transfer routes): nobody can write
+      // them from a client, admins and the owner included.
+      allow update: if sameTeam(teamId) && canManageMembers() && validActiveEvents() && validFieldTeams() && validActiveForms()
+        && request.resource.data.get('ownerUid', null) == resource.data.get('ownerUid', null)
+        && request.resource.data.get('pendingTransfer', null) == resource.data.get('pendingTransfer', null);
       allow delete: if false;
     }
 
@@ -142,6 +175,8 @@ service cloud.firestore {
         && request.resource.data.secondaryRoles == resource.data.secondaryRoles
         && request.resource.data.isAdmin == resource.data.isAdmin
         && request.resource.data.isOwner == resource.data.isOwner
+        // P20: the platform-owner mirror is server-written too (the sync route sets it from OWNER_EMAILS).
+        && request.resource.data.get('isPlatformOwner', false) == resource.data.get('isPlatformOwner', false)
         // P19: which FTC teams a member is assigned to is admin-only — you can't change your own
         // (an admin changes theirs through the rule below). `.get` because pre-migration docs lack it.
         && request.resource.data.get('fieldTeamIds', null) == resource.data.get('fieldTeamIds', null);
@@ -153,7 +188,7 @@ service cloud.firestore {
       //  - An owner's row can be edited only by that owner — never by another
       //    admin (FIX2; before this the owner was locked out of their own row too).
       //    The owner's admin flag must stay true: owner access can't be removed.
-      //  - isOwner is never writable by a client; the sync route sets it (Admin SDK).
+      //  - isOwner / isPlatformOwner are never writable by a client; the server routes set them (Admin SDK).
       //  - teamId can't be moved, so nobody can remove a member from the team.
       //  - Last-admin safeguard: an admin can't remove their *own* admin flag.
       //    Rules can't count admins, but this is equivalent and race-free — the
@@ -164,6 +199,7 @@ service cloud.firestore {
       //  - the roles written must be real role ids and isAdmin a boolean.
       allow update: if sameTeam(resource.data.teamId) && canManageMembers()
         && request.resource.data.isOwner == resource.data.isOwner
+        && request.resource.data.get('isPlatformOwner', false) == resource.data.get('isPlatformOwner', false)
         && request.resource.data.teamId == resource.data.teamId
         && request.resource.data.isAdmin is bool
         && request.resource.data.primaryRole in validRoleIds()
@@ -171,7 +207,8 @@ service cloud.firestore {
         && request.resource.data.secondaryRoles.size() <= 9
         && request.resource.data.secondaryRoles.hasOnly(validRoleIds())
         && validMemberFieldTeams(resource.data.teamId)
-        && (resource.data.isOwner == true
+        // P20: "is this row the owner" follows teams.ownerUid (the legacy flag only until an owner is set).
+        && (isOwnerRow(uid, resource.data.teamId)
           ? (request.auth.uid == uid && isOwner() && request.resource.data.isAdmin == true)
           : (request.auth.uid != uid || request.resource.data.isAdmin == true));
 
@@ -183,6 +220,36 @@ service cloud.firestore {
     // app/api/team/create, app/api/admin/team-creation) — no client ever
     // needs direct access, so it's denied outright, including to admins.
     match /appSettings/{document} {
+      allow read, write: if false;
+    }
+
+    // P20: team applications. Every write is a server route (Admin SDK): the public submit route,
+    // and the platform owner's decide route. Clients only ever read.
+    //  - teamApplications: the platform owner reads them all (the review queue); an applicant reads
+    //    only their own (queries must filter on applicantUid), which is what the status page shows.
+    //    Nothing on this doc is private from the applicant: the reviewer's notes, the verification
+    //    signals and the hashed IP live in applicationPrivate.
+    //  - applicationPrivate / applicationBlocks / platformAuditLog: platform owner reads; nobody writes.
+    //  - rateLimits: the submit route's hashed-IP / hashed-email counters; no client access at all.
+    // The platform owner's claim opens these collections and nothing else: it gives no read access to
+    // any account's scouting data (the rules above and below are all scoped by teamId, not by claim).
+    match /teamApplications/{applicationId} {
+      allow read: if isPlatformOwner() || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
+      allow write: if false;
+    }
+    match /applicationPrivate/{applicationId} {
+      allow read: if isPlatformOwner();
+      allow write: if false;
+    }
+    match /applicationBlocks/{blockId} {
+      allow read: if isPlatformOwner();
+      allow write: if false;
+    }
+    match /platformAuditLog/{entryId} {
+      allow read: if isPlatformOwner();
+      allow write: if false;
+    }
+    match /rateLimits/{limitId} {
       allow read, write: if false;
     }
 
@@ -388,6 +455,59 @@ service cloud.firestore {
         && sameTeam(request.resource.data.teamId)
         && (isAdmin() || (request.resource.data.action == 'edit-pick-list' && canEditPickList()));
       allow update, delete: if false;
+    }
+
+    // P21: forms/{teamId}_{formId}: one form of one account, the working draft plus the latest published version number
+    // (see lib/forms/resolve.ts FormDoc). Every teammate reads (scouts fill the active form in); only admins and the owner write
+    // (the same people who can manage members: `can('manageForms')`). Forms are never deleted, only archived, so an entry's
+    // formId always resolves. A form's doc can't be moved to another team or id, and its published version only goes up.
+    // Rules can't validate the nested form (sections, fields) element by element: the builder validates it with the shared
+    // zod schema before every write (lib/forms/validate.ts), the same one the stores run.
+    function validFormDoc(d) {
+      return d.teamId is string && d.formId is string && d.formId.matches('^[A-Za-z0-9_-]{1,40}$')
+        && d.name is string && d.name.size() >= 1 && d.name.size() <= 120
+        && d.origin in ['built-in-override', 'custom', 'template']
+        && (d.publishedVersion == null || (d.publishedVersion is int && d.publishedVersion >= 1))
+        && (d.draft == null || d.draft is map)
+        && d.active is bool && d.archived is bool;
+    }
+
+    match /forms/{docId} {
+      allow get: if isSignedIn() && docId.split('_')[0] == myProfile().teamId;
+      allow list: if isSignedIn() && sameTeam(resource.data.teamId);
+
+      allow create: if canManageMembers()
+        && sameTeam(request.resource.data.teamId)
+        && docId == request.resource.data.teamId + '_' + request.resource.data.formId
+        && validFormDoc(request.resource.data);
+
+      allow update: if canManageMembers()
+        && sameTeam(resource.data.teamId)
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.formId == resource.data.formId
+        && validFormDoc(request.resource.data)
+        && (resource.data.publishedVersion == null
+          || (request.resource.data.publishedVersion != null && request.resource.data.publishedVersion >= resource.data.publishedVersion));
+
+      allow delete: if false;
+
+      // Published versions are immutable: created once, in the same transaction that bumps the form doc's publishedVersion to
+      // that number (getAfter), and never updated or deleted — so the form an old entry was scouted with is always recoverable.
+      match /versions/{v} {
+        allow read: if isSignedIn() && docId.split('_')[0] == myProfile().teamId;
+        allow create: if canManageMembers()
+          && sameTeam(request.resource.data.teamId)
+          && docId == request.resource.data.teamId + '_' + request.resource.data.formId
+          && request.resource.data.version is int && request.resource.data.version >= 1
+          && string(request.resource.data.version) == v
+          && request.resource.data.form is map
+          && request.resource.data.form.id == request.resource.data.formId
+          && getAfter(/databases/$(database)/documents/forms/$(docId)).data.publishedVersion == request.resource.data.version
+          && (!exists(/databases/$(database)/documents/forms/$(docId))
+            || get(/databases/$(database)/documents/forms/$(docId)).data.publishedVersion == null
+            || get(/databases/$(database)/documents/forms/$(docId)).data.publishedVersion < request.resource.data.version);
+        allow update, delete: if false;
+      }
     }
 
     // P12: pickLists/{teamId}_{eventCode} — the shared alliance-selection board:

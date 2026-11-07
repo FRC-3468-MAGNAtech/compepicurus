@@ -19,19 +19,20 @@ import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
 import { getSeason } from "@/lib/seasons";
 import { computeAllianceAccuracy } from "@/lib/accuracy/engine";
 import { evaluatePracticeSessionFlags, type PendingSessionFlag } from "@/lib/practice-flags";
-import { BIOBUZZ_FORM_SCHEMA, calculateScore, valuesToScoutEntryFields } from "@/lib/scout-form/schema";
+import { calculateScore, type ScoreResult } from "@/lib/forms/scoring";
+import { useLockedForm } from "@/lib/forms/forms-context";
 import {
   deletePracticeSession,
   hasCompletedAttemptBefore,
   updatePracticeSession,
   type PracticeSession,
 } from "@/lib/practice-sessions";
-import { getEntriesForSession, saveEntry, type ScoreBreakdown } from "@/lib/scout-entries";
+import { entryPayloadFor, getEntriesForSession, saveEntry } from "@/lib/scout-entries";
 import type { LibraryMatch } from "@/lib/match-library";
 import { LoadError } from "@/components/practice/load-error";
 import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
-type PendingRobot = { teamNumber: number; values: ScoutFormValues; score: ScoreBreakdown };
+type PendingRobot = { teamNumber: number; values: ScoutFormValues; score: ScoreResult };
 
 export function SessionScreen({
   session,
@@ -65,6 +66,8 @@ export function SessionScreen({
   const videoRef = useRef<VideoPlayerHandle>(null);
 
   const season = getSeason(session.seasonId);
+  // The season's form, fixed for this session so both robots are scouted with the same version.
+  const form = useLockedForm(session.seasonId);
   const teamNumber = session.robots[robotIndex];
   const isLastRobot = robotIndex === session.robots.length - 1;
 
@@ -85,9 +88,7 @@ export function SessionScreen({
       matchType: libraryMatch.matchType,
       matchNumber: libraryMatch.matchNumber,
       teamNumber: robot.teamNumber,
-      fields: valuesToScoutEntryFields(robot.values.fields),
-      score: robot.score,
-      comments: String(robot.values.fields.comments ?? ""),
+      ...entryPayloadFor(form, robot.values.values, robot.score),
       source: "practice",
       mode: session.mode,
       sessionId: session.id,
@@ -103,7 +104,7 @@ export function SessionScreen({
     }
     setValidationError(false);
     const values = handle.getValues();
-    const score = calculateScore(BIOBUZZ_FORM_SCHEMA, values.fields);
+    const score = calculateScore(form, values.values);
     const robot: PendingRobot = { teamNumber, values, score };
 
     if (!isLastRobot) {
@@ -122,11 +123,14 @@ export function SessionScreen({
 
       const alliance = session.alliance!;
       const officialAlliance = libraryMatch.alliances[alliance];
-      const { accuracy, scoutedTotal } = computeAllianceAccuracy({
-        robotScores: [first.score.total, second.score.total],
-        penaltyPoints: officialAlliance.penaltyPoints,
-        officialScore: officialAlliance.score,
-      });
+      // A form with scoring off has nothing to compare to the official score: accuracy is "n/a" (null), never an error (P21).
+      const { accuracy, scoutedTotal } = form.scoringEnabled
+        ? computeAllianceAccuracy({
+            robotScores: [first.score.total, second.score.total],
+            penaltyPoints: officialAlliance.penaltyPoints,
+            officialScore: officialAlliance.score,
+          })
+        : { accuracy: null, scoutedTotal: null };
       const priorCompletedAttempt = await hasCompletedAttemptBefore(
         session.teamId,
         session.uid,
@@ -279,7 +283,8 @@ export function SessionScreen({
 
         <div className="min-w-0 flex-1">
           <ScoutForm
-            key={robotIndex}
+            key={`${robotIndex}-${form.id}@${form.version}`}
+            schema={form}
             ref={scoutFormRef}
             mode="practice"
             layout="side-panel"

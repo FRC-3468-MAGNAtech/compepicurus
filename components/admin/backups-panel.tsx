@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { useAuditLog } from "@/lib/audit-log";
 import { exportAllDataJson, exportEntriesCsv, type BackupSummary } from "@/lib/admin/backup";
+import { useForms } from "@/lib/forms/forms-context";
 
 function toMillis(value: unknown): number {
   if (value && typeof value === "object" && "toMillis" in value && typeof (value as { toMillis: unknown }).toMillis === "function") {
@@ -18,6 +19,7 @@ function toMillis(value: unknown): number {
 /** A safety net for competition day — plain client-side reads + downloads, no restore side. "Last export" is derived from the audit log rather than a new field anywhere. */
 export function BackupsPanel() {
   const { user, profile } = useAuth();
+  const forms = useForms();
   const teamId = profile?.teamId ?? null;
   const { entries: auditEntries } = useAuditLog(teamId);
 
@@ -50,7 +52,7 @@ export function BackupsPanel() {
     setExportingCsv(true);
     setError(null);
     try {
-      await exportEntriesCsv(teamId, user.uid, profile.name);
+      await exportEntriesCsv(teamId, user.uid, profile.name, forms.currentResolver);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't export entries.");
     } finally {

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
+import { useForms } from "@/lib/forms/forms-context";
 import { SEASONS, getSeason, DEFAULT_SEASON_ID } from "@/lib/seasons";
 import { getMatchesForEvent } from "@/lib/ftc/actions";
 import { importLibraryEvent, useAllLibraryMatches } from "@/lib/match-library";
@@ -53,6 +54,8 @@ export function RescorePanel() {
 }
 
 function EventRescore({ teamId, actorUid, actorName }: { teamId: string; actorUid: string; actorName: string }) {
+  // P21: entries are rescored against the account's *current* form for their formId (an edited scoring rule applies to old entries too).
+  const forms = useForms();
   const [seasonId, setSeasonId] = useState(DEFAULT_SEASON_ID);
   const [eventCode, setEventCode] = useState("");
   const [plan, setPlan] = useState<EventRescorePatch[] | null>(null);
@@ -70,7 +73,7 @@ function EventRescore({ teamId, actorUid, actorName }: { teamId: string; actorUi
     setError(null);
     setAppliedCount(null);
     try {
-      setPlan(await computeEventRescorePlan(teamId, eventCode.trim(), season.apiSeason));
+      setPlan(await computeEventRescorePlan(teamId, eventCode.trim(), season.apiSeason, forms.currentResolver));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't compute a rescore plan.");
     } finally {
@@ -158,6 +161,7 @@ function EventRescore({ teamId, actorUid, actorName }: { teamId: string; actorUi
 }
 
 function SessionRescore({ teamId, actorUid, actorName }: { teamId: string; actorUid: string; actorName: string }) {
+  const forms = useForms();
   const { sessions } = useAllTeamPracticeSessions(teamId);
   const { entries } = useTeamScoutEntries(teamId);
   // P15: Rescore also covers matches that aren't published yet (admin-only screen).
@@ -227,7 +231,7 @@ function SessionRescore({ teamId, actorUid, actorName }: { teamId: string; actor
         }
       }
 
-      setPlan(buildSessionRescorePlan(sessions, entries, libraryMatchesById, liveMatchesByKey, filter));
+      setPlan(buildSessionRescorePlan(sessions, entries, libraryMatchesById, liveMatchesByKey, filter, forms.currentResolver));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't compute a rescore plan.");
     } finally {

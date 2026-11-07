@@ -1,6 +1,7 @@
 "use client";
 
 import { Check } from "lucide-react";
+import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -10,11 +11,17 @@ export function CheckboxTile({
   checked,
   onChange,
   disabled,
+  size = "md",
+  icon,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  /** P22: the field's `ui.size`. */
+  size?: "sm" | "md" | "lg";
+  /** P22: the field's `ui.icon`, shown before the label. */
+  icon?: ReactNode;
 }) {
   return (
     <motion.button
@@ -26,7 +33,8 @@ export function CheckboxTile({
       transition={spring}
       onClick={() => !disabled && onChange(!checked)}
       className={cn(
-        "relative flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-medium transition-colors duration-200",
+        "relative flex items-center gap-2 rounded-2xl border px-4 text-sm font-medium transition-colors duration-200",
+        size === "sm" ? "py-1.5" : size === "lg" ? "py-5 text-base" : "py-3",
         checked
           ? "border-transparent text-[var(--color-primary-foreground)]"
           : "glass-card border-[var(--glass-border)] text-[var(--muted-foreground)]",
@@ -46,6 +54,7 @@ export function CheckboxTile({
       >
         {checked && <Check className="h-3.5 w-3.5" />}
       </span>
+      {icon}
       {label}
     </motion.button>
   );

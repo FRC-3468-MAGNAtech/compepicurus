@@ -3,7 +3,7 @@ import { evaluateAutoFlagRuleIds, type FlagContext } from "@/lib/analytics/flags
 import { evaluatePracticeSessionFlags } from "@/lib/practice-flags";
 import type { FtcMatch } from "@/lib/ftc/types";
 import type { AllianceColor, SessionFlag } from "@/lib/practice-sessions";
-import type { AccuracyResult, AutoFlag, ScoutEntry } from "@/lib/scout-entries";
+import { notApplicableAccuracy, type AccuracyResult, type AutoFlag, type ScoutEntry } from "@/lib/scout-entries";
 
 export type LiveScoringPatch = {
   sessionAccuracy: number | null;
@@ -41,6 +41,11 @@ export function resolveLiveAllianceScoring(match: FtcMatch, alliance: AllianceCo
   const allianceTeams = alliance === "red" ? match.redTeams : match.blueTeams;
   const officialScore = alliance === "red" ? match.redScore : match.blueScore;
   const penaltyPoints = (alliance === "red" ? match.redPenaltyPoints : match.bluePenaltyPoints) ?? 0;
+  // P21: a form with scoring off has nothing to compare, so accuracy is "n/a" and there's no need to wait for the official score.
+  if (entries.some((e) => e.scored === false)) {
+    const entryAutoFlags: Record<string, AutoFlag[]> = Object.fromEntries(entries.map((e) => [e.id, [] as AutoFlag[]]));
+    return { sessionAccuracy: null, sessionScoutedTotal: null, sessionOfficialScore: null, sessionPenaltyPoints: null, sessionFlags: [], entryAccuracy: notApplicableAccuracy, entryAutoFlags };
+  }
   if (officialScore === null) return null;
 
   const entryAccuracy = computeAllianceAccuracy(allianceTeams, officialScore, penaltyPoints, entries);

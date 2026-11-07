@@ -16,7 +16,8 @@ import { useAllLibraryMatches, type LibraryMatch } from "@/lib/match-library";
 import { useAllTeamPracticeSessions, type PracticeSession } from "@/lib/practice-sessions";
 import { getSeason } from "@/lib/seasons";
 import { useTeamScoutEntries, type ScoutEntry } from "@/lib/scout-entries";
-import { getFormSchema, type ScoutFormSchema } from "@/lib/scout-form/schema";
+import type { Form } from "@/lib/forms/types";
+import { useGameFormIds, useSchemaForEntries } from "@/lib/forms/forms-context";
 
 // The one realtime data layer every Analytics subpage reads (P10). It is
 // mounted once in the Analytics layout, so there is exactly one team-wide
@@ -40,7 +41,8 @@ type AnalyticsDataValue = {
   allEntries: ScoutEntry[];
   /** Practice sessions by id (only loaded while Practice is on). Full sessions, so Match Scout Analytics can toggle their exclusion. */
   sessionsById: Map<string, PracticeSession>;
-  schema: ScoutFormSchema;
+  /** P21: the form the Game's entries were scouted with (every version of every form in scope, unioned), what the tables and stats are derived from. */
+  schema: Form;
   /** The game's FIRST API season year, the fallback when an event's own season isn't known. */
   season: number;
   activeEventCodes: string[];
@@ -70,7 +72,7 @@ export function AnalyticsDataProvider({ children }: { children: React.ReactNode 
   const { matches: libraryMatches } = useAllLibraryMatches();
 
   const game = getSeason(filters.gameId);
-  const schema = useMemo(() => getFormSchema(game.formId), [game.formId]);
+  const gameFormIds = useGameFormIds(filters.gameId);
 
   const activeEvents = useMemo(() => orderPrimaryFirst({ events: activeEventsRaw, primaryCode }), [activeEventsRaw, primaryCode]);
   const activeEventCodes = useMemo(() => activeEvents.map((e) => e.code), [activeEvents]);
@@ -88,9 +90,10 @@ export function AnalyticsDataProvider({ children }: { children: React.ReactNode 
   const sessionsById = useMemo(() => new Map<string, PracticeSession>(sessions.map((s) => [s.id, s])), [sessions]);
 
   const selection = useMemo(
-    () => selectAnalyticsEntries({ entries: allEntries, sessionsById, filters, activeEventCodes }),
-    [allEntries, sessionsById, filters, activeEventCodes]
+    () => selectAnalyticsEntries({ entries: allEntries, sessionsById, filters, activeEventCodes, gameFormIds }),
+    [allEntries, sessionsById, filters, activeEventCodes, gameFormIds]
   );
+  const { schema } = useSchemaForEntries(selection.scope, filters.gameId);
 
   const eventOptions = useMemo(() => {
     const options = new Map<string, EventOption>();
@@ -104,7 +107,7 @@ export function AnalyticsDataProvider({ children }: { children: React.ReactNode 
       for (const e of activeEvents) add(e.code, e.name, true);
     }
     // Events with data under the current Game/Practice settings, whatever the Event filter says.
-    const scopeAnyEvent = allEntries.filter((e) => isInScope(e, { ...filters, events: { kind: "all" } }, null));
+    const scopeAnyEvent = allEntries.filter((e) => isInScope(e, { ...filters, events: { kind: "all" } }, null, gameFormIds));
     for (const e of scopeAnyEvent) {
       add(e.eventCode, eventDirectory.get(e.eventCode)?.name ?? e.eventCode, activeEventCodes.includes(e.eventCode) && !filters.practice);
       options.get(e.eventCode)!.count += 1;
@@ -117,7 +120,7 @@ export function AnalyticsDataProvider({ children }: { children: React.ReactNode 
         b.count - a.count ||
         a.name.localeCompare(b.name)
     );
-  }, [allEntries, filters, libraryMatches, activeEvents, activeEventCodes, eventDirectory]);
+  }, [allEntries, filters, libraryMatches, activeEvents, activeEventCodes, eventDirectory, gameFormIds]);
 
   // Names for every event that has data in scope (not just the ones passing the accuracy filter), so they don't flicker as the threshold changes.
   const nameRequests = useMemo(() => {
@@ -167,7 +170,7 @@ export type AnalyticsEntriesResult = {
   scopeCount: number;
   loaded: boolean;
   filters: AnalyticsFilters;
-  schema: ScoutFormSchema;
+  schema: Form;
 };
 
 /**
@@ -181,6 +184,7 @@ export function useAnalyticsEntries(filtersOverride?: AnalyticsFilters, options?
   const data = useAnalyticsData();
   const { filters: urlFilters } = useAnalyticsFilters();
   const filters = filtersOverride ?? urlFilters;
+  const gameFormIds = useGameFormIds(filters.gameId);
   const applyAccuracy = options?.applyAccuracy ?? true;
   const includeExcluded = options?.includeExcluded ?? false;
   const isStandard = filtersOverride === undefined && applyAccuracy && !includeExcluded;
@@ -190,10 +194,10 @@ export function useAnalyticsEntries(filtersOverride?: AnalyticsFilters, options?
       isStandard
         ? null
         : selectAnalyticsEntries(
-            { entries: data.allEntries, sessionsById: data.sessionsById, filters, activeEventCodes: data.activeEventCodes },
+            { entries: data.allEntries, sessionsById: data.sessionsById, filters, activeEventCodes: data.activeEventCodes, gameFormIds },
             { applyAccuracy, includeExcluded }
           ),
-    [isStandard, data.allEntries, data.sessionsById, filters, data.activeEventCodes, applyAccuracy, includeExcluded]
+    [isStandard, data.allEntries, data.sessionsById, filters, data.activeEventCodes, applyAccuracy, includeExcluded, gameFormIds]
   );
   const selection = custom ?? data.selection;
 
@@ -224,7 +228,7 @@ export function useSingleEvent(): { code: string | null; event: FtcEvent | null 
 }
 
 /** Per-team stats for the standard selection — memoized once in the provider and shared by Team Averages, Rankings, and Team Profile. */
-export function useTeamStats(): { teamStats: TeamStats[]; teamNames: ReadonlyMap<number, string>; loaded: boolean; schema: ScoutFormSchema; entries: AnalyticsEntry[] } {
+export function useTeamStats(): { teamStats: TeamStats[]; teamNames: ReadonlyMap<number, string>; loaded: boolean; schema: Form; entries: AnalyticsEntry[] } {
   const data = useAnalyticsData();
   return { teamStats: data.teamStats, teamNames: data.teamNames, loaded: data.loaded, schema: data.schema, entries: data.selection.used };
 }

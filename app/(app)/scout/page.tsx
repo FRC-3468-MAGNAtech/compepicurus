@@ -12,8 +12,9 @@ import { useActiveEvents } from "@/lib/active-event";
 import { orderPrimaryFirst, pickDefaultActiveEvent } from "@/lib/active-events";
 import { useAuth } from "@/lib/auth";
 import { useAssignments } from "@/lib/assignments";
-import { useTeamScoutEntries, saveEntry, type ScoreBreakdown } from "@/lib/scout-entries";
-import { valuesToScoutEntryFields } from "@/lib/scout-form/schema";
+import { useTeamScoutEntries, saveEntry, entryPayloadFor } from "@/lib/scout-entries";
+import type { ScoreResult } from "@/lib/forms/scoring";
+import { useActiveForm, useForms } from "@/lib/forms/forms-context";
 import { recomputeForEvent } from "@/lib/analytics/recompute";
 import { nextAssignment as findNextAssignment } from "@/lib/dashboard/insights";
 import type { FtcMatch } from "@/lib/ftc/types";
@@ -66,6 +67,9 @@ function MatchScoutFormContent() {
   const activeEvent = events.find((e) => e.code === pickedEventCode) ?? pickDefaultActiveEvent({ events, primaryCode }, now);
   const name = profile?.name ?? "";
   const teamId = profile?.teamId ?? null;
+  // P21: scouts fill in the season's active form (the built-in unless an admin chose another or edited it).
+  const { form, loaded: formsLoaded } = useActiveForm();
+  const forms = useForms();
 
   const { assignments } = useAssignments(teamId, activeEvent?.code ?? null);
   const { entries } = useTeamScoutEntries(teamId);
@@ -85,7 +89,7 @@ function MatchScoutFormContent() {
     });
   };
 
-  const handleSubmit = async (values: ScoutFormValues, score: ScoreBreakdown) => {
+  const handleSubmit = async (values: ScoutFormValues, score: ScoreResult) => {
     if (!profile || !user || !activeEvent || !values.match || values.teamNumber === null) return;
 
     await saveEntry(profile.teamId, user.uid, {
@@ -94,15 +98,13 @@ function MatchScoutFormContent() {
       matchType: values.match.type,
       matchNumber: values.match.match.matchNumber,
       teamNumber: values.teamNumber,
-      fields: valuesToScoutEntryFields(values.fields),
-      score,
-      comments: String(values.fields.comments ?? ""),
+      ...entryPayloadFor(form, values.values, score),
     });
     // Recomputes the whole event's accuracy/flags (not just this entry) so a
     // different robot's entry can flip from "Needs Robots" to resolved once
     // its alliance partner is scouted too. Fire-and-forget: it never throws
     // (every call inside is already error-handled) and shouldn't block reset.
-    void recomputeForEvent(profile.teamId, activeEvent.code, activeEvent.season);
+    void recomputeForEvent(profile.teamId, activeEvent.code, activeEvent.season, forms.currentResolver);
     // The just-saved entry's realtime update will advance `nextAssignment` —
     // clear the loaded override so the form reflects whatever that becomes.
     setLoadedAssignment(null);
@@ -116,10 +118,11 @@ function MatchScoutFormContent() {
           <h1 className="text-2xl font-semibold tracking-tight">Match Scout Form</h1>
           <p className="text-sm text-[var(--muted-foreground)]">Log what you see, live, match by match.</p>
         </div>
-        {/* Reserved for a future form/season picker (a dropdown letting scouts
-            choose forms for different seasons, or custom forms from a form
-            builder) — intentionally empty for now. */}
-        <div data-slot="form-season-picker" />
+        {formsLoaded && form.id !== "biobuzz" && (
+          <span className="glass-pill px-3 py-1.5 text-xs font-medium" data-testid="active-form-name">
+            {form.name}
+          </span>
+        )}
       </div>
 
       {nextAssignment && !effectiveLoaded && (
@@ -136,7 +139,12 @@ function MatchScoutFormContent() {
         </GlassPanel>
       )}
 
+      {!formsLoaded ? (
+        <div className="glass-card h-64 animate-pulse" />
+      ) : (
       <ScoutForm
+        key={`${form.id}@${form.version}`}
+        schema={form}
         mode="event"
         activeEvent={activeEvent}
         eventChoices={eventChoices}
@@ -149,6 +157,7 @@ function MatchScoutFormContent() {
         prefill={{ scoutName: name, ...effectiveLoaded }}
         onSubmit={handleSubmit}
       />
+      )}
     </div>
   );
 }

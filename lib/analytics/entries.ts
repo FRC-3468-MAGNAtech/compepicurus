@@ -62,8 +62,9 @@ export function passesAccuracy(entry: Pick<AnalyticsEntry, "allianceAccuracy">, 
 }
 
 /** Game, event, and Practice (mode/source) — everything except accuracy and exclusion. */
-export function isInScope(entry: ScoutEntry, filters: AnalyticsFilters, eventCodes: string[] | null): boolean {
-  if (entry.formId !== filters.gameId) return false;
+export function isInScope(entry: ScoutEntry, filters: AnalyticsFilters, eventCodes: string[] | null, gameFormIds?: ReadonlySet<string>): boolean {
+  // P21: a Game (season) can be scouted with more than one form (the built-in, an edited copy, a custom form made active), so scope by the season's set of form ids when given.
+  if (gameFormIds ? !gameFormIds.has(entry.formId) && entry.formId !== filters.gameId : entry.formId !== filters.gameId) return false;
   if (eventCodes !== null && !eventCodes.includes(entry.eventCode)) return false;
 
   if (!filters.practice) return entry.source === "event";
@@ -98,6 +99,8 @@ export function selectAnalyticsEntries(
     filters: AnalyticsFilters;
     /** The team's active event codes — only consulted for the `active` event scope. */
     activeEventCodes: string[];
+    /** P21: every form id that counts as the filter's Game (default: just the Game's own id). */
+    gameFormIds?: ReadonlySet<string>;
   },
   options: SelectOptions = {}
 ): EntrySelection {
@@ -106,7 +109,7 @@ export function selectAnalyticsEntries(
 
   const scope: AnalyticsEntry[] = [];
   for (const entry of input.entries) {
-    if (!isInScope(entry, input.filters, eventCodes)) continue;
+    if (!isInScope(entry, input.filters, eventCodes, input.gameFormIds)) continue;
     const session = entry.sessionId ? input.sessionsById.get(entry.sessionId) : null;
     scope.push(toAnalyticsEntry(entry, session));
   }

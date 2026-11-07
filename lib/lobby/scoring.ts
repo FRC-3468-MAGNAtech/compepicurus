@@ -5,8 +5,9 @@ import type { AllianceColor, SessionFlag, SessionMode } from "@/lib/practice-ses
 import type { ScoutEntry } from "@/lib/scout-entries";
 
 export type LobbyPairScoringPatch = {
-  accuracy: number;
-  scoutedTotal: number;
+  /** Null (shown as "n/a") when the form has no scoring: there is nothing to compare against the official score (P21). */
+  accuracy: number | null;
+  scoutedTotal: number | null;
   officialScore: number;
   penaltyPoints: number;
   flags: SessionFlag[];
@@ -35,11 +36,14 @@ export function resolveLobbyPairScoring(
   priorCompletedAttempt: boolean
 ): LobbyPairScoringPatch {
   const officialAlliance = match.alliances[alliance];
-  const { accuracy, scoutedTotal } = computeAllianceAccuracy({
-    robotScores: entries.map((e) => e.score.total),
-    penaltyPoints: officialAlliance.penaltyPoints,
-    officialScore: officialAlliance.score,
-  });
+  const scored = entries.every((e) => e.scored !== false);
+  const { accuracy, scoutedTotal } = scored
+    ? computeAllianceAccuracy({
+        robotScores: entries.map((e) => e.score.total),
+        penaltyPoints: officialAlliance.penaltyPoints,
+        officialScore: officialAlliance.score,
+      })
+    : { accuracy: null, scoutedTotal: null };
 
   const flags = evaluatePracticeSessionFlags({
     entries,

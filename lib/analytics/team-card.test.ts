@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { initialScoutEntryFields, type ScoutEntryFields } from "@/lib/scout-entries";
 import { BIOBUZZ_FORM_SCHEMA, calculateScore, type ScoutFormSchema } from "@/lib/scout-form/schema";
+import { fromLegacySchema } from "@/lib/forms/legacy";
 import type { AnalyticsEntry } from "./entries";
 import { buildKeyStats, reliabilityIncidents, reliabilityLevel, sortTeams, teamMatchesSearch } from "./team-card";
 import { buildTeamStats } from "./team-stats";
@@ -66,12 +67,12 @@ describe("buildKeyStats", () => {
   });
 
   it("works for any schema", () => {
-    const other: ScoutFormSchema = {
+    const other: ScoutFormSchema = fromLegacySchema({
       id: "o",
       version: 1,
       name: "O",
       sections: [{ id: "teleop", label: "Teleop", fields: [{ key: "gears", type: "counter", label: "Gears", points: 3, phase: "teleop" }, { key: "spin", type: "toggle", label: "Spin", points: 1, phase: "teleop" }] }],
-    };
+    });
     const e = { ...entry(2, {}), fields: { gears: 4, spin: true } as unknown as ScoutEntryFields };
     const k = buildKeyStats(buildTeamStats([e], other), other);
     expect(k).toEqual({ counters: [{ label: "Gears", avg: 4 }], rates: [{ label: "Spin", rate: 100 }] });

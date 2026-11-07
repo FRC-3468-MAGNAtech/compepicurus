@@ -58,6 +58,10 @@ docs/ASSUMPTIONS.md, P1b-1.
 | `fieldTeams` | `{ id, number, name }[]` (P19, optional) | The account's FTC teams, the admin's order, 1 to 10. Absent before the migration; read through `readFieldTeams()`. See "P19 — Several FTC teams under one account" |
 | `fieldTeamIdList` | `string[]` (P19, optional) | The ids of `fieldTeams`, same order: a rules-only mirror that members' `fieldTeamIds` writes are checked against. Always written together with `fieldTeams` |
 | `accountName` | `string \| null` (P19, optional) | Display name for the account itself (at most 60 characters), separate from the FTC teams |
+| `fieldTeamNumbers` | `number[]` (P19/P20, optional) | The numbers of `fieldTeams`, same order: a queryable mirror (an application checks `array-contains` to see whether an account already has an FTC team); `fieldTeamsWrite()` and the migration keep it in step |
+| `ownerUid` | `string` (P20, optional) | The TEAM owner. Authoritative for ownership; server-written only (rules refuse it from every client). Set at creation/approval, by the sync-roles bootstrap (only while absent), and by the transfer routes |
+| `pendingTransfer` | `{ id, fromUid, fromName, toUid, toName, requestedAt, expiresAt }` (P20, optional) | A pending ownership transfer (7 days). Server-written only; read by every member (the recipient's banner) |
+| `applicationId` | `string` (P20, optional) | On an account an approved application created |
 | `joinCode` | `string` | Random 6-char code (no ambiguous 0/O/1/I). No longer publicly readable (P1b — see `firestore.rules` and P1b-1); only a team's own members can read it, mainly so Team Management can show it to admins |
 | `activeEventCode` | `string \| null` | FIRST API event code of the **primary** active event. Since FIX1 a team can have several active events; this stays pointed at the primary so pre-FIX1 readers keep working |
 | `activeSeasonId` | `number \| null` | FIRST API season year |
@@ -93,7 +97,8 @@ only ever touched by the Admin SDK from `app/api/public/config`,
 | `primaryRole` | `RoleId` | One of `lib/roles.ts`'s `ROLES`; shown as a colored pill. Admin-editable in Team Management's editor (FIX1); `firestore.rules` requires a real role id |
 | `secondaryRoles` | `RoleId[]` | Shown as neutral pills. Stored normalized since FIX1: primary removed, canonical `ROLES` order, at most 9 |
 | `isAdmin` | `boolean` | Separate from roles — gates Admin Panel + team/event management. Changed by an admin or the owner (FIX2: never by the admin themself — the last-admin safeguard — and never on an owner's row; an owner's flag is pinned on). See `canEditMember` in `lib/member-access.ts` |
-| `isOwner` | `boolean` (P1b) | Set only by `app/api/auth/sync-roles` (Admin SDK) for emails listed in `OWNER_EMAILS`; immutable from any client, in rules, for every uid including the owner's own. FIX2: an owner can edit their *own* roles (never this flag or their admin flag) — see "Owner role editing (FIX2)" |
+| `isOwner` | `boolean` (P1b, P20) | **P20: a mirror of `teams/{teamId}.ownerUid`** (the TEAM owner), written only by server routes in the same transaction as `ownerUid` (bootstrap, transfer, team creation/approval); immutable from any client. Authoritative is `ownerUid`: the rules ignore a stale flag once it exists. FIX2: an owner can edit their *own* roles (never this flag or their admin flag) — see "Owner role editing (FIX2)" |
+| `isPlatformOwner` | `boolean` (P20, optional) | A PLATFORM owner (an email in `OWNER_EMAILS`): set and cleared by `app/api/auth/sync-roles` together with the `platformOwner` claim; pinned in both update rules |
 | `themeId` | `string` | Any id in the `lib/themes.ts` registry (`team`, `biobuzz`, the P18 solid / gradient / `pride-*` ids). Applied by `ThemeProvider` as soon as the profile loads; the account's value wins over this browser's |
 | `fieldTeamIds` | `string[]` (P19, optional) | The FTC teams (ids from `teams/{teamId}.fieldTeams`) this member is assigned to. Admin/owner-only to change, never the member's own (rules); checked against `fieldTeamIdList`. None recorded counts as all teams |
 | `activeFieldTeamId` | `string \| null` (P19, optional) | The FTC team this user is "viewing as"; their own to write, resolved against their assigned teams |
@@ -1965,6 +1970,198 @@ list of at most 10 ids all in the team's post-batch `fieldTeamIdList`).
 `lib/member-access.test.ts` and `lib/scout-stats/engine.test.ts` (additions), `firestore.rules.test.ts` ("P19 FTC teams", 16 tests) and
 `api-routes.emulator.test.ts` ("P19 FTC teams", migration idempotent, only the caller's account), `e2e/field-teams.e2e.ts` (Playwright, the sidebar
 switcher expanded, collapsed and in the drawer).
+
+## P20 — Team applications, the two kinds of owner, and ownership transfer
+
+**Two kinds of owner (`lib/team-owner.ts`).**
+- **Platform owner**: an email in the server-only `OWNER_EMAILS` (verified). Carried as the `platformOwner` custom claim (plus the `users.isPlatformOwner` mirror for
+  the UI), set by `app/api/auth/sync-roles`, removed again if the email leaves the list (the pre-P20 `owner` claim is stripped on the next sync). Approves applications,
+  switches public team creation, force-transfers an account for recovery, and is always an admin of their own account. Every platform-only server route also checks
+  the live list (`isPlatformOwnerToken()` in `lib/server/owner-admin.ts`), so revoking takes effect on the next request. The claim opens the application collections
+  and nothing else (rules: `isPlatformOwner()`); it gives no access to any account's scouting data.
+- **Team owner**: `teams/{teamId}.ownerUid`: authoritative for the Owner badge, the FIX2 protections (`canEditMember`, the rules' owner-row check) and ownership transfer.
+  `users.isOwner` is only a **mirror** of it (so the roster can show the badge without a second read), written by server routes in the same transaction as `ownerUid`.
+  Rules: `isOwner()` = `ownerUid` equals the caller, or, **only while the team has no `ownerUid`**, the legacy per-user flag (so the existing owner is never locked out
+  before the bootstrap runs). A stale flag counts for nothing once `ownerUid` exists.
+- **Bootstrap** (`bootstrapTeamOwner` in sync-roles, `chooseBootstrapOwner` in `lib/team-owner.ts`): runs only when an account has no `ownerUid` (re-checked inside a
+  transaction): the user already flagged `isOwner` keeps it (earliest-created if several; the rest are demoted to plain admins), else a signing-in platform owner of that
+  account takes it, else nobody. It can't take ownership back after a transfer because `ownerUid` is never absent again. Team creation and approval set `ownerUid` directly.
+
+**Collections (all written only by server routes; see `firestore.rules`).**
+- `teamApplications/{id}`: `applicantUid`, `applicantName`, `applicantEmail`, `emailKey` (hash of the canonical email), `teamNumber`, `teamName`, `officialTeamName`, `role`,
+  `verification`, `link`, `status` (`pending|approved|rejected|blocked`; `expired` is derived: a pending one past `expiresAt`), `rejectionReason`, `decidedAt/By`, `teamId`
+  (once approved), `createdAt`, `expiresAt` (+30 days). Readable by platform owners, and by the applicant for their own (queries filter on `applicantUid`). Nothing private is on it.
+- `applicationPrivate/{id}` (same id): `signals` (`ApplicationSignals`: email verified, sign-in provider, account age, FIRST lookup result and name match, CAPTCHA, fill
+  seconds, applications from the IP in the last hour, email domain, an existing account for the number), `ipHash`, `notes`. Platform owners only.
+- `applicationBlocks/{email_<hash>|team_<number>}`: `type`, `value`, `reason`, `applicationId`. Platform owners read; `unblock` deletes.
+- `platformAuditLog/{id}`: `action` (`submit-application`, `approve-application`, `reject-application`, `block-application`, `unblock`, `force-transfer-ownership`),
+  `actorUid`, `details`. Platform owners only, because it can hold applicant details that must not appear in any team's Audit Log.
+- `rateLimits/{key}_{window}`: fixed-window counters (`count`, `expiresAt`) keyed by **hashes** of the IP / email: no raw IP or email is stored.
+- On `teams/{teamId}`: `ownerUid`, `pendingTransfer` (`{ id, fromUid, fromName, toUid, toName, requestedAt, expiresAt }`; rules refuse both from any client, admins and owners
+  included), `fieldTeamNumbers` (a queryable mirror of the FTC numbers, `fieldTeamsWrite()` keeps it in step), `applicationId` (on an account an application created).
+- On `users/{uid}`: `isPlatformOwner` (pinned in both update rules). New audit actions in `auditLog`: `approve-team-application`, `request-ownership-transfer`,
+  `transfer-ownership`, `decline-ownership-transfer`, `cancel-ownership-transfer`, `force-transfer-ownership`.
+
+**Application flow.**
+- UI: `/apply` (`app/(marketing)/apply/page.tsx`): not signed in (sign in / create an account), signed in but email unverified (resend / "I've verified"), then
+  `components/applications/apply-form.tsx` (name, verified email, FTC team number with a FIRST lookup that fills the name, role from the existing roles, "How can we verify
+  you're on this team?", optional link, a hidden honeypot, Turnstile when a site key is set), then `application-status-card.tsx` (pending / approved / rejected with the
+  reason / expired). Signup and Finish Setup offer **Apply to create a team** while creation is off, and anyone with an application sees its status instead of the join form.
+- `GET /api/applications/start` issues a signed start token (the minimum time-to-submit check can't trust a browser timestamp). `POST /api/applications` runs, in order: sign-in
+  and `email_verified`, body cap (16 KB), a per-IP attempts counter (40/hour), the honeypot, the start token (4 s to 2 h), validation and sanitizing (`lib/applications.ts`),
+  disposable-email list (`lib/disposable-domains.ts`), blocks, Cloudflare Turnstile (`lib/server/turnstile.ts`, skipped and flagged when `TURNSTILE_SECRET_KEY` is unset), rate
+  limits (3/hour per IP, 3/hour per email, both hashed), already-a-member, one pending (non-expired) per applicant / canonical email / team number, an existing account for the
+  number, the FIRST lookup (`lib/server/first-team.ts`, a signal, never a gate), then writes the application, its private doc and a platform log entry, notifies platform owners
+  (push to `fcmTokens` plus email) and emails the applicant a receipt. Applications expire after 30 days (lazily).
+- Review: `app/api/admin/applications` (`approve | reject | block | unblock | note`, platform owner only). **Approve is one transaction**: creates the team (join code, `fieldTeams`,
+  `fieldTeamIdList`, `fieldTeamNumbers`, `ownerUid` = applicant), the applicant's user doc (admin, owner mirror, chosen role), marks the application approved and writes the audit
+  entries (the new account's own `auditLog` gets a minimal one). It refuses an expired or decided application, an applicant who has joined a team meanwhile, an FTC number an
+  account already has, and an applicant whose email lost verification. `application-config` reports which protections are configured (warnings in the panel).
+- UI: Admin Panel > **Team Applications** (`components/admin/applications-panel.tsx`: status filters, signals via `describeSignals()`, notes, Approve / Reject / Block, block list;
+  a count badge on the tab and on the sidebar's Admin Panel item) and > **Recovery** (`recovery-panel.tsx`). Both tabs are platform owners only.
+
+**Ownership transfer** (`app/api/team/transfer`, all actions server-side, transactions that re-check their state; pure rules in `lib/team-owner.ts`).
+`request` (team owner; target an existing **admin with a verified email**; typed FTC team number; a sign-in no older than 5 minutes, read from the token's `auth_time`; one live
+pending transfer per account; expires in 7 days), `accept` (the recipient, still an admin with a verified email, and only while the requester is still the owner), `decline`,
+`cancel` (the owner or the requester) and `force` (platform owner: reason, recent sign-in, typed number; clears any pending transfer; labelled "recovery" in the account's own Audit
+Log and recorded in `platformAuditLog`). Accepting moves `ownerUid` in one transaction; the old owner stays an admin and loses the protections. Expiry is lazy. UI: Team Settings >
+**Ownership** (`components/team/ownership-section.tsx`, with `lib/reauth.ts` for the re-authentication) and the recipient's banner (`components/layout/ownership-transfer-banner.tsx`).
+
+**Email** (`lib/server/email.ts`, `email-templates.ts`): a thin Resend sender (no SDK), configured by `RESEND_API_KEY` + `EMAIL_FROM` (+ `APP_URL` for links); a no-op when unset, and a failure never fails a
+request. Messages: application received, new application (to `OWNER_EMAILS`), approved, rejected with the reason, ownership transfer requested, ownership changed. Every user-supplied value is HTML-escaped.
+
+**Tests.** `lib/applications.test.ts`, `lib/team-owner.test.ts`, `lib/server/security.test.ts` (token, Turnstile, email, templates, hashing), `firestore.rules.test.ts` ("P20 owner model, applications and
+isolation": ownerUid-based protections, the new collections, cross-account isolation incl. platform-owner claims) and `api-routes.emulator.test.ts` ("P20": bootstrap, no-reclaim after a transfer, claims, the whole
+application route, every review action, transfer happy path / decline / cancel / expiry / force).
+
+## P21 — Form schema v2 and the form engine
+
+Everything that used to be hard-coded for BIOBUZZ (the fields, the points, the analytics columns, the CSV, the flags, the team stats, the scout form's layout) is now derived from
+a **form definition**. BIOBUZZ is the first built-in form; behaviour for it is unchanged, and a frozen copy of the old code is the regression oracle (see Tests).
+
+**The schema (`lib/forms/types.ts`, validated by `lib/forms/validate.ts`).** A `Form` = `{ id, name, description, formType, tags, version, status, scoringEnabled, sections[], origin, keyAliases?,
+phaseLabels?, … }`.
+- `sections[]` are the form's categories. Each has a `phase` (`prematch | auto | teleop | endgame | misc`, or a custom key labelled in `phaseLabels`), optional `groups[]` (sub-headings; a field joins one via
+  `groupId`) and `fields[]`.
+- A field has a stable `id` (what the builder tracks), a unique `key` (storage, CSV, analytics), a `type` (`toggle | counter | checkbox | number | select | radio | rating | text | textarea`, plus the three
+  **system** fields `matchPicker | teamPicker | scoutName`, which have the fixed keys `match` / `teamNumber` / `scoutName`, are always required, live in Pre-Match and can't be removed or retyped), type settings
+  (`min/max/step`, `decimals`, `options[]`, `scale`), `required`, `default`, `visibleWhen`, `scoring`, `analytics`, `statRoles[]`, `unrealisticAbove`, `ui`.
+- `scoring: { mode: none | whenOn | perTally | perUnit | byOption, value, cap? }`. `whenOn` (toggle/checkbox) and `perTally` (counter) are what BIOBUZZ uses; `perUnit` (number/rating) and `byOption`
+  (select/radio: each option has its own `points`) are the others; `cap` bounds a field's points. A field's points go to its **section's phase** (so moving a field between categories moves its points). Custom
+  phases count in `total` and `byPhase`, not in `auto/teleop/endgame`.
+- `visibleWhen: { field, op: checked | equals | gt, value? }`. A field whose condition fails, or whose parent field is hidden, or whose category is hidden, is **not scored, not required, not exported as a
+  value that counts** (its stored value is kept so toggling a condition back on doesn't lose input).
+- `analytics: { include, label, category, aggregate (sum|avg|rate|last|list), csvHeader, element }` drives the Match Analytics column (three-tier header: section title > category > label), the CSV header and the
+  team-stat aggregate. `element` groups points by game element on Team Profile.
+- `statRoles` replace hard-coded keys: `primaryScoring`, `reliability` (a robot-failure incident, Team Breakdown's pill), `neverStarted`, `died`, `disabled`, `recoveredFromFreeze` (the auto-flag rules read these) and
+  `comments` (the field whose text is mirrored to the entry's summary `comments`). A form without a role simply doesn't get that behaviour.
+- `scoringEnabled: false` forms (pit scouting, driver feedback…) score zero and have **no** score or accuracy columns; their entries are written with `scored: false` and everything that depends on a score treats them as
+  "n/a" (flags don't fire, accuracy is "n/a", never an error).
+- `keyAliases: { oldKey: currentKey }` keeps old entries readable after a field's key is renamed (transitive, cycle-safe; the current key wins over an aliased old one).
+- Validation is two layers: `parseForm` (zod, **strict**: unknown keys/types and size/length limits are errors) is what every store and the import run; `checkForm` is the semantic layer (unique keys/ids, system
+  fields, scoring that fits the type, options, conditions that point at a real other field with no cycles, aliases, roles…) and returns `error`s (block publishing) and `warning`s (don't).
+- `lib/forms/values.ts` (defaults, coercion/clamping, `normalizeValues`, `validateValues` for required-while-visible), `scoring.ts` (`calculateScore`, `maxScore`, `storableScore`), `visibility.ts`, `meta.ts` (roles,
+  elements, phases per field), `hash.ts` (content hash of a form, used to notice a changed built-in).
+
+**Entries.** New entries store `values` (keyed by field `key`) plus `formId` and `formVersion`. Pre-v2 entries have the typed `fields` object plus top-level `comments`: they are **never rewritten**.
+`entryValues(entry, form?)` (`lib/forms/legacy.ts`) is the one reader: it returns `values` (with `keyAliases` applied) or, for an old entry, the legacy `fields` + `comments` in the same shape, so every consumer
+(analytics, flags, stats, CSV, the entry editor) is written once. **Dual-write:** a form that still has BIOBUZZ's 15 legacy keys (`hasLegacyShape`) also writes the exact legacy `fields` object, so an old tab or
+a rollback still reads new entries. `entryPayloadFor(form, values, score)` (`lib/scout-entries.ts`) builds `{ formId, formVersion, values, fields?, score, scored?, comments }` for every save path (scout, solo / live /
+lobby practice, CSV import, the admin entry editor). `score` is `{ auto, teleop, endgame, total, byPhase? }` (`byPhase` only when a custom phase scored).
+
+**The form store (`lib/forms/store.ts`, `firestore-store.ts`, `transitions.ts`, `resolve.ts`).**
+- Built-ins live in code (`lib/forms/builtin.ts`: `BUILTIN_FORMS`, BIOBUZZ v1). An account's forms live in Firestore: `forms/{teamId}_{formId}` = `FormDoc { teamId, formId, name, origin, baseBuiltInId?,
+  baseBuiltInHash?, publishedVersion | null, draft | null, active, archived, createdBy, … }` and `forms/{teamId}_{formId}/versions/{n}` = `FormVersion { form, note?, createdBy, createdAt }`, **write-once**.
+- **Copy-on-write override.** Saving a draft of a built-in's id creates an override doc (its content hash is recorded). Scouts keep seeing the built-in until the override is **published**, which is version
+  `builtin.version + 1` (so the built-in's own version 1 always resolves to the original in code and its entries keep their form). "Reset to built-in" sets `active: false` (its versions stay, so entries scouted
+  with them still resolve). `builtinChangedSince` flags an override whose code-defined original has since changed.
+- **Immutable versions.** `publish` turns the draft into the next version (one past the latest), clears the draft, and writes the version doc + the form doc in one transaction (the rules only allow the version
+  doc together with the doc's `publishedVersion` bump). It refuses to publish with no draft or with blocking `checkForm` errors. Drafts may be invalid; published versions never are. Forms are archived, never deleted.
+- `FormStore` = `{ listForms, getForm(formId, version?), getDraft, saveDraft, publish, archive, resetToBuiltin }`. The in-memory store and the Firestore store both go through the pure functions in
+  `transitions.ts`, so they can't disagree; the in-memory one is the reference semantics for tests.
+- **Resolution** (`resolve.ts`): `resolveForm(catalog, id, version?)` (stored version, else the built-in's own version, else null; latest = active override, else the built-in) and `resolveFormForEntry`, which never
+  fails for a form that exists in code. `FormResolver` (`resolver.ts`) is what rescoring and recompute use to find an entry's form (the account's **current** form for its id, so "I changed the scoring: rescore" does what it says).
+- **Per-season active form.** `teams.activeForms[seasonId] = formId` (seasons stay code-defined in `lib/seasons.ts`; the season's own `formId` is the default). Only a published, unarchived form can be active
+  (`canBeActive`); an active form that can't be resolved falls back to the season's built-in so scouting never breaks.
+- **Client:** `lib/forms/forms-context.tsx` (mounted in the app layout): one realtime subscription to the account's form docs, versions loaded on demand (and the latest of every active form eagerly), hooks
+  `useForms()`, `useActiveForm(seasonId)`, `useLockedForm(seasonId)` (practice sessions: fixed at the first load so both robots use one version even if a form is published mid-session),
+  `useFormsForEntries(entries)`, `useSchemaForEntries(entries, seasonId)` (every version used, **unioned**), `useGameFormIds(gameId)` (the form ids that count as a Game in analytics scope). Outside the provider
+  the hooks fall back to the built-ins.
+
+**Schema-driven consumers.**
+- `lib/analytics/game-schema.ts`: `buildGameSchema(form)` derives the Match Analytics table (sticky Match/Team/Scout, a column per `analytics.include` field with `Phase - Category - Label` headers, per-phase score columns
+  and Total when scoring is on, comment columns, accuracy columns when scoring is on, actions). `unionForms(forms)` merges several forms/versions into one (sections by id, fields by key, renamed keys dropped for
+  their current key) so one table and CSV can show mixed versions; a cell for a field an entry's form never had reads `null` and renders as an em dash. `GAMES.biobuzz` is `buildGameSchema(BIOBUZZ_FORM)`.
+- `lib/analytics/csv.ts`: export headers come from the columns' `csvHeader` (default `Phase - Category - Label`); import maps header cells back to fields (`coerceFieldValue`; a select's label maps to its value)
+  and **recomputes the score** (never trusts it); the dialog stamps rows with the active form.
+- `lib/analytics/flags.ts` (rules read roles and `unrealisticAbove`, never keys; score rules skip unscored forms), `team-stats.ts`, `team-card.ts`, `match-breakdown.ts` (elements and phases come from the form),
+  `recompute.ts` / `lib/admin/rescore-sessions.ts` (take a `FormResolver`), `lib/live/scoring.ts` and `lib/lobby/scoring.ts` (accuracy `null` when unscored).
+- The scout form (`components/scout/scout-form.tsx` + `field-inputs.tsx`) renders any form: sections in order, groups, conditional visibility, required validation, a sticky score bar with the form's phases (hidden when
+  scoring is off), the system pickers. `RenderedField` is shared with the admin entry editor, which edits an entry against the form and version it was scouted with.
+- `lib/scout-form/schema.ts` is kept as a thin compatibility facade (`getFormSchema`, `calculateScore`, `valuesToScoutEntryFields`, …) over the new modules.
+
+**Portable forms (`lib/forms/portable.ts`).** `exportForm` / `exportFormJson` strip everything instance-specific (author, dates, status, built-in link) into `{ format: "compepicurus-form", formatVersion: 1, form }`;
+`importForm` (text or object) enforces a size cap, the format, the strict zod parse, whitespace collapsing in short labels and `checkForm`, and returns an unpublished **custom** draft or readable errors.
+
+**Rules (`firestore.rules`).** `forms/{teamId}_{formId}`: teammates read, only admins/owner write (same people as `canManageMembers()`), the doc id must be `{teamId}_{formId}`, the form can't move team/id, its
+`publishedVersion` never goes down or is cleared, no deletes, bounded doc shape. `forms/{id}/versions/{n}`: teammates read; create-only, by an admin/owner, only together with the parent's `publishedVersion` bump to
+that same number (`getAfter`), the embedded form's id must match; no update or delete. `teams.activeForms` is validated (only known season ids, a 1-40 char string). Rules can't validate the nested form element by
+element, so every write path runs the shared zod schema first.
+
+**Tests.** `lib/forms/schema.test.ts` (structure, new forms, semantic rules, visibility, every scoring mode, values), `lib/forms/store.test.ts` (custom-form lifecycle, immutability and numbering, publish refusals,
+copy-on-write overrides, reset, resolution, export/import, a custom form end to end through scoring / table / CSV / flags / stats, unioned versions and aliases, scoring-off forms), and
+`lib/forms/biobuzz-regression.test.ts`: the **frozen old BIOBUZZ** (`lib/forms/fixtures/biobuzz-v1.ts` form + scoring and `biobuzz-v1-game-schema.ts` table; nothing in the app imports them) is the oracle: same fields
+and order, same defaults, identical scores on 1,000 seeded random entries, the old adapter output, the dual-write equal to the old save, identical table columns and cells, **byte-identical CSV**, a CSV export that
+re-imports to the same values, and the same flags and team stats from old-shaped and new-shaped storage. `firestore.rules.test.ts` ("P21: forms, form versions and teams.activeForms") covers the rules above.
+
+
+## P22 — Form Builder UI and form management
+
+Admin Panel > **Forms** (`components/forms/forms-panel.tsx`), for the team owner and admins only: `can('manageForms')` (`lib/permissions.ts`, pure `canManageForms` in `lib/forms/permissions.ts`) is the same set as
+firestore.rules' `canManageMembers()`, which gates every write to `forms`, `forms/{id}/versions` and `teams.activeForms`. The UI therefore never offers what the rules would refuse, and a forged request is refused by the rules
+(tests: `firestore.rules.test.ts`, "P21: forms…"). The tab is hidden for anyone else.
+
+**Forms list.** Every form from `useForms().summaries` (built-in, edited built-in, custom, from template): status (Draft / Published vN / Unpublished changes / Archived), the seasons it is active for, last edited by/when
+(`FormDoc.updatedBy/At`, names from `useTeamMembers`), and entry count (`lib/forms/usage.ts` over the team's entries). Actions: Edit, Duplicate, Export JSON, Set as active, View changes from built-in, Reset to built-in,
+Archive/Unarchive (a form that is active for a season can't be archived; forms are never deleted: the rules forbid it, and entries must always resolve). **New form**: from scratch (five categories plus the locked system
+fields), from template (shown, disabled until P23), duplicate, import JSON (`lib/forms/create.ts`: always a *custom* draft with a unique id; a copy of a built-in is never an override). Editing a built-in is copy-on-write with
+a notice; nothing changes for scouts until publish.
+
+**Builder (`components/forms/builder/`).** `builder.tsx` holds the form in an undo/redo history (`lib/forms/history.ts`, 100 steps; edits to one thing within 1.2 s coalesce into one step). Every change goes through
+`commit`, which keeps a ref-backed copy so `update(fn)` runs `fn` synchronously and callers can read what it produced (e.g. the id of a field it added, to select it). Panes:
+- **Palette** (`palette.tsx`): the nine component types by click or drag, and Insert from BIOBUZZ (clone a category, group or field with its points).
+- **Canvas** (`canvas.tsx`, `dnd.tsx`): categories as cards, fields as rows showing key, type and points, groups inside. @dnd-kit drag between categories and groups, plus up/down/duplicate/delete buttons for touch and keyboard.
+- **Inspector** (`field-inspector.tsx`, `section-inspector.tsx`, `form-inspector.tsx`, `condition-editor.tsx`, `options-editor.tsx`): every schema v2 property. The key is generated from the label with the alias rule; visibility
+  condition builder; points; counter/number/rating settings; options with points; look (size, icon, colour, width, as theme tokens); analytics and CSV header; stat roles; scouting tip; category phase, accent and groups;
+  form name, description, tags, scoring on/off and key aliases.
+- **Panels** (tabs in the right pane): *Preview* (`preview.tsx`: the real `<ScoutForm/>` in phone/tablet/desktop frames and an "Open as scout" dialog; a test fill with the live score that never writes), *Analytics*
+  (`analytics-preview.tsx`: the three-tier header and CSV header row come from `buildGameSchema(form)` itself, plus team stats), *Scoring* (`scoring-summary.tsx`: scoring fields, per-phase and total maximum from `maxScore`,
+  and a scenario calculator that uses `calculateScore`), *Problems* (`validation-panel.tsx`: `checkForm` errors and tips; clicking one selects the field).
+- Under 1024 px the builder is compact: forms list, read-only structure (no add/move/delete/drag), simple field edits and the preview, with a note that full editing works best on a larger screen.
+
+**Editing logic is pure** (`lib/forms/edit.ts`, tested in `lib/forms/builder.test.ts`): add/remove/move/duplicate field, category and group; `moveFieldBy` (crosses into the neighbouring category); `setFieldKey` (conditions follow;
+an alias old to new is added when the old key was ever published, chains collapse, renaming back drops it); `changeFieldType`; bulk `updateFields`; `cloneFields`/`insertFromForm` (fresh ids and unique keys, conditions among the
+copies remapped, dangling ones dropped); custom phases with labels. System fields can move within Pre-Match but never be deleted, retyped, duplicated or conditional. `lib/forms/diff.ts` (`diffForms`) compares two forms by
+field id, independent of key order, and marks changes "affects scores" / "affects data" (points, a key without an alias, type, options, ranges, scoring on/off, added or removed scoring fields, phase moves).
+
+**Draft, autosave, publish, history.** Edits autosave to the form's draft (`store.saveDraft`) 1.5 s after the last change when the form parses (zod). The header shows Saved / Saving / Unsaved / Not saved yet (and why) / error with
+retry; `beforeunload` and Back both flush or warn.
+- **Publish** (`publish-dialog.tsx`) shows the diff against the last published version (or the built-in), refuses while `checkForm` has errors, and when the change affects scores or data and the form has entries it says how many,
+  points at the Rescore tool and requires an explicit tick. Optional note. The version is one past the latest (an override continues from the built-in's).
+- **History** (`history-dialog.tsx`, `store.listVersions`): every version with its entry count, a diff against the version before or against the draft, and **Restore** = put that version into the draft (never straight to
+  scouts). The built-in's original is listed at the bottom.
+- **Discard changes** (`discardDraftTransition`) goes back to the live version or the built-in; a never-published custom form can only be archived.
+
+**Audit log** (`lib/forms/actions.ts`: one function per user action, each followed by an `auditLog` entry): `create-form`, `publish-form` (version, note, affects scores/data, changes, affected entries), `restore-form-version`,
+`discard-form-draft`, `archive-form`, `unarchive-form`, `reset-form-to-builtin`, `set-active-form` (before/after form id). They are labelled in the Audit Log tab. `FormActor` takes injectable `audit`/`setActive`, so the test
+fixture runs without Firestore.
+
+**ScoutForm now honours** each field's `ui.size/icon/color/width`, its `tip` (an info popover beside the label or tile) and a category's `accent`: theme tokens only (`components/scout/field-icons.tsx`: `ACCENT_TOKENS`, a curated
+icon list). New `checkForm` warnings: a pick-one with more than 6 tiles, a dropdown with more than 12 options, a rating above 7 stars (hard one-handed), and a per-unit number with no maximum.
+
+**Tests.** `lib/forms/builder.test.ts` (editing, keys and aliases, cloning, history, diff, permission, usage, creating forms, discard). `e2e/form-builder.e2e.ts` drives the real Forms tab and builder on `/e2e/form-builder`
+(an in-memory store with 12 BIOBUZZ entries, no login; 404 unless `E2E_THEME_CHECK=1`): list actions, new/duplicate/import, the copy-on-write notice, add/rename/autosave/undo/redo, the five default categories and locked fields,
+points/conditions/analytics/scoring panels, the preview, publish with the affected-entries confirmation, history, restore, reset, set active, audit entries, buttons and shortcuts, and the phone layout; Chromium and WebKit, desktop and phone.
 
 ## Conventions
 

@@ -55,6 +55,9 @@ export async function POST(request: Request) {
         name: teamName,
         fieldTeams: [firstFieldTeam],
         fieldTeamIdList: [firstFieldTeam.id],
+        fieldTeamNumbers: [teamNumber],
+        // P20: whoever creates the account is its team owner (transferable; see lib/team-owner.ts).
+        ownerUid: decoded.uid,
         joinCode,
         activeEventCode: null,
         activeSeasonId: null,
@@ -70,7 +73,7 @@ export async function POST(request: Request) {
         primaryRole: DEFAULT_ROLE_ID,
         secondaryRoles: [],
         isAdmin: true,
-        isOwner: false,
+        isOwner: true, // mirror of teams.ownerUid, written only by server routes
         fieldTeamIds: [firstFieldTeam.id],
         themeId: defaultThemeId,
         createdAt: FieldValue.serverTimestamp(),

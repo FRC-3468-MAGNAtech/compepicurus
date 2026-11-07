@@ -17,7 +17,7 @@ import { useEventRankings } from "@/lib/analytics/use-event-data";
 import { DEFAULT_MIN_ENTRIES, lowSample, schemaFieldMeta, type FieldStat, type TeamStats, type Trend } from "@/lib/analytics/team-stats";
 import { getPercentColor } from "@/lib/accuracy/engine";
 import { cardEntranceVariants } from "@/lib/motion";
-import type { ScoutFormSchema } from "@/lib/scout-form/schema";
+import type { Form } from "@/lib/forms/types";
 import { cn } from "@/lib/utils";
 
 export default function TeamProfilePage() {
@@ -282,15 +282,15 @@ function FieldRow({ stat }: { stat: FieldStat }) {
   );
 }
 
-function Averages({ stats, schema }: { stats: TeamStats; schema: ScoutFormSchema }) {
+function Averages({ stats, schema }: { stats: TeamStats; schema: Form }) {
   const meta = useMemo(() => schemaFieldMeta(schema), [schema]);
   const phaseAvg: Record<string, number> = { auto: stats.avgAuto, teleop: stats.avgTeleop, endgame: stats.avgEndgame };
 
   // The scoring sections, in schema order; General's checkboxes are the incident rates below.
   const sections = schema.sections
     .map((section) => {
-      const fields = meta.filter((m) => m.sectionId === section.id && stats.fieldStats[m.field.key] && m.field.points && m.field.phase);
-      return { section, fields, phase: fields[0]?.field.phase };
+      const fields = meta.filter((m) => m.sectionId === section.id && stats.fieldStats[m.field.key] && m.scored);
+      return { section, fields, phase: fields[0]?.phase };
     })
     .filter((s) => s.fields.length > 0);
 
@@ -303,8 +303,8 @@ function Averages({ stats, schema }: { stats: TeamStats; schema: ScoutFormSchema
         return (
           <GlassPanel key={section.id} className="flex flex-col gap-4">
             <div className="flex items-baseline justify-between gap-2">
-              <h2 className="text-base font-semibold">{section.label}</h2>
-              {phase && <span className="text-sm tabular-nums text-[var(--muted-foreground)]">avg {phaseAvg[phase].toFixed(1)} pts</span>}
+              <h2 className="text-base font-semibold">{section.title}</h2>
+              {phase && phaseAvg[phase] !== undefined && <span className="text-sm tabular-nums text-[var(--muted-foreground)]">avg {phaseAvg[phase].toFixed(1)} pts</span>}
             </div>
             {groups.map((group) => (
               <div key={group ?? "_"} className="flex flex-col gap-3">

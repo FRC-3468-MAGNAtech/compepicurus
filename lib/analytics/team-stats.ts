@@ -2,10 +2,13 @@ import { rankWithTies } from "@/lib/accuracy/engine";
 import { formatMatch, matchSortValue } from "@/lib/analytics/game-schema";
 import type { AnalyticsEntry } from "@/lib/analytics/entries";
 import type { MatchType } from "@/lib/ftc/types";
-import type { ScoutFormField, ScoutFormSchema } from "@/lib/scout-form/schema";
+import type { Form } from "@/lib/forms/types";
+import { elementOf, formFieldMeta, hasRole, type FieldMeta } from "@/lib/forms/meta";
+import { entryValues } from "@/lib/forms/legacy";
+import { fieldPoints } from "@/lib/forms/scoring";
 
 // Pure team statistics for Team Profile, Team Averages and Rankings (P10).
-// Everything is driven by the form schema (P2), never by BIOBUZZ's field
+// Everything is driven by the form schema (P2, schema v2 in P21), never by BIOBUZZ's field
 // names, so a new season's schema needs no changes here.
 
 /** Entries a team is trending on: this many of the most recent are compared against the overall average. */
@@ -16,11 +19,11 @@ export const DEFAULT_MIN_ENTRIES = 2;
 export type FieldStat = {
   key: string;
   label: string;
-  type: "toggle" | "counter" | "checkbox";
+  type: "toggle" | "counter" | "checkbox" | "number" | "rating";
   /** The schema section this field sits in (`autonomous`, `teleop`, ...) and its sub-group label, if any. */
   sectionId: string;
   groupLabel: string | null;
-  /** Counters: mean and highest tally. Null for toggles/checkboxes. */
+  /** Counters, numbers and ratings: mean and highest value. Null for toggles/checkboxes. */
   avg: number | null;
   high: number | null;
   /** Toggles/checkboxes: the share of entries (0-100) where it was on. Null for counters. */
@@ -123,30 +126,10 @@ export function consistencyOf(avg: number, stdDev: number): number {
   return Math.max(0, Math.min(100, 100 - (stdDev / avg) * 100));
 }
 
-type FieldMeta = { field: ScoutFormField; sectionId: string; groupLabel: string | null };
-
-/** Every field in the schema with where it sits — the iteration order Team Profile renders in. */
-export function schemaFieldMeta(schema: ScoutFormSchema): FieldMeta[] {
-  const out: FieldMeta[] = [];
-  for (const section of schema.sections) {
-    for (const field of section.fields ?? []) out.push({ field, sectionId: section.id, groupLabel: null });
-    for (const group of section.groups ?? []) {
-      for (const field of group.fields) out.push({ field, sectionId: section.id, groupLabel: group.label });
-    }
-  }
-  return out;
+/** Every value field in the schema with where it sits, the phase its points roll into and its points (see lib/forms/meta.ts) — the iteration order Team Profile renders in. */
+export function schemaFieldMeta(schema: Pick<Form, "sections">): FieldMeta[] {
+  return formFieldMeta(schema);
 }
-
-function rawValue(entry: AnalyticsEntry, key: string): unknown {
-  return (entry.fields as unknown as Record<string, unknown>)[key];
-}
-
-function numberValue(entry: AnalyticsEntry, key: string): number {
-  const v = rawValue(entry, key);
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-
-const elementOf = ({ field, groupLabel }: FieldMeta) => field.element ?? groupLabel ?? field.label;
 
 // --- buildTeamStats ------------------------------------------------------
 
@@ -158,7 +141,7 @@ const elementOf = ({ field, groupLabel }: FieldMeta) => field.element ?? groupLa
  */
 export function buildTeamStats(
   entries: AnalyticsEntry[],
-  schema: ScoutFormSchema,
+  schema: Form,
   options: { teamNumber?: number; teamName?: string | null } = {}
 ): TeamStats {
   const teamNumber = options.teamNumber ?? entries[0]?.teamNumber ?? 0;
@@ -168,6 +151,12 @@ export function buildTeamStats(
   const stdDev = sampleStdDev(totals);
 
   const meta = schemaFieldMeta(schema);
+  // An entry's values under this schema's keys, whichever shape it was stored in (pre-v2 `fields`, or `values`, with key aliases applied).
+  const rawValue = (entry: AnalyticsEntry, key: string): unknown => entryValues(entry, schema)[key];
+  const numberValue = (entry: AnalyticsEntry, key: string): number => {
+    const v = rawValue(entry, key);
+    return typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : 0;
+  };
 
   const fieldStats: Record<string, FieldStat> = {};
   const incidentRates: Record<string, number> = {};
@@ -175,12 +164,28 @@ export function buildTeamStats(
 
   for (const m of meta) {
     const { field } = m;
-    if (field.type !== "toggle" && field.type !== "counter" && field.type !== "checkbox") continue;
+    if (m.scored && (field.type === "select" || field.type === "radio")) {
+      // Choice fields have no per-field row, but what they score still belongs to their element.
+      const points = mean(entries.map((e) => fieldPoints(field, rawValue(e, field.key))));
+      elementPoints.set(elementOf(m), (elementPoints.get(elementOf(m)) ?? 0) + points);
+      continue;
+    }
+    if (field.type !== "toggle" && field.type !== "counter" && field.type !== "checkbox" && field.type !== "number" && field.type !== "rating") continue;
 
     const base = { key: field.key, label: field.label, type: field.type, sectionId: m.sectionId, groupLabel: m.groupLabel };
-    const scored = !!field.points && !!field.phase;
+    const scored = !!m.points;
 
-    if (field.type === "counter") {
+    if (field.type === "number" || field.type === "rating") {
+      const values = entries.map((e) => numberValue(e, field.key));
+      const avg = mean(values);
+      fieldStats[field.key] = {
+        ...base,
+        avg,
+        high: n === 0 ? 0 : Math.max(...values),
+        rate: null,
+        avgPoints: m.scored ? mean(entries.map((e) => fieldPoints(field, rawValue(e, field.key)))) : null,
+      };
+    } else if (field.type === "counter") {
       const tallies = entries.map((e) => numberValue(e, field.key));
       const avg = mean(tallies);
       fieldStats[field.key] = {
@@ -188,12 +193,12 @@ export function buildTeamStats(
         avg,
         high: n === 0 ? 0 : Math.max(...tallies),
         rate: null,
-        avgPoints: scored ? avg * field.points! : null,
+        avgPoints: scored ? avg * m.points! : null,
       };
     } else {
       const on = entries.filter((e) => rawValue(e, field.key) === true).length;
       const rate = n === 0 ? 0 : (on / n) * 100;
-      fieldStats[field.key] = { ...base, avg: null, high: null, rate, avgPoints: scored ? (rate / 100) * field.points! : null };
+      fieldStats[field.key] = { ...base, avg: null, high: null, rate, avgPoints: scored ? (rate / 100) * m.points! : null };
       if (field.type === "checkbox") incidentRates[field.key] = rate;
     }
 
@@ -204,7 +209,7 @@ export function buildTeamStats(
     }
   }
 
-  const reliabilityKeys = meta.filter((m) => m.field.reliability).map((m) => m.field.key);
+  const reliabilityKeys = meta.filter((m) => hasRole(m.field, "reliability")).map((m) => m.field.key);
   const reliability =
     reliabilityKeys.length === 0 || n === 0
       ? null
@@ -272,7 +277,7 @@ function computeTrend(entries: AnalyticsEntry[], overallAvg: number): Trend {
 }
 
 /** One `TeamStats` per team in `entries`, ordered by team number. `teamNames` fills in `teamName`. */
-export function buildAllTeamStats(entries: AnalyticsEntry[], schema: ScoutFormSchema, teamNames: ReadonlyMap<number, string> = new Map()): TeamStats[] {
+export function buildAllTeamStats(entries: AnalyticsEntry[], schema: Form, teamNames: ReadonlyMap<number, string> = new Map()): TeamStats[] {
   const byTeam = new Map<number, AnalyticsEntry[]>();
   for (const e of entries) {
     const list = byTeam.get(e.teamNumber);

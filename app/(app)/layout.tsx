@@ -14,6 +14,8 @@ import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
 import { useAuth } from "@/lib/auth";
 import { useConnectionNotice } from "@/lib/use-connection-state";
 import { FieldTeamsProvider } from "@/lib/field-teams-context";
+import { FormsProvider } from "@/lib/forms/forms-context";
+import { OwnershipTransferBanner } from "@/components/layout/ownership-transfer-banner";
 
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -70,12 +72,14 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   return (
     // P19: one shared subscription to the account's FTC teams for the whole signed-in app.
     <FieldTeamsProvider>
+      <FormsProvider>
       <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
         <Sidebar mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} connection={connection} />
         <div className="min-w-0 flex-1">
           <Topbar onMenuClick={() => setMobileNavOpen(true)} connection={connection} />
           <main className="min-w-0">
             <VerifyEmailBanner className="mb-4" />
+            <OwnershipTransferBanner className="mb-4" />
             {isPlaceholderPage && <PlaceholderBanner className="mb-4" />}
             <LiveMatchPill />
             <PageTransition>{children}</PageTransition>
@@ -85,6 +89,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         <ScoresReadyWatcher />
         {profile.isAdmin && <LibraryBackfill />}
       </div>
+      </FormsProvider>
     </FieldTeamsProvider>
   );
 }

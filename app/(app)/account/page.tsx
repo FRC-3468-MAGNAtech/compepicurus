@@ -112,6 +112,11 @@ export default function AccountSettingsPage() {
                 <ShieldCheck className="h-3 w-3" /> Owner
               </Badge>
             )}
+            {profile?.isPlatformOwner && (
+              <Badge variant="glass" className="gap-1" title="Approves team applications and recovers accounts">
+                <ShieldCheck className="h-3 w-3" /> Platform owner
+              </Badge>
+            )}
           </div>
         </div>
       </GlassPanel>

@@ -7,14 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { dedupeAgainstExisting, parseImportCsv, type ImportedRow } from "@/lib/analytics/csv";
 import { formatMatch } from "@/lib/analytics/game-schema";
-import { saveEntry, type ScoutEntry } from "@/lib/scout-entries";
-import { BIOBUZZ_FORM_SCHEMA, calculateScore, scoutEntryFieldsToValues } from "@/lib/scout-form/schema";
+import { entryPayloadFor, saveEntry, type ScoutEntry } from "@/lib/scout-entries";
+import { calculateScore } from "@/lib/forms/scoring";
+import { normalizeValues } from "@/lib/forms/values";
+import type { Form } from "@/lib/forms/types";
 import type { GameSchema } from "@/lib/analytics/game-schema";
 
 export function ImportCsvDialog({
   open,
   onOpenChange,
   schema,
+  form,
   teamId,
   uid,
   eventCode,
@@ -24,6 +27,8 @@ export function ImportCsvDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   schema: GameSchema;
+  /** P21: the form the imported rows are scouted with (the one `schema` was derived from): scores are recomputed against it and entries are stamped with its id and version. */
+  form: Form;
   /** The importing admin's own team/uid — imported rows can name any scout
    * via their free-text `scoutName`, but `uid` (who's allowed to write the
    * doc, per firestore.rules) is attributed to whoever ran the import. */
@@ -69,18 +74,17 @@ export function ImportCsvDialog({
     setImporting(true);
     try {
       await Promise.all(
-        toInsert.map((row) =>
-          saveEntry(teamId, uid, {
+        toInsert.map((row) => {
+          const values = normalizeValues(form, row.values);
+          return saveEntry(teamId, uid, {
             scoutName: row.scoutName,
             eventCode,
             matchType: row.matchType,
             matchNumber: row.matchNumber,
             teamNumber: row.teamNumber,
-            fields: row.fields,
-            score: calculateScore(BIOBUZZ_FORM_SCHEMA, scoutEntryFieldsToValues(row.fields)),
-            comments: row.comments,
-          })
-        )
+            ...entryPayloadFor(form, values, calculateScore(form, values)),
+          });
+        })
       );
       onImported();
       onOpenChange(false);

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Rocket, UserPlus } from "lucide-react";
+import { Rocket, Send, UserPlus } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -10,8 +11,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cardEntranceVariants } from "@/lib/motion";
 import { useAuth } from "@/lib/auth";
 import { createTeam, fetchTeamCreationEnabled, joinTeam } from "@/lib/team-enrollment";
+import { ApplicationStatusCard } from "@/components/applications/application-status-card";
+import { useMyApplications } from "@/lib/applications-client";
 
-export type EnrollmentMode = "join" | "create";
+/** P20: "apply" is how a team gets an account while public creation is switched off: the applicant goes on to /apply. */
+export type EnrollmentMode = "join" | "create" | "apply";
 
 /**
  * Shared Join-a-team / Create-a-team state, used by both the Signup page
@@ -40,7 +44,8 @@ export function useTeamEnrollment() {
     };
   }, []);
 
-  const enroll = async (name?: string): Promise<{ joinCode?: string }> => {
+  const enroll = async (name?: string): Promise<{ joinCode?: string; apply?: boolean }> => {
+    if (mode === "apply" && teamCreationEnabled === false) return { apply: true };
     if (mode === "join" || !teamCreationEnabled) {
       if (!joinCode.trim()) throw new Error("Enter a join code.");
       await joinTeam(joinCode.trim(), name);
@@ -72,6 +77,8 @@ export function TeamEnrollmentFields({ enrollment }: { enrollment: ReturnType<ty
   const { mode, setMode, joinCode, setJoinCode, teamNumber, setTeamNumber, teamName, setTeamName, teamCreationEnabled } =
     enrollment;
   const showCreateFields = teamCreationEnabled && mode === "create";
+  // P20: with public creation off, the second option is applying (reviewed by the platform owner), not creating.
+  const showApply = teamCreationEnabled === false && mode === "apply";
 
   return (
     <div className="flex flex-col gap-4">
@@ -83,8 +90,20 @@ export function TeamEnrollmentFields({ enrollment }: { enrollment: ReturnType<ty
           </TabsList>
         </Tabs>
       )}
+      {teamCreationEnabled === false && (
+        <Tabs value={mode === "apply" ? "apply" : "join"} onValueChange={(v) => setMode(v as EnrollmentMode)}>
+          <TabsList>
+            <TabsTrigger value="join">Join a team</TabsTrigger>
+            <TabsTrigger value="apply">Apply to create a team</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
 
-      {showCreateFields ? (
+      {showApply ? (
+        <p className="glass-card rounded-xl p-3.5 text-sm text-[var(--muted-foreground)]" data-testid="apply-explainer">
+          New team accounts are approved by hand, one per FTC team. Next you&apos;ll verify your email and tell us about your team. If your team already has an account, join it with a code instead.
+        </p>
+      ) : showCreateFields ? (
         <>
           <div>
             <Label htmlFor="team-number">Team number</Label>
@@ -131,8 +150,12 @@ export function TeamEnrollmentScreen({
   /** Called after a successful join/create (profile now exists — the caller decides where to go, e.g. router.push("/dashboard")). */
   onComplete: () => void;
 }) {
-  const { logout, profile } = useAuth();
+  const router = useRouter();
+  const { logout, profile, user } = useAuth();
   const enrollment = useTeamEnrollment();
+  // P20: anyone who has applied sees their Application status here whenever they sign in, instead of the join form.
+  const { applications, loaded: applicationsLoaded } = useMyApplications(user?.uid ?? null);
+  const [showJoinInstead, setShowJoinInstead] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdJoinCode, setCreatedJoinCode] = useState<string | null>(null);
@@ -175,6 +198,10 @@ export function TeamEnrollmentScreen({
     setSubmitting(true);
     try {
       const result = await enrollment.enroll();
+      if (result.apply) {
+        router.push("/apply");
+        return;
+      }
       if (result.joinCode) {
         setCreatedJoinCode(result.joinCode);
         setSubmitting(false);
@@ -186,6 +213,16 @@ export function TeamEnrollmentScreen({
       setSubmitting(false);
     }
   };
+
+  if (applicationsLoaded && applications.length > 0 && !showJoinInstead && !createdJoinCode) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center py-16">
+        <motion.div variants={cardEntranceVariants} initial="hidden" animate="show" className="w-full max-w-md">
+          <ApplicationStatusCard application={applications[0]} onApplyAgain={() => router.push("/apply")} onJoinInstead={() => setShowJoinInstead(true)} />
+        </motion.div>
+      </div>
+    );
+  }
 
   if (createdJoinCode) {
     return (
@@ -224,12 +261,14 @@ export function TeamEnrollmentScreen({
             <TeamEnrollmentFields enrollment={enrollment} />
             {error && <p className="text-sm text-red-400">{error}</p>}
             <Button type="submit" size="lg" className="mt-1 gap-2" disabled={submitting}>
-              {enrollment.mode === "create" && enrollment.teamCreationEnabled ? (
+              {enrollment.mode === "apply" && enrollment.teamCreationEnabled === false ? (
+                <Send className="h-4 w-4" />
+              ) : enrollment.mode === "create" && enrollment.teamCreationEnabled ? (
                 <Rocket className="h-4 w-4" />
               ) : (
                 <UserPlus className="h-4 w-4" />
               )}
-              {submitting ? "Working…" : enrollment.mode === "create" && enrollment.teamCreationEnabled ? "Create team" : "Join team"}
+              {submitting ? "Working…" : enrollment.mode === "apply" && enrollment.teamCreationEnabled === false ? "Continue to application" : enrollment.mode === "create" && enrollment.teamCreationEnabled ? "Create team" : "Join team"}
             </Button>
           </form>
 

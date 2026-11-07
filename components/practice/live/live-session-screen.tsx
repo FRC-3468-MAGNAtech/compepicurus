@@ -10,9 +10,10 @@ import { embedUrlFor, parseStreamUrl } from "@/lib/live/stream";
 import { LIVE_CONFIG } from "@/lib/live/config";
 import { liveMatchKey, removePresence, upsertPresence } from "@/lib/live-presence";
 import { useAuth } from "@/lib/auth";
-import { calculateScore, valuesToScoutEntryFields, BIOBUZZ_FORM_SCHEMA } from "@/lib/scout-form/schema";
+import { calculateScore } from "@/lib/forms/scoring";
+import { useLockedForm } from "@/lib/forms/forms-context";
 import { deletePracticeSession, updatePracticeSession, type PracticeSession } from "@/lib/practice-sessions";
-import { getEntriesForSession, saveEntry } from "@/lib/scout-entries";
+import { entryPayloadFor, getEntriesForSession, saveEntry } from "@/lib/scout-entries";
 import { LoadError } from "@/components/practice/load-error";
 import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
@@ -37,6 +38,7 @@ export function LiveSessionScreen({
   onCompleted: () => void;
 }) {
   const { user } = useAuth();
+  const form = useLockedForm(session.seasonId);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [validationError, setValidationError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -85,16 +87,14 @@ export function LiveSessionScreen({
     setError(null);
     try {
       const values = handle.getValues();
-      const score = calculateScore(BIOBUZZ_FORM_SCHEMA, values.fields);
+      const score = calculateScore(form, values.values);
       await saveEntry(session.teamId, session.uid, {
         scoutName: session.scoutName,
         eventCode: session.eventCode!,
         matchType: session.matchType!,
         matchNumber: session.matchNumber!,
         teamNumber,
-        fields: valuesToScoutEntryFields(values.fields),
-        score,
-        comments: String(values.fields.comments ?? ""),
+        ...entryPayloadFor(form, values.values, score),
         source: "live",
         mode: null,
         sessionId: session.id,
@@ -153,6 +153,8 @@ export function LiveSessionScreen({
 
         <div className="min-w-0 flex-1">
           <ScoutForm
+            key={`${form.id}@${form.version}`}
+            schema={form}
             ref={scoutFormRef}
             mode="live"
             layout="side-panel"

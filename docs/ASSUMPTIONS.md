@@ -3066,6 +3066,153 @@ additions to `member-access` and the scout-stats engine); `npm run test:rules` 2
    the account's number was before), and **add the other team** (35792 / 35794). Assign members in **Team Management** (per-member Edit, or select several and use the bar).
 4. To run the browser tests: `npx playwright install chromium webkit` once, then `npm run test:e2e` (or `npx playwright test e2e/field-teams.e2e.ts`).
 
+## P20 — Team applications (owner-approved) and ownership transfer
+
+**P20-0. One question batch, answered "defaults" except email.** (1) `OWNER_EMAILS` is assumed to be only you; if it ever lists several people in one account, the earliest-created user already flagged owner keeps team ownership and the
+others become plain admins (still platform owners). (2) A team FIRST doesn't list (or an unreachable FIRST API) is a **signal**, not a block. (3) The applicant's role is a dropdown of the existing roles; it becomes the primary role of
+their new account, where they are also admin and owner. (4) A rejected applicant may apply again straight away (the rate limits and the one-pending rule still apply; Block is the permanent stop). (5) **Email was approved** ("you can make email
+infrastructure"), so applicants and the platform owner get emails instead of the status page alone (still shown there too). As in P1-1, P17-0 and later, the prompt's "React + Vite" was read as this Next.js 16 app: the client key is
+`NEXT_PUBLIC_TURNSTILE_SITE_KEY`, not `VITE_TURNSTILE_SITE_KEY`.
+
+**P20-1. The two owners.** Platform owner = `OWNER_EMAILS`, as the `platformOwner` claim (+ the `isPlatformOwner` mirror). Team owner = `teams.ownerUid`. The old `owner` claim is gone (stripped on the next sign-in); the platform-only routes check
+the verified token **and** the live `OWNER_EMAILS` list, so removing an email takes effect on the next request (the Firestore rules can only see the claim, so the review-queue collections stay readable until that person's next sign-in
+refreshes it, which only matters for reading applications, never for writing: every write is a server route). `users.isOwner` is kept as a **mirror** of `ownerUid` (server-written, in the same transaction) so the roster, the badge and
+`canEditMember` need no extra read; the rules do not trust it once `ownerUid` exists.
+
+**P20-2. "I remain owner and am never locked out."** Until an account has an `ownerUid`, the rules fall back to the legacy `isOwner` flag, so nothing changes in the window between deploying and the first sign-in. The first sign-in by anyone on
+the account then runs the bootstrap and writes `ownerUid` for the already-flagged owner. The bootstrap only fills an empty `ownerUid`, inside a transaction, so `sync-roles` can't take ownership back after a transfer (a test signs the platform
+owner in repeatedly after handing the account over). An account with nobody flagged and no platform owner on it stays ownerless until a platform owner joins it and signs in, or a recovery transfer is done.
+
+**P20-3. Platform owners are admins, and they are members of one account.** `sync-roles` makes a platform owner an admin (never revoked automatically). Creating a team (when the switch is on) makes its creator the team owner, since otherwise an
+account created by a non-platform-owner would have nobody who could ever transfer it.
+
+**P20-4. Applying needs a signed-in, verified email.** An applicant first signs in (Google counts as verified; email/password must click the link), because the server reads `email_verified` from their ID token. That means anyone can create
+a Firebase sign-in account (as before: Signup was never CAPTCHA'd); what the protections guard is the **application**. Signup and Finish Setup show "Apply to create a team" only while public creation is off.
+
+**P20-5. Anti-bot measures, and what each one costs a human.** All server-side. **Honeypot** (`orgUrl`) and **minimum time-to-submit** (4 seconds; the browser can't fake it, because the server issues a signed start token when the form opens, valid
+for 2 hours). **Turnstile** when configured; if the secret is unset the route still runs everything else and the platform owner sees a warning banner and a "No CAPTCHA" signal on each application; if the secret is set but the site key isn't,
+every application is refused and the warning says so. **Rate limits**: 3 applications per IP per hour and 3 per email per hour (both hashed with an HMAC, never stored raw), plus a 40/hour per-IP cap on every request so invalid requests can't be
+used to hammer the route; one pending application per applicant, per canonical email (so `a.b+x@gmail.com` is the same mailbox as `ab@gmail.com`) and per team number. Counters are Firestore docs (`rateLimits`), no new infrastructure; a TTL policy on
+`expiresAt` is optional. **Disposable email**: a hand-maintained list in `lib/disposable-domains.ts` (add a domain there to refuse it). **Sizes/sanitizing**: a 16 KB body cap, per-field limits, control and bidi/zero-width characters stripped,
+links must be http(s). The IP's hash is the only network identifier stored, and only in the platform-owner-only private doc.
+
+**P20-6. What the review queue shows.** The signals are recorded at submission and are advice, not rules: email verified (and how), FIRST found / name matches / not listed / unreachable (current season), sign-in account age, a free vs custom email
+domain, whether CAPTCHA ran, seconds spent on the form, repeats from the same IP in the hour, and whether an account already lists that FTC number. An existing account for the number is refused at submission (they should join it) and again at
+approval (an account could appear in between). Only the **first** FTC number of older accounts could be looked up before; `fieldTeamNumbers` (a mirror `fieldTeamsWrite()` now maintains, filled in by the P19 migration on the next sign-in) makes
+every FTC team on an account findable.
+
+**P20-7. Approval is a transaction.** Team, applicant, application status and audit entries are written together, or not at all, and simultaneous approvals create exactly one team (tested). The new account's own Audit Log gets a minimal
+"Team Application Approved" entry with no applicant details; the full record goes to `platformAuditLog`, which only platform owners can read, so another team's admins never see applicant data. Platform owners get an in-app count badge (Admin Panel
+tab and sidebar item), a web push to devices that enabled notifications (the same tokens live-score pushes use), and an email to `OWNER_EMAILS`.
+
+**P20-8. Transfer rules I chose.** The recipient must be an **admin** with a **verified email** (checked on the server, from Firebase Auth, not from the roster) both when the request is made and when it is accepted. "Type the team number" accepts
+**any** of the account's FTC team numbers (an account can have several since P19). Re-authentication means a sign-in no older than 5 minutes, enforced from the ID token's `auth_time` (the browser re-authenticates, then refreshes the token); the
+refusal itself is unit-tested (`isRecentSignIn`, `checkTransferRequest`), but not at the HTTP level, because faking the clock under live emulator calls hangs. One pending transfer per account; expiry (7 days) is lazy, so an expired transfer simply
+can't be accepted and a new request replaces it. A pending transfer is voided if the account's owner changes in between (a recovery transfer clears it, and accepting a request whose requester is no longer the owner fails as "stale").
+Either the owner or whoever requested it can cancel.
+
+**P20-9. Recovery (force transfer).** Platform owners get Admin Panel > Recovery: every account's FTC teams, owner and **admins** (nothing else: no scouting data, no join codes, no non-admin members). Forcing a transfer needs a reason, a recent
+sign-in and the typed team number; the new owner must be an existing member with a verified email and is made an admin and owner; the old owner stays an admin; it is labelled "(platform owner, recovery)" in that account's own Audit Log and also
+written to `platformAuditLog`. This is the one place a platform owner sees any other account's member names and emails.
+
+**P20-10. Email.** A small sender over Resend's HTTP API (no dependency); unconfigured = silently skipped. I did not build bounce handling, unsubscribe links or templates beyond the six messages; they are transactional and few. Emails never contain
+join codes, and the rejection email repeats exactly the reason the applicant can already read in the app.
+
+**P20-11. Deliberately not done.** Nothing is automatic: no auto-approval, ever. No browser (Playwright) test of the apply flow, because it needs a Firebase sign-in; the form, status card and a signed-out page were checked visually in light and dark,
+and every route is tested against the emulators. The Turnstile widget itself isn't exercised end-to-end (it needs Cloudflare); the server verification is unit-tested with a mocked fetch. Applicants can't edit or withdraw a pending application (they can
+apply again after it is decided or expires). No per-applicant notification when a platform owner is added or removed mid-review.
+
+### P20: verification
+
+`tsc` clean; eslint 0 errors (the 2 existing TanStack Virtual warnings); `vitest run` all pass (new: `applications.test.ts`, `team-owner.test.ts`, `server/security.test.ts`); `npm run test:rules` (rules + API emulator tests) all pass, including the
+cross-account isolation and the owner-bootstrap tests; `npm run build` passes.
+
+### P20: commands to run
+
+1. **Deploy the rules first (or together with the app):** `firebase deploy --only firestore:rules`.
+2. Push `preview` / merge as usual. **No env var is required** for the app to work. To turn the protections on, add in Vercel (Production and Preview): `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (create a Cloudflare Turnstile site: see
+   `docs/DEPLOYMENT.md` section 9b), and for email `RESEND_API_KEY`, `EMAIL_FROM` and `APP_URL` (section 9c). Optional: `APPLICATION_SECRET` (any long random string). Redeploy after changing env vars.
+3. **Sign out and back in once** after deploying: that runs the owner bootstrap (writing `ownerUid` for the existing owner) and refreshes your token to carry the new `platformOwner` claim.
+4. Check Admin Panel > Team Applications: the warning banners tell you exactly which protections aren't configured yet. Public creation stays off; applicants use Sign up > Apply to create a team.
+5. Optional: a Firestore TTL policy on the `expiresAt` field of the `rateLimits` collection group (Firebase Console > Firestore > TTL).
+
+## P21 — Form schema v2 and the form engine
+
+**P21-0. Questions and defaults (no more asked; you were away).** Read "React+Vite" as this Next.js app. (1) **Existing entries: adapter only, no backfill.** Old entries are read through `entryValues()` and never rewritten, so
+there is nothing to migrate and no migration to get wrong. (2) **New BIOBUZZ entries dual-write the legacy `fields`** (as well as `values`) so an old tab or a rollback still reads them; any form that has dropped a legacy key
+stops dual-writing. (3) **Score shape** stays `{ auto, teleop, endgame, total }`, plus an optional `byPhase` only when a custom phase scored. (4) **zod** added as the validator. (5) **@dnd-kit** (already installed for P22) is for the builder. (6) **Seasons stay
+code-defined** (`lib/seasons.ts`); forms are chosen per season through `teams.activeForms`. (7) Email stays a no-op when unconfigured (P20).
+
+**P21-1. BIOBUZZ is behaviour-identical, and that is tested, not asserted.** The old hard-coded form, scoring and Match Analytics table are frozen as fixtures that nothing imports (`lib/forms/fixtures/biobuzz-v1*.ts`),
+and `lib/forms/biobuzz-regression.test.ts` compares the new engine to them: fields/order/defaults, scores on 1,000 seeded random entries, the adapter, the dual-write, table columns and cells, byte-identical CSV, a CSV
+round trip, flags and team stats from both storage shapes. If one of those ever has to change, BIOBUZZ's behaviour changed; change the fixture only on purpose.
+
+**P21-2. Built-ins live in code; an account only stores what it changed.** An edit to BIOBUZZ is a copy-on-write override that starts as a draft and changes nothing for scouts until published. The override's first version is
+`builtin.version + 1`, so entries scouted before it keep resolving to the original in code. "Reset to built-in" turns the override off without deleting any version. If the code-defined original later changes, the override
+is flagged (`builtinChangedSince`), never silently merged.
+
+**P21-3. Published versions are immutable and numbered 1, 2, 3…** (an override continues from the built-in's version). Entries record `formId` + `formVersion`, so any old entry can always be shown with the form it was
+scouted with. Drafts can be invalid; a version can't. Forms are archived, never deleted (an entry's `formId` must always resolve). An unresolvable active form falls back to the season's built-in so scouting never breaks.
+
+**P21-4. A scout's form is fixed for a practice session.** `useLockedForm` takes the season's active form once the account's forms have loaded and never changes it, so both robots of an alliance (and a live/lobby
+pair) use one version even if an admin publishes mid-session. A real-event scout gets the latest on their next load.
+
+**P21-5. Rescoring reads the *current* form.** Rescore / Recalculate Accuracy resolve each entry's form to the account's **latest** published version for its `formId` (`FormResolver`), so changing a scoring rule and rescoring
+applies the new rule to old entries as intended. The entry's stored `formVersion` is what the entry was scouted with and is unchanged; its stored `score` is what the rescore updates.
+
+**P21-6. Mixed versions in one table are unioned.** Analytics builds one table from every version in scope (sections by id, fields by key, the first form's definition wins). A field renamed through `keyAliases` shows under
+its current key for old and new entries alike. A cell for a field an entry's version never recorded is blank (an em dash), not 0, so "didn't ask" is never confused with "asked, none".
+
+**P21-7. The Game filter scopes by a set of form ids.** An analytics Game (season) includes the season's built-in form, the form currently active for it and any account form tagged with the season id, so entries scouted with
+an edited or custom form still appear. (Previously `entry.formId === season id`, which only worked while the form id and season id were the same.)
+
+**P21-8. Scoring off means "n/a", never an error.** Entries from a form with `scoringEnabled: false` are written with `scored: false`, score 0, no score/accuracy columns, no score-based flags, and accuracy
+"n/a" in solo, live, lobby and real-event paths. In a table that mixes scored and unscored forms their score cells are blank.
+
+**P21-9. Hidden means ignored.** A field that a `visibleWhen`, its parent field or its hidden category hides is not scored, not required and not counted in stats, but its stored value is kept, so flipping a condition
+off and on again loses nothing.
+
+**P21-10. Key rules.** Keys are unique and stable; renaming one requires a `keyAliases` entry (the builder in P22 adds it), because the key is what old entries are stored under. The three system fields keep the fixed keys
+`match`, `scoutName`, `teamNumber`: they live on the entry itself, not in `values`.
+
+**P21-11. Validation is strict on the way in.** `parseForm` (zod, strict) rejects unknown keys and types, control characters in short labels and over-size forms; `checkForm` errors block publishing, warnings don't. Rules can't
+check a nested form element by element, so every write path (the stores, the import) runs the same zod schema before writing; the rules cover ownership, ids, shape of the doc and write-once versions.
+
+**P21-12. CSV import recomputes.** Import trusts only the input columns (Match / Team / Scout and the form's fields); score, accuracy and flags are recomputed against the form the rows are stamped with (the season's
+active form). The file's headers are the form's `csvHeader` (default `Phase - Category - Label`), so a CSV exported from the table imports back into the same form.
+
+**P21-13. Portable forms are custom copies.** Exporting BIOBUZZ gives a custom form with no link to the built-in (so importing it in another account never becomes an "override"). Import never overwrites: it returns a draft
+for the caller to name and save.
+
+**P21-14. Who can write forms.** The rules let admins and the owner write (`canManageMembers()`); P22's UI gates the builder with the same people through `can('manageForms')`. Scouts can read forms (they have to fill them in).
+
+
+## P22 — Form Builder UI
+
+**P22-0. Questions and defaults (you were away).** "React Router" is read as this Next.js app: the builder lives in the existing Admin Panel (a new Forms tab), not a new route. @dnd-kit (already used by the Pick List) does drag and drop.
+
+**P22-1. Restore never goes live by itself.** "Restore" puts an old version into the draft; it is published as a new version like any edit (versions stay immutable and numbered upward). Discarding a draft goes back to the live version or the built-in.
+
+**P22-2. Copy-on-write is silent until the first save.** Opening a built-in shows a notice and writes nothing; the first edit's autosave creates the account's override draft. Scouts keep the built-in until the override is published.
+
+**P22-3. Autosave only saves a form that parses.** A structurally invalid form (an empty label, which the strict schema rejects) isn't written; the header says "Not saved yet" and why, and Back warns before losing it. Semantic problems (`checkForm`) are allowed in a draft and only block publishing.
+
+**P22-4. Undo/redo works everywhere in the builder, text boxes included**, because the inputs are controlled and native undo is unreliable there. Typing in one box is one step. Delete, Ctrl+D, Alt+arrows and `?` are off while typing. The undo history lives for the builder session and isn't saved.
+
+**P22-5. Key rename rule.** A field's key follows its label until it is edited by hand or was ever published. Renaming a key that was ever published (in any version, or the built-in) adds an alias so old entries still read; the diff says whether old entries will read under the new key.
+
+**P22-6. Impact warnings are advisory but explicit.** A change that affects scores or data, on a form that has entries, needs a tick before publish and points at the Rescore tool; nothing rescores automatically. "Entries affected" is all entries of the form (any version), since a rescore reads the current form.
+
+**P22-7. Preview is a test fill of the real form.** Device frames constrain width only (Tailwind breakpoints follow the browser window, not the frame), so use "Open as scout" and the window size for true breakpoints. There is no submit in the preview.
+
+**P22-8. Colours are theme tokens.** Field and category colours are `primary/secondary/accent/success/warning/danger`, never a raw colour, so text stays legible in every theme. That is why there is no "low-contrast custom colour" warning: it can't happen.
+
+**P22-9. Phones are read-mostly.** Under 1024 px: the forms list, the structure (read-only), the preview and simple edits (label, help, required, points, option text). Adding, moving, deleting and dragging are desktop-only, with a note.
+
+**P22-10. The template library (P23) entry is present but disabled** in the New form dialog.
+
+**P22-11. Not built (didn't fit cleanly).** Bulk edit exists as a pure operation (`updateFields`) with tests but has no multi-select UI on the canvas; per-field edits and Duplicate cover the common cases. Categories reorder by buttons, not by dragging (fields and palette items do drag).
+
 ## Commands to run locally
 
 ```bash
@@ -3458,6 +3605,18 @@ npm run test:rules   # needs Java + firebase-tools; 275 tests across both files,
 # picker), open any dialog (bottom sheet), droplet button in the top bar, rotate to landscape, then 'Add to
 # Home Screen' (iPhone: Share > Add to Home Screen; Android: Install app) and open it standalone.
 # Icons: node scripts/generate-icons.mjs  (only to change the art)
+
+# P21 (form schema v2): no env or index changes. Deploy the rules (forms collection + versions subcollection + teams.activeForms):
+#   firebase deploy --only firestore:rules
+# Nothing is migrated; BIOBUZZ and every old entry work unchanged. To verify locally:
+#   npm test                # 1,100+ unit tests, incl. lib/forms/biobuzz-regression.test.ts (the old BIOBUZZ is the oracle)
+#   npm run test:rules      # 360 tests across both emulator files (needs Java + firebase-tools)
+#   npm run build && npm run test:e2e
+
+# P22 (Form Builder UI): no env, rules or index changes beyond P21's rules deploy. Browser tests:
+#   npx playwright install chromium webkit   (first time)
+#   npm run test:e2e                         (includes e2e/form-builder.e2e.ts)
+# Try it: Admin Panel > Forms > Edit BIOBUZZ (needs the P21 rules deployed to save drafts).
 
 # Deploying rules (not done by this prompt — do this yourself when ready)
 firebase deploy --only firestore:rules,firestore:indexes

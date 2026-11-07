@@ -1,16 +1,23 @@
 import type { FtcMatch } from "@/lib/ftc/types";
 import type { AccuracyResult, ScoutEntry } from "@/lib/scout-entries";
+import { BIOBUZZ_UNREALISTIC, getBuiltinForm } from "@/lib/forms/builtin";
+import { entryValues } from "@/lib/forms/legacy";
+import { formFieldMeta, hasRole } from "@/lib/forms/meta";
+import type { Form, StatRole } from "@/lib/forms/types";
 
 /**
  * All automatic-flagging thresholds in one place, per the spec. Every value
- * here is a placeholder — tune against real BIOBUZZ match data once there's
+ * here is a placeholder — tune against real match data once there's
  * enough of it to see what "normal" actually looks like.
+ *
+ * P21: the per-counter "unrealistic" limits live on the schema's fields (`unrealisticAbove`, set for BIOBUZZ in lib/forms/builtin.ts);
+ * the four UNREALISTIC_* values below are BIOBUZZ's, re-exported from there so there is exactly one source for them.
  */
 export const FLAG_THRESHOLDS = {
-  UNREALISTIC_AUTO_TIP_HIVE: 3,
-  UNREALISTIC_TELEOP_TIP_HIVE: 6,
-  UNREALISTIC_TELEOP_FLOWER_POLLEN: 20,
-  UNREALISTIC_TELEOP_GARDEN_POLLEN: 40,
+  UNREALISTIC_AUTO_TIP_HIVE: BIOBUZZ_UNREALISTIC.AUTO_TIP_HIVE,
+  UNREALISTIC_TELEOP_TIP_HIVE: BIOBUZZ_UNREALISTIC.TELEOP_TIP_HIVE,
+  UNREALISTIC_TELEOP_FLOWER_POLLEN: BIOBUZZ_UNREALISTIC.FLOWER_POLLEN,
+  UNREALISTIC_TELEOP_GARDEN_POLLEN: BIOBUZZ_UNREALISTIC.GARDEN_POLLEN,
   PLAUSIBLE_SINGLE_ROBOT_MAX_SCORE: 200,
   /** Heuristic for "a full scoring run" when paired with Disabled by FTC. */
   CONTRADICTORY_DISABLED_SCORE_MIN: 100,
@@ -30,6 +37,8 @@ export type FlagContext = {
   sameMatchEntries: ScoutEntry[];
   /** Other non-excluded entries for this team within the event, excluding this entry. */
   sameTeamEntries: ScoutEntry[];
+  /** P21: the form the entry was scouted with (its incident roles and counter limits). Defaults to the built-in form with the entry's `formId`. */
+  form?: Form | null;
 };
 
 export type FlagRule = {
@@ -41,48 +50,72 @@ export type FlagRule = {
 
 const T = FLAG_THRESHOLDS;
 
+// --- schema-driven helpers (P21): rules read stat roles and field limits, never field keys ---------------------
+
+const formOf = (e: ScoutEntry, ctx: FlagContext): Form | null => (ctx.form !== undefined ? ctx.form : getBuiltinForm(e.formId));
+
+/** Is any field carrying `role` switched on for this entry? (False when the form has no such field.) */
+function roleOn(e: ScoutEntry, ctx: FlagContext, role: StatRole): boolean {
+  const form = formOf(e, ctx);
+  if (!form) return false;
+  const values = entryValues(e, form);
+  return formFieldMeta(form).some((m) => hasRole(m.field, role) && values[m.field.key] === true);
+}
+
+/** Does any counter/number with an "unrealistic above" limit, in a phase `inPhase` accepts, exceed it? */
+function counterAboveLimit(e: ScoutEntry, ctx: FlagContext, inPhase: (phase: string) => boolean): boolean {
+  const form = formOf(e, ctx);
+  if (!form) return false;
+  const values = entryValues(e, form);
+  return formFieldMeta(form).some((m) => {
+    const limit = m.field.unrealisticAbove;
+    const v = values[m.field.key];
+    return limit !== undefined && inPhase(m.phase) && typeof v === "number" && v > limit;
+  });
+}
+
+/** Score-based rules mean nothing for a form that doesn't score (every total would be 0). A form we can't find is treated as scoring, like every entry used to be. */
+const scores = (e: ScoutEntry, ctx: FlagContext): boolean => e.scored !== false && formOf(e, ctx)?.scoringEnabled !== false;
+
 export const FLAG_RULES: FlagRule[] = [
   {
     id: "zero-main-scoring",
     title: "Zero Main Scoring",
     explanation: "No auto/teleop/endgame scoring recorded.",
-    evaluate: (e) => !e.fields.neverStartedMatch && !e.fields.diedDuringMatch && e.score.total === 0,
+    evaluate: (e, ctx) => scores(e, ctx) && !roleOn(e, ctx, "neverStarted") && !roleOn(e, ctx, "died") && e.score.total === 0,
   },
   {
     id: "unrealistic-auto-scoring",
     title: "Unrealistic Auto Scoring",
-    explanation: `Auto Tip Hive count is above ${T.UNREALISTIC_AUTO_TIP_HIVE}.`,
-    evaluate: (e) => e.fields.autoTipHive > T.UNREALISTIC_AUTO_TIP_HIVE,
+    explanation: "An autonomous counter is above its plausible limit.",
+    evaluate: (e, ctx) => counterAboveLimit(e, ctx, (phase) => phase === "auto"),
   },
   {
     id: "unrealistic-teleop-scoring",
     title: "Unrealistic Teleop Scoring",
     explanation: "A teleop counter or the total score is above a plausible single-robot amount.",
-    evaluate: (e) =>
-      e.fields.teleTipHive > T.UNREALISTIC_TELEOP_TIP_HIVE ||
-      e.fields.flowerPollenNectar > T.UNREALISTIC_TELEOP_FLOWER_POLLEN ||
-      e.fields.gardenPollenNectar > T.UNREALISTIC_TELEOP_GARDEN_POLLEN ||
-      e.score.total > T.PLAUSIBLE_SINGLE_ROBOT_MAX_SCORE,
+    evaluate: (e, ctx) =>
+      counterAboveLimit(e, ctx, (phase) => phase !== "auto" && phase !== "prematch") || (scores(e, ctx) && e.score.total > T.PLAUSIBLE_SINGLE_ROBOT_MAX_SCORE),
   },
   {
     id: "exceeds-alliance-score",
     title: "Exceeds Alliance Score",
     explanation: "This robot's calculated score is higher than its alliance's official score for the match.",
-    evaluate: (e, ctx) => ctx.officialAllianceScore !== null && e.score.total > ctx.officialAllianceScore,
+    evaluate: (e, ctx) => scores(e, ctx) && ctx.officialAllianceScore !== null && e.score.total > ctx.officialAllianceScore,
   },
   {
     id: "never-started-but-scored",
     title: "Never Started But Scored",
     explanation: "Never Started Match is checked but points were recorded.",
-    evaluate: (e) => e.fields.neverStartedMatch && e.score.total > 0,
+    evaluate: (e, ctx) => scores(e, ctx) && roleOn(e, ctx, "neverStarted") && e.score.total > 0,
   },
   {
     id: "contradictory-incidents",
     title: "Contradictory Incidents",
     explanation: "The checked incidents don't make sense together (e.g. never started but recovered from freeze).",
-    evaluate: (e) =>
-      (e.fields.neverStartedMatch && e.fields.recoveredFromFreeze) ||
-      (e.fields.disabledByFtc && e.score.total >= T.CONTRADICTORY_DISABLED_SCORE_MIN),
+    evaluate: (e, ctx) =>
+      (roleOn(e, ctx, "neverStarted") && roleOn(e, ctx, "recoveredFromFreeze")) ||
+      (scores(e, ctx) && roleOn(e, ctx, "disabled") && e.score.total >= T.CONTRADICTORY_DISABLED_SCORE_MIN),
   },
   {
     id: "team-not-in-match",
@@ -107,7 +140,7 @@ export const FLAG_RULES: FlagRule[] = [
     title: "Statistical Outlier",
     explanation: `This entry's total is more than ${T.OUTLIER_STD_DEV_THRESHOLD} standard deviations from this team's own average.`,
     evaluate: (e, ctx) => {
-      if (ctx.sameTeamEntries.length < T.OUTLIER_MIN_OTHER_ENTRIES) return false;
+      if (!scores(e, ctx) || ctx.sameTeamEntries.length < T.OUTLIER_MIN_OTHER_ENTRIES) return false;
       const totals = ctx.sameTeamEntries.map((o) => o.score.total);
       const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
       const variance = totals.reduce((a, b) => a + (b - mean) ** 2, 0) / totals.length;

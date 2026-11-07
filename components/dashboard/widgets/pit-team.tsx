@@ -9,6 +9,8 @@ import { teamHref } from "@/components/dashboard/shared";
 import { Badge } from "@/components/ui/badge";
 import { formatMatch } from "@/lib/analytics/game-schema";
 import { schemaFieldMeta } from "@/lib/analytics/team-stats";
+import { hasRole } from "@/lib/forms/meta";
+import { entryValues } from "@/lib/forms/legacy";
 import { useDashboard } from "@/lib/dashboard/data";
 import { phaseAverages } from "@/lib/dashboard/insights";
 import { cn } from "@/lib/utils";
@@ -25,8 +27,8 @@ export function ScoutsSawWidget() {
   const incidents = useMemo(
     () =>
       schemaFieldMeta(d.schema)
-        .filter((m) => m.field.reliability)
-        .map((m) => ({ key: m.field.key, label: m.field.label, count: ours.filter((e) => (e.fields as unknown as Record<string, unknown>)[m.field.key] === true).length })),
+        .filter((m) => hasRole(m.field, "reliability"))
+        .map((m) => ({ key: m.field.key, label: m.field.label, count: ours.filter((e) => entryValues(e, d.schema)[m.field.key] === true).length })),
     [d.schema, ours]
   );
   const comments = useMemo(

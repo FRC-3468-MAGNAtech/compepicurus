@@ -156,7 +156,7 @@ describe("moveItem / fieldTeamsWrite", () => {
     expect(moveItem([1, 2, 3], 0, 5)).toEqual([1, 2, 3]);
   });
   it("mirrors the first team into the legacy fields and the id list", () => {
-    expect(fieldTeamsWrite([B, A])).toEqual({ fieldTeams: [B, A], fieldTeamIdList: ["fteam_b", "ft-35792"], number: 35794, name: "Beta" });
+    expect(fieldTeamsWrite([B, A])).toEqual({ fieldTeams: [B, A], fieldTeamIdList: ["fteam_b", "ft-35792"], fieldTeamNumbers: [35794, 35792], number: 35794, name: "Beta" });
     expect(fieldTeamsWrite([C]).name).toBeNull();
   });
 });
@@ -209,7 +209,7 @@ describe("removal and bulk assignment", () => {
 describe("migration planners (idempotent)", () => {
   it("builds fieldTeams from the legacy number, and defaults new members to all teams", () => {
     const plan = planTeamMigration({ number: 35792, name: "Alpha" });
-    expect(plan).toEqual({ fieldTeams: [{ id: "ft-35792", number: 35792, name: "Alpha" }], fieldTeamIdList: ["ft-35792"] });
+    expect(plan).toEqual({ fieldTeams: [{ id: "ft-35792", number: 35792, name: "Alpha" }], fieldTeamIdList: ["ft-35792"], fieldTeamNumbers: [35792] });
     expect(defaultMemberFieldTeamIds({ number: 35792, name: "Alpha" })).toEqual(["ft-35792"]);
   });
   it("does nothing the second time", () => {
@@ -217,9 +217,10 @@ describe("migration planners (idempotent)", () => {
     expect(planTeamMigration({ number: 35792, name: "Alpha", ...first })).toBeNull();
   });
   it("repairs a missing or stale id mirror without touching fieldTeams", () => {
-    expect(planTeamMigration({ fieldTeams: [A, B] })).toEqual({ fieldTeams: [A, B], fieldTeamIdList: ["ft-35792", "fteam_b"] });
+    expect(planTeamMigration({ fieldTeams: [A, B] })).toEqual({ fieldTeams: [A, B], fieldTeamIdList: ["ft-35792", "fteam_b"], fieldTeamNumbers: [35792, 35794] });
     expect(planTeamMigration({ fieldTeams: [A, B], fieldTeamIdList: ["ft-35792"] })).not.toBeNull();
-    expect(planTeamMigration({ fieldTeams: [A, B], fieldTeamIdList: ["ft-35792", "fteam_b"] })).toBeNull();
+    expect(planTeamMigration({ fieldTeams: [A, B], fieldTeamIdList: ["ft-35792", "fteam_b"] })).not.toBeNull(); // the P20 numbers mirror is missing
+    expect(planTeamMigration({ fieldTeams: [A, B], fieldTeamIdList: ["ft-35792", "fteam_b"], fieldTeamNumbers: [35792, 35794] })).toBeNull();
   });
   it("has nothing to migrate from when there is no number at all", () => {
     expect(planTeamMigration({})).toBeNull();

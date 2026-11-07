@@ -5,7 +5,10 @@ import { db } from "@/lib/firebase/client";
 import { downloadTextFile } from "@/lib/download";
 import { logAuditEvent } from "@/lib/audit-log";
 import { entriesToCsv } from "@/lib/analytics/csv";
-import { BIOBUZZ_SCHEMA } from "@/lib/analytics/game-schema";
+import { buildGameSchema, unionForms } from "@/lib/analytics/game-schema";
+import { builtinFormResolver, type FormResolver } from "@/lib/forms/resolver";
+import { BIOBUZZ_FORM } from "@/lib/forms/builtin";
+import type { Form } from "@/lib/forms/types";
 import type { ScoutEntry } from "@/lib/scout-entries";
 
 /**
@@ -51,11 +54,19 @@ export async function exportAllDataJson(teamId: string, actorUid: string, actorN
   return summary;
 }
 
-/** Every scoutEntries doc for the team (any source), as one CSV — the BIOBUZZ schema's columns, names never anonymized (this is an admin-only export). */
-export async function exportEntriesCsv(teamId: string, actorUid: string, actorName: string): Promise<number> {
+/**
+ * Every scoutEntries doc for the team (any source), as one CSV, names never anonymized (this is an admin-only export). P21: the columns are the union of
+ * the forms the entries were scouted with (`resolveForm` finds each entry's form; the default knows only the built-ins), so custom-form entries export too.
+ */
+export async function exportEntriesCsv(teamId: string, actorUid: string, actorName: string, resolveForm: FormResolver = builtinFormResolver): Promise<number> {
   const snap = await getDocs(query(collection(db, "scoutEntries"), where("teamId", "==", teamId)));
   const entries = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as ScoutEntry[];
-  const csv = entriesToCsv(BIOBUZZ_SCHEMA, entries, (name) => name);
+  const used = new Map<string, Form>();
+  for (const e of entries) {
+    const f = resolveForm(e);
+    if (f) used.set(f.id, f);
+  }
+  const csv = entriesToCsv(buildGameSchema(unionForms(used.size > 0 ? [...used.values()] : [BIOBUZZ_FORM])), entries, (name) => name);
   downloadTextFile(`compepicurus-entries-${teamId}-${Date.now()}.csv`, csv, "text/csv;charset=utf-8");
   await logAuditEvent(teamId, actorUid, actorName, "export-backup", { format: "csv", count: entries.length }, null, null);
   return entries.length;

@@ -14,20 +14,32 @@ import { RescorePanel } from "@/components/admin/rescore-panel";
 import { AuditLogPanel } from "@/components/admin/audit-log-panel";
 import { BackupsPanel } from "@/components/admin/backups-panel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApplicationsPanel } from "@/components/admin/applications-panel";
+import { RecoveryPanel } from "@/components/admin/recovery-panel";
+import { FormsPanel } from "@/components/forms/forms-panel";
+import { usePendingApplicationCount } from "@/lib/applications-client";
 
-type AdminTab = "match-library" | "sessions" | "rescore" | "audit-log" | "backups";
+type AdminTab = "match-library" | "forms" | "sessions" | "rescore" | "audit-log" | "backups" | "applications" | "recovery";
 
 const TAB_LABELS: Record<AdminTab, string> = {
   "match-library": "Match Library",
+  // P22: the Form Builder (owner and admin)
+  forms: "Forms",
   sessions: "Sessions",
   rescore: "Rescore",
   "audit-log": "Audit Log",
   backups: "Backups",
+  // P20: platform owners only
+  applications: "Team Applications",
+  recovery: "Recovery",
 };
+
+const PLATFORM_TABS: AdminTab[] = ["applications", "recovery"];
 
 export default function AdminPanelPage() {
   const router = useRouter();
-  const { isAdmin, isOwner } = usePermissions();
+  const { isAdmin, isPlatformOwner, can } = usePermissions();
+  const pendingApplications = usePendingApplicationCount(isPlatformOwner);
   const [teamCreationEnabled, setTeamCreationEnabledState] = useState<boolean | null>(null);
   const [togglingTeamCreation, setTogglingTeamCreation] = useState(false);
   const [teamCreationError, setTeamCreationError] = useState<string | null>(null);
@@ -38,9 +50,9 @@ export default function AdminPanelPage() {
   }, [isAdmin, router]);
 
   useEffect(() => {
-    if (!isOwner) return;
+    if (!isPlatformOwner) return;
     fetchTeamCreationEnabled().then(setTeamCreationEnabledState);
-  }, [isOwner]);
+  }, [isPlatformOwner]);
 
   const handleToggleTeamCreation = async (checked: boolean) => {
     setTeamCreationError(null);
@@ -76,14 +88,14 @@ export default function AdminPanelPage() {
         <Badge variant="danger" className="ml-auto">Privileged area</Badge>
       </GlassPanel>
 
-      {isOwner && (
+      {isPlatformOwner && (
         <GlassPanel className="flex flex-col gap-4 border-amber-400/20">
-          <h2 className="text-base font-semibold">Owner settings</h2>
+          <h2 className="text-base font-semibold">Platform owner settings</h2>
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-sm font-medium">Allow team creation</div>
               <div className="text-xs text-[var(--muted-foreground)]">
-                Lets the Signup / Finish Setup page offer &ldquo;Create a team&rdquo; again. Off by default once a team exists.
+                Lets the Signup / Finish Setup page offer &ldquo;Create a team&rdquo; directly. Off by default once a team exists: other teams apply instead, and you approve them under Team Applications.
               </div>
             </div>
             <Switch
@@ -98,19 +110,30 @@ export default function AdminPanelPage() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as AdminTab)}>
         <TabsList>
-          {(Object.keys(TAB_LABELS) as AdminTab[]).map((t) => (
-            <TabsTrigger key={t} value={t}>
-              {TAB_LABELS[t]}
-            </TabsTrigger>
-          ))}
+          {(Object.keys(TAB_LABELS) as AdminTab[])
+            .filter((t) => isPlatformOwner || !PLATFORM_TABS.includes(t))
+            .filter((t) => t !== "forms" || can("manageForms"))
+            .map((t) => (
+              <TabsTrigger key={t} value={t}>
+                {TAB_LABELS[t]}
+                {t === "applications" && pendingApplications > 0 && (
+                  <span className="ml-2 rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-[var(--color-primary-foreground)]" aria-label={`${pendingApplications} waiting`}>
+                    {pendingApplications}
+                  </span>
+                )}
+              </TabsTrigger>
+            ))}
         </TabsList>
       </Tabs>
 
       {tab === "match-library" && <MatchLibraryPanel onOpenRescore={() => setTab("rescore")} />}
+      {tab === "forms" && can("manageForms") && <FormsPanel onOpenRescore={() => setTab("rescore")} />}
       {tab === "sessions" && <SessionsPanel />}
       {tab === "rescore" && <RescorePanel />}
       {tab === "audit-log" && <AuditLogPanel />}
       {tab === "backups" && <BackupsPanel />}
+      {tab === "applications" && isPlatformOwner && <ApplicationsPanel />}
+      {tab === "recovery" && isPlatformOwner && <RecoveryPanel />}
     </div>
   );
 }

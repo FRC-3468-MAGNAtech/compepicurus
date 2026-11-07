@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { initialScoutEntryFields, type ScoutEntry, type ScoutEntryFields } from "@/lib/scout-entries";
 import { BIOBUZZ_FORM_SCHEMA, calculateScore, type ScoutFormSchema } from "@/lib/scout-form/schema";
+import { fromLegacySchema } from "@/lib/forms/legacy";
 import type { AnalyticsEntry } from "./entries";
 import {
   DEFAULT_MIN_ENTRIES,
@@ -194,7 +195,7 @@ describe("buildTeamStats", () => {
 
 describe("schema-driven", () => {
   // A season that shares no field names with BIOBUZZ.
-  const OTHER: ScoutFormSchema = {
+  const OTHER: ScoutFormSchema = fromLegacySchema({
     id: "other",
     version: 1,
     name: "Other",
@@ -207,7 +208,7 @@ describe("schema-driven", () => {
       },
       { id: "general", label: "General", fields: [{ key: "stuck", type: "checkbox", label: "Got stuck" }, { key: "notes", type: "text", label: "Notes" }] },
     ],
-  };
+  });
 
   it("builds stats for any schema without knowing its field names", () => {
     const e = (gears: number, spin: boolean, stuck: boolean): AnalyticsEntry => {

@@ -25,7 +25,7 @@ import {
 import { summarizeBulk, validateBulk } from "@/lib/library/bulk";
 import { buildManualMatchDoc, emptyRawMatch, validateRawMatch } from "@/lib/library/manual-match";
 import { applyPickOp, sanitizePicks, type PickOp } from "@/lib/pick-list/ops";
-import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, collection, addDoc, writeBatch, runTransaction, query, where } from "firebase/firestore";
+import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, deleteField, collection, addDoc, writeBatch, runTransaction, query, where } from "firebase/firestore";
 
 // Unverified in this environment — no Java / firebase-tools available here
 // to run the Emulator Suite (see docs/ASSUMPTIONS.md, "P1: rules tests").
@@ -1892,15 +1892,16 @@ describe("FIX2: owner can edit roles (own and other admins'), others can't touch
       await assertSucceeds(updateDoc(doc(db, "users", SCOUT_UID), { isAdmin: true }));
     });
 
-    it("also accepts the owner claim alone, when the doc flag hasn't caught up", async () => {
+    it("no longer treats a token claim as team ownership (P20): neither the old `owner` claim nor `platformOwner` edits anything here", async () => {
       await withRulesOff(async (db) => {
         await setDoc(doc(db, "users", CLAIM_UID), { name: "Claim Owner", email: "c@example.com", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
       });
-      const db = testEnv.authenticatedContext(CLAIM_UID, { owner: true }).firestore();
-      await assertSucceeds(updateDoc(doc(db, "users", SCOUT_UID), { primaryRole: "media" }));
-      // ...but the claim never lets anyone edit an owner they aren't, or write isOwner.
-      await assertFails(updateDoc(doc(db, "users", OWNER_UID), { primaryRole: "media" }));
-      await assertFails(updateDoc(doc(db, "users", CLAIM_UID), { isOwner: true }));
+      for (const claims of [{ owner: true }, { platformOwner: true }]) {
+        const db = testEnv.authenticatedContext(CLAIM_UID, claims).firestore();
+        await assertFails(updateDoc(doc(db, "users", SCOUT_UID), { primaryRole: "media" }));
+        await assertFails(updateDoc(doc(db, "users", OWNER_UID), { primaryRole: "media" }));
+        await assertFails(updateDoc(doc(db, "users", CLAIM_UID), { isOwner: true }));
+      }
     });
 
     it("a claim from another team's owner gives nothing here", async () => {
@@ -2845,6 +2846,398 @@ describe("P19 FTC teams", () => {
     it("never lets an outsider read the account's FTC teams", async () => {
       await seedMigrated();
       await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "teams", TEAM_ID)));
+    });
+  });
+});
+
+// P20: platform owner vs team owner, the application collections, and cross-account isolation.
+describe("P20 owner model, applications and isolation", () => {
+  const asOwner = () => testEnv.authenticatedContext(OWNER_UID).firestore();
+  const asAdmin = () => testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const asScout = () => testEnv.authenticatedContext(SCOUT_UID).firestore();
+  const asPlatform = (uid = "platform-1") => testEnv.authenticatedContext(uid, { platformOwner: true, admin: true }).firestore();
+  const PLATFORM_UID = "platform-1";
+  const B_TEAM = "team-b";
+  const B_ADMIN = "b-admin";
+  const B_SCOUT = "b-scout";
+
+  async function setOwnerUid(uid: string | null) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "teams", TEAM_ID), uid ? { ownerUid: uid } : { ownerUid: deleteField() });
+    });
+  }
+
+  // A second, separate account (what an approved application creates), with its own owner and a scout.
+  async function seedAccountB() {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "teams", B_TEAM), {
+        number: 777, name: "Bee", joinCode: "BBBBBB", ownerUid: B_ADMIN, fieldTeams: [{ id: "ft-777", number: 777, name: "Bee" }], fieldTeamIdList: ["ft-777"], fieldTeamNumbers: [777], createdAt: new Date(),
+      });
+      await setDoc(doc(db, "users", B_ADMIN), { name: "B Admin", email: "b@example.com", teamId: B_TEAM, primaryRole: "team-coach", secondaryRoles: [], isAdmin: true, isOwner: true, themeId: "team", fieldTeamIds: ["ft-777"] });
+      await setDoc(doc(db, "users", B_SCOUT), { name: "B Scout", email: "bs@example.com", teamId: B_TEAM, primaryRole: "match-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
+      await setDoc(doc(db, "scoutEntries", "b-entry"), { teamId: B_TEAM, uid: B_SCOUT, teamNumber: 254 });
+      await setDoc(doc(db, "scoutEntries", "a-entry"), { teamId: TEAM_ID, uid: SCOUT_UID, teamNumber: 254 });
+      await setDoc(doc(db, "users", PLATFORM_UID), { name: "Platform Owner", email: "platform@example.com", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: true, isOwner: false, isPlatformOwner: true, themeId: "team" });
+    });
+  }
+
+  describe("team owner follows teams.ownerUid", () => {
+    it("with an ownerUid set, that member has the owner protections and the legacy flag counts for nothing", async () => {
+      await setOwnerUid(ADMIN_UID);
+      // ADMIN_UID is now the owner: nobody else can edit their row...
+      await assertFails(updateDoc(doc(asOwner(), "users", ADMIN_UID), { primaryRole: "media" }));
+      // ...they can edit their own row (admin stays on), and everyone else's.
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", ADMIN_UID), { primaryRole: "team-coach" }));
+      await assertFails(updateDoc(doc(asAdmin(), "users", ADMIN_UID), { isAdmin: false }));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", SCOUT_UID), { primaryRole: "pit-scout" }));
+    });
+
+    it("the old owner (stale legacy flag) loses the protections: they're an ordinary admin the new owner can edit", async () => {
+      await setOwnerUid(ADMIN_UID);
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", OWNER_UID), { primaryRole: "media" }));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "users", OWNER_UID), { isAdmin: false }));
+    });
+
+    it("and the old owner's flag no longer makes them the owner when they edit others", async () => {
+      await setOwnerUid(ADMIN_UID);
+      // as an admin they can still edit non-owners, but cannot edit the real owner's row
+      await assertSucceeds(updateDoc(doc(asOwner(), "users", SCOUT_UID), { primaryRole: "media" }));
+      await assertFails(updateDoc(doc(asOwner(), "users", ADMIN_UID), { primaryRole: "media" }));
+    });
+
+    it("falls back to the legacy flag only while the account has no ownerUid (the bootstrap hasn't run: nobody is locked out)", async () => {
+      await setOwnerUid(null);
+      await assertSucceeds(updateDoc(doc(asOwner(), "users", OWNER_UID), { primaryRole: "media" }));
+      await assertFails(updateDoc(doc(asAdmin(), "users", OWNER_UID), { primaryRole: "media" }));
+    });
+
+    it("keeps ownerUid and pendingTransfer out of every client's reach, the owner's and admins' included", async () => {
+      await setOwnerUid(OWNER_UID);
+      for (const db of [asOwner(), asAdmin(), asScout()]) {
+        await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { ownerUid: SCOUT_UID }));
+        await assertFails(updateDoc(doc(db, "teams", TEAM_ID), { ownerUid: deleteField() }));
+        await assertFails(
+          updateDoc(doc(db, "teams", TEAM_ID), { pendingTransfer: { id: "t", fromUid: OWNER_UID, toUid: SCOUT_UID, requestedAt: new Date(), expiresAt: new Date() } })
+        );
+      }
+      // other team fields still work for admins and the owner
+      await assertSucceeds(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { accountName: "Still editable" }));
+      await assertSucceeds(updateDoc(doc(asOwner(), "teams", TEAM_ID), { activeEventCode: "USNYLI" }));
+    });
+
+    it("cannot be self-granted: nobody writes isOwner or isPlatformOwner on a user doc", async () => {
+      await setOwnerUid(OWNER_UID);
+      await assertFails(updateDoc(doc(asScout(), "users", SCOUT_UID), { isPlatformOwner: true }));
+      await assertFails(updateDoc(doc(asAdmin(), "users", ADMIN_UID), { isPlatformOwner: true }));
+      await assertFails(updateDoc(doc(asOwner(), "users", OWNER_UID), { isPlatformOwner: true }));
+      await assertFails(updateDoc(doc(asOwner(), "users", SCOUT_UID), { isOwner: true }));
+    });
+  });
+
+  describe("application collections", () => {
+    const application = (applicantUid: string, status = "pending") => ({
+      applicantUid, applicantName: "Applicant", applicantEmail: "a@example.com", teamNumber: 35792, teamName: "Alpha", role: "team-coach", verification: "I am the mentor.",
+      status, createdAt: new Date(), expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    beforeEach(async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "teamApplications", "app-1"), application("applicant-1"));
+        await setDoc(doc(db, "teamApplications", "app-2"), application("applicant-2"));
+        await setDoc(doc(db, "applicationPrivate", "app-1"), { signals: {}, notes: "private", ipHash: "abc" });
+        await setDoc(doc(db, "applicationBlocks", "email_x"), { type: "email", value: "x@example.com" });
+        await setDoc(doc(db, "platformAuditLog", "log-1"), { action: "reject-application" });
+        await setDoc(doc(db, "rateLimits", "ip_x_1"), { count: 2 });
+      });
+    });
+
+    it("the platform owner reads and lists every application, and the private, block and audit data", async () => {
+      const db = asPlatform();
+      await assertSucceeds(getDoc(doc(db, "teamApplications", "app-1")));
+      await assertSucceeds(getDocs(collection(db, "teamApplications")));
+      await assertSucceeds(getDocs(query(collection(db, "teamApplications"), where("status", "==", "pending"))));
+      await assertSucceeds(getDoc(doc(db, "applicationPrivate", "app-1")));
+      await assertSucceeds(getDocs(collection(db, "applicationBlocks")));
+      await assertSucceeds(getDocs(collection(db, "platformAuditLog")));
+    });
+
+    it("an applicant reads only their own application (and cannot list everyone's)", async () => {
+      const mine = testEnv.authenticatedContext("applicant-1").firestore();
+      await assertSucceeds(getDoc(doc(mine, "teamApplications", "app-1")));
+      await assertSucceeds(getDocs(query(collection(mine, "teamApplications"), where("applicantUid", "==", "applicant-1"))));
+      await assertFails(getDoc(doc(mine, "teamApplications", "app-2")));
+      await assertFails(getDocs(collection(mine, "teamApplications")));
+    });
+
+    it("an applicant can't read the reviewer's private doc, blocks, the audit log or rate limits", async () => {
+      const mine = testEnv.authenticatedContext("applicant-1").firestore();
+      await assertFails(getDoc(doc(mine, "applicationPrivate", "app-1")));
+      await assertFails(getDocs(collection(mine, "applicationBlocks")));
+      await assertFails(getDocs(collection(mine, "platformAuditLog")));
+      await assertFails(getDoc(doc(mine, "rateLimits", "ip_x_1")));
+    });
+
+    it("a team owner or admin is not a platform owner: they read no applications", async () => {
+      await assertFails(getDoc(doc(asOwner(), "teamApplications", "app-1")));
+      await assertFails(getDocs(collection(asAdmin(), "teamApplications")));
+      await assertFails(getDoc(doc(asOwner(), "applicationPrivate", "app-1")));
+    });
+
+    it("signed-out visitors read nothing here", async () => {
+      const anon = testEnv.unauthenticatedContext().firestore();
+      await assertFails(getDoc(doc(anon, "teamApplications", "app-1")));
+      await assertFails(getDocs(collection(anon, "teamApplications")));
+    });
+
+    it("nobody writes any of it from a client, the platform owner and the applicant included", async () => {
+      const mine = testEnv.authenticatedContext("applicant-1").firestore();
+      await assertFails(setDoc(doc(mine, "teamApplications", "app-new"), application("applicant-1")));
+      await assertFails(updateDoc(doc(mine, "teamApplications", "app-1"), { status: "approved" }));
+      const platform = asPlatform();
+      await assertFails(updateDoc(doc(platform, "teamApplications", "app-1"), { status: "approved" }));
+      await assertFails(setDoc(doc(platform, "teamApplications", "app-new"), application("applicant-1")));
+      await assertFails(updateDoc(doc(platform, "applicationPrivate", "app-1"), { notes: "edited" }));
+      await assertFails(setDoc(doc(platform, "applicationBlocks", "email_y"), { type: "email" }));
+      await assertFails(setDoc(doc(platform, "platformAuditLog", "log-2"), { action: "x" }));
+      await assertFails(setDoc(doc(platform, "rateLimits", "ip_y_1"), { count: 0 }));
+      await assertFails(deleteDoc(doc(platform, "teamApplications", "app-1")));
+    });
+  });
+
+  describe("cross-account isolation", () => {
+    beforeEach(seedAccountB);
+
+    it("a new account's members can't read or write another account's data, in either direction", async () => {
+      const b = testEnv.authenticatedContext(B_ADMIN).firestore();
+      await assertFails(getDoc(doc(b, "teams", TEAM_ID)));
+      await assertFails(getDoc(doc(b, "users", SCOUT_UID)));
+      await assertFails(getDoc(doc(b, "scoutEntries", "a-entry")));
+      await assertFails(getDocs(query(collection(b, "scoutEntries"), where("teamId", "==", TEAM_ID))));
+      await assertFails(updateDoc(doc(b, "teams", TEAM_ID), { accountName: "hijacked" }));
+      await assertFails(updateDoc(doc(b, "users", SCOUT_UID), { primaryRole: "media" }));
+      await assertFails(setDoc(doc(b, "scoutEntries", "forged"), { teamId: TEAM_ID, uid: B_ADMIN, teamNumber: 1 }));
+      // and the reverse
+      const a = asOwner();
+      await assertFails(getDoc(doc(a, "teams", B_TEAM)));
+      await assertFails(getDoc(doc(a, "users", B_SCOUT)));
+      await assertFails(getDoc(doc(a, "scoutEntries", "b-entry")));
+      await assertFails(updateDoc(doc(a, "users", B_SCOUT), { primaryRole: "media" }));
+      await assertFails(updateDoc(doc(a, "teams", B_TEAM), { accountName: "hijacked" }));
+      // each still has full access to its own
+      await assertSucceeds(getDoc(doc(b, "scoutEntries", "b-entry")));
+      await assertSucceeds(updateDoc(doc(b, "teams", B_TEAM), { accountName: "Bee Org" }));
+    });
+
+    it("the new account's owner can't touch ownership of another account, or their own from a client", async () => {
+      const b = testEnv.authenticatedContext(B_ADMIN).firestore();
+      await assertFails(updateDoc(doc(b, "teams", B_TEAM), { ownerUid: B_SCOUT }));
+      await assertFails(updateDoc(doc(b, "teams", TEAM_ID), { ownerUid: B_ADMIN }));
+    });
+
+    it("platform-owner status gives no read access to any account's scouting data, its own included", async () => {
+      const platform = asPlatform(); // a member of TEAM_ID with the claim
+      // the application tools open for them...
+      await assertSucceeds(getDocs(collection(platform, "teamApplications")));
+      // ...but other accounts stay closed, and the claim adds nothing within their own account either
+      await assertFails(getDoc(doc(platform, "teams", B_TEAM)));
+      await assertFails(getDoc(doc(platform, "users", B_ADMIN)));
+      await assertFails(getDoc(doc(platform, "scoutEntries", "b-entry")));
+      await assertFails(getDocs(query(collection(platform, "scoutEntries"), where("teamId", "==", B_TEAM))));
+      await assertFails(updateDoc(doc(platform, "teams", B_TEAM), { accountName: "x" }));
+      await assertFails(updateDoc(doc(platform, "users", B_SCOUT), { primaryRole: "media" }));
+      await assertFails(setDoc(doc(platform, "scoutEntries", "forged-2"), { teamId: B_TEAM, uid: PLATFORM_UID, teamNumber: 1 }));
+    });
+
+    it("a platform-owner claim on someone who isn't on an account opens nothing of it either", async () => {
+      const drifter = testEnv.authenticatedContext("drifter", { platformOwner: true }).firestore();
+      await assertFails(getDoc(doc(drifter, "teams", TEAM_ID)));
+      await assertFails(getDoc(doc(drifter, "scoutEntries", "a-entry")));
+      await assertSucceeds(getDocs(collection(drifter, "teamApplications")));
+    });
+  });
+});
+
+describe("P21: forms, form versions and teams.activeForms", () => {
+  const FORM_ID = "pit-v1";
+  const DOC_ID = `${TEAM_ID}_${FORM_ID}`;
+  const asScout = () => testEnv.authenticatedContext(SCOUT_UID).firestore();
+  const asAdmin = () => testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const asOwner = () => testEnv.authenticatedContext(OWNER_UID).firestore();
+  const asOutsider = () => testEnv.authenticatedContext(OTHER_TEAM_UID).firestore();
+
+  const form = (over: Record<string, unknown> = {}) => ({ id: FORM_ID, name: "Pit form", version: 1, sections: [], ...over });
+  const formDoc = (over: Record<string, unknown> = {}) => ({
+    teamId: TEAM_ID,
+    formId: FORM_ID,
+    name: "Pit form",
+    origin: "custom",
+    publishedVersion: null,
+    draft: form(),
+    active: true,
+    archived: false,
+    createdBy: ADMIN_UID,
+    ...over,
+  });
+  const versionDoc = (version: number, over: Record<string, unknown> = {}) => ({ teamId: TEAM_ID, formId: FORM_ID, version, form: form({ version }), createdBy: ADMIN_UID, ...over });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users", OTHER_TEAM_UID), { name: "Outsider", email: "o@example.com", teamId: OTHER_TEAM_ID, primaryRole: "match-scout", secondaryRoles: [], isAdmin: true, isOwner: false, themeId: "team" });
+    });
+  });
+
+  const seedDoc = (over: Record<string, unknown> = {}) =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "forms", DOC_ID), formDoc(over));
+    });
+
+  describe("forms/{teamId}_{formId}", () => {
+    it("lets an admin and the owner create a form, and a teammate read it (get and the team query)", async () => {
+      await assertSucceeds(setDoc(doc(asAdmin(), "forms", DOC_ID), formDoc()));
+      await assertSucceeds(setDoc(doc(asOwner(), "forms", `${TEAM_ID}_other`), formDoc({ formId: "other" })));
+      await assertSucceeds(getDoc(doc(asScout(), "forms", DOC_ID)));
+      await assertSucceeds(getDocs(query(collection(asScout(), "forms"), where("teamId", "==", TEAM_ID))));
+    });
+
+    it("keeps a scout from writing a form", async () => {
+      await assertFails(setDoc(doc(asScout(), "forms", DOC_ID), formDoc({ createdBy: SCOUT_UID })));
+      await seedDoc();
+      await assertFails(updateDoc(doc(asScout(), "forms", DOC_ID), { name: "Hacked" }));
+    });
+
+    it("isolates accounts: no reading, listing or writing another team's forms", async () => {
+      await seedDoc();
+      await assertFails(getDoc(doc(asOutsider(), "forms", DOC_ID)));
+      await assertFails(getDocs(query(collection(asOutsider(), "forms"), where("teamId", "==", TEAM_ID))));
+      await assertFails(updateDoc(doc(asOutsider(), "forms", DOC_ID), { name: "Hacked" }));
+      await assertFails(setDoc(doc(asOutsider(), "forms", DOC_ID), formDoc()));
+      await assertFails(setDoc(doc(asAdmin(), "forms", `${OTHER_TEAM_ID}_x`), formDoc({ teamId: OTHER_TEAM_ID, formId: "x" })));
+    });
+
+    it("requires the doc id to be {teamId}_{formId}, and refuses to move a form to another id or team", async () => {
+      await assertFails(setDoc(doc(asAdmin(), "forms", "arbitrary"), formDoc()));
+      await assertFails(setDoc(doc(asAdmin(), "forms", `${TEAM_ID}_wrong`), formDoc()));
+      await seedDoc();
+      await assertFails(updateDoc(doc(asAdmin(), "forms", DOC_ID), { formId: "renamed" }));
+      await assertFails(updateDoc(doc(asAdmin(), "forms", DOC_ID), { teamId: OTHER_TEAM_ID }));
+    });
+
+    it("checks the doc's shape", async () => {
+      const ref = () => doc(asAdmin(), "forms", DOC_ID);
+      await assertFails(setDoc(ref(), formDoc({ formId: "bad id!" })));
+      await assertFails(setDoc(ref(), formDoc({ name: "" })));
+      await assertFails(setDoc(ref(), formDoc({ origin: "mystery" })));
+      await assertFails(setDoc(ref(), formDoc({ active: "yes" })));
+      await assertFails(setDoc(ref(), formDoc({ archived: null })));
+      await assertFails(setDoc(ref(), formDoc({ publishedVersion: 0 })));
+      await assertFails(setDoc(ref(), formDoc({ publishedVersion: "1" })));
+      await assertFails(setDoc(ref(), formDoc({ draft: "x" })));
+      await assertSucceeds(setDoc(ref(), formDoc({ draft: null, publishedVersion: 3, origin: "built-in-override" })));
+    });
+
+    it("never lets the published version go down or be cleared, and never deletes", async () => {
+      await seedDoc({ publishedVersion: 3, draft: null });
+      await assertFails(updateDoc(doc(asAdmin(), "forms", DOC_ID), { publishedVersion: 2 }));
+      await assertFails(updateDoc(doc(asAdmin(), "forms", DOC_ID), { publishedVersion: null }));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "forms", DOC_ID), { publishedVersion: 4 }));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "forms", DOC_ID), { archived: true }));
+      await assertFails(deleteDoc(doc(asAdmin(), "forms", DOC_ID)));
+      await assertFails(deleteDoc(doc(asOwner(), "forms", DOC_ID)));
+    });
+  });
+
+  describe("forms/{id}/versions/{n} (immutable)", () => {
+    const publish = (db: ReturnType<typeof asAdmin>, version: number, docOver: Record<string, unknown> = {}, verOver: Record<string, unknown> = {}) => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, "forms", DOC_ID, "versions", String(version)), versionDoc(version, verOver));
+      batch.set(doc(db, "forms", DOC_ID), formDoc({ publishedVersion: version, draft: null, ...docOver }));
+      return batch.commit();
+    };
+
+    it("lets an admin publish a version together with the doc's bump, and a teammate read it", async () => {
+      await assertSucceeds(publish(asAdmin(), 1));
+      await assertSucceeds(getDoc(doc(asScout(), "forms", DOC_ID, "versions", "1")));
+      await assertFails(getDoc(doc(asOutsider(), "forms", DOC_ID, "versions", "1")));
+    });
+
+    it("refuses a version not matched by the doc's publishedVersion, or whose number doesn't match its id", async () => {
+      await assertFails(publish(asAdmin(), 1, { publishedVersion: 2 }));
+      await assertFails(setDoc(doc(asAdmin(), "forms", DOC_ID, "versions", "5"), versionDoc(5))); // doc not bumped
+      await assertFails(setDoc(doc(asAdmin(), "forms", DOC_ID, "versions", "7"), versionDoc(5)));
+      await assertFails(publish(asAdmin(), 1, {}, { form: form({ id: "someone-elses" }) }));
+    });
+
+    it("refuses a scout, another team's admin and a stale (older or equal) version number", async () => {
+      await assertFails(publish(asScout(), 1));
+      await assertFails(publish(asOutsider(), 1));
+      await assertSucceeds(publish(asAdmin(), 1));
+      await assertSucceeds(publish(asOwner(), 2));
+      await assertFails(publish(asAdmin(), 2)); // already exists: write-once
+      await assertFails(publish(asAdmin(), 1));
+    });
+
+    it("never updates or deletes a published version", async () => {
+      await assertSucceeds(publish(asAdmin(), 1));
+      const ref = (db: ReturnType<typeof asAdmin>) => doc(db, "forms", DOC_ID, "versions", "1");
+      await assertFails(updateDoc(ref(asAdmin()), { note: "tampered" }));
+      await assertFails(setDoc(ref(asOwner()), versionDoc(1, { note: "tampered" })));
+      await assertFails(deleteDoc(ref(asAdmin())));
+      await assertFails(deleteDoc(ref(asOwner())));
+    });
+  });
+
+  describe("teams/{teamId}.activeForms", () => {
+    it("lets an admin and the owner map the season to a form", async () => {
+      await assertSucceeds(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { "activeForms.biobuzz": "pit-v1" }));
+      await assertSucceeds(updateDoc(doc(asOwner(), "teams", TEAM_ID), { activeForms: { biobuzz: "biobuzz" } }));
+    });
+
+    it("keeps a scout out, and refuses unknown seasons and malformed values", async () => {
+      await assertFails(updateDoc(doc(asScout(), "teams", TEAM_ID), { "activeForms.biobuzz": "pit-v1" }));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { "activeForms.unknown-season": "pit-v1" }));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { "activeForms.biobuzz": 5 }));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { "activeForms.biobuzz": "" }));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { "activeForms.biobuzz": "x".repeat(41) }));
+      await assertFails(updateDoc(doc(asAdmin(), "teams", TEAM_ID), { activeForms: "biobuzz" }));
+    });
+  });
+
+  describe("scoutEntries written from a form (values + formVersion)", () => {
+    const entry = (uid: string, over: Record<string, unknown> = {}) => ({
+      teamId: TEAM_ID,
+      uid,
+      source: "event",
+      mode: null,
+      formId: FORM_ID,
+      formVersion: 2,
+      scoutName: "Scout Person",
+      eventCode: "USNYLI",
+      matchType: "Qualification",
+      matchNumber: 4,
+      teamNumber: 3468,
+      values: { rating: 4, note: "fast" },
+      score: { auto: 0, teleop: 0, endgame: 0, total: 0 },
+      scored: false,
+      comments: "fast",
+      submittedAt: new Date().toISOString(),
+      excluded: false,
+      autoFlags: [],
+      manualFlags: [],
+      accuracy: null,
+      createdAt: new Date(),
+      ...over,
+    });
+
+    it("lets a scout save a values-shaped entry (no legacy fields) under their own uid", async () => {
+      await assertSucceeds(addDoc(collection(asScout(), "scoutEntries"), entry(SCOUT_UID)));
+      await assertFails(addDoc(collection(asScout(), "scoutEntries"), entry(ADMIN_UID)));
+    });
+
+    it("still lets an admin edit it, and still not the author", async () => {
+      const id = await seedEntry(testEnv, entry(SCOUT_UID));
+      await assertSucceeds(updateDoc(doc(asAdmin(), "scoutEntries", id), { values: { rating: 5, note: "fixed" } }));
+      await assertFails(updateDoc(doc(asScout(), "scoutEntries", id), { values: { rating: 1 } }));
     });
   });
 });

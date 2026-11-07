@@ -270,7 +270,9 @@ function Cell({
       return <span>{hideNames ? nameMap.get(real) ?? real : real}</span>;
     }
     case "boolean": {
-      const value = col.getValue(entry) as boolean;
+      const value = col.getValue(entry) as boolean | null;
+      // P21: null = this entry's form doesn't have the field (mixed forms in one table)
+      if (value === null) return <span className="text-[var(--muted-foreground)]">—</span>;
       return (
         <span
           className={cn(
@@ -284,7 +286,8 @@ function Cell({
     }
     case "count":
     case "score": {
-      const value = col.getValue(entry) as number;
+      const value = col.getValue(entry) as number | null;
+      if (value === null || value === undefined) return <span className="text-[var(--muted-foreground)]">—</span>;
       return <span className={value === 0 ? "text-[var(--muted-foreground)]" : "font-medium"}>{value}</span>;
     }
     case "comments":

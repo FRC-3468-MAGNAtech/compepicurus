@@ -1,5 +1,6 @@
 import { schemaFieldMeta, type TeamStats } from "@/lib/analytics/team-stats";
-import type { ScoutFormSchema } from "@/lib/scout-form/schema";
+import type { Form } from "@/lib/forms/types";
+import { hasRole } from "@/lib/forms/meta";
 
 // Pure helpers behind Team Breakdown's cards (P11). Like the rest of
 // lib/analytics they read the form schema, never BIOBUZZ field names.
@@ -16,8 +17,8 @@ export type KeyStats = {
  * scored fields: counters grouped by label (so a piece scored in two phases
  * or two places reads as one total), toggles as individual rates.
  */
-export function buildKeyStats(stats: TeamStats, schema: ScoutFormSchema): KeyStats {
-  const meta = schemaFieldMeta(schema).filter((m) => m.field.points && m.field.phase && stats.fieldStats[m.field.key]);
+export function buildKeyStats(stats: TeamStats, schema: Form): KeyStats {
+  const meta = schemaFieldMeta(schema).filter((m) => m.points && stats.fieldStats[m.field.key]);
 
   const counterTotals = new Map<string, number>();
   for (const m of meta) {
@@ -32,7 +33,7 @@ export function buildKeyStats(stats: TeamStats, schema: ScoutFormSchema): KeySta
   return {
     counters: [...counterTotals.entries()].map(([label, avg]) => ({ label, avg })),
     rates: toggles.map((m) => ({
-      label: (labelUses.get(m.field.label) ?? 0) > 1 ? `${m.field.label} (${m.field.phase})` : m.field.label,
+      label: (labelUses.get(m.field.label) ?? 0) > 1 ? `${m.field.label} (${m.phase})` : m.field.label,
       rate: stats.fieldStats[m.field.key].rate ?? 0,
     })),
   };
@@ -52,9 +53,9 @@ export function reliabilityLevel(reliability: number | null): ReliabilityLevel {
 }
 
 /** The reliability incidents this team actually had, worst first — what the pill's tooltip lists ("Died During Match 25%"). */
-export function reliabilityIncidents(stats: TeamStats, schema: ScoutFormSchema): { label: string; rate: number }[] {
+export function reliabilityIncidents(stats: TeamStats, schema: Form): { label: string; rate: number }[] {
   return schemaFieldMeta(schema)
-    .filter((m) => m.field.reliability && (stats.incidentRates[m.field.key] ?? 0) > 0)
+    .filter((m) => hasRole(m.field, "reliability") && (stats.incidentRates[m.field.key] ?? 0) > 0)
     .map((m) => ({ label: m.field.label, rate: stats.incidentRates[m.field.key] }))
     .sort((a, b) => b.rate - a.rate || a.label.localeCompare(b.label));
 }

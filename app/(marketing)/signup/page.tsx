@@ -57,6 +57,8 @@ export default function SignupPage() {
   // render, the `user && !profile` branch below would render the
   // enrollment screen all over again instead of reaching /dashboard.
   const [enrolled, setEnrolled] = useState(false);
+  // P20: set while an applicant's new account is being sent on to /apply, so the join screen below doesn't flash in between.
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     if (!loading && user && profile) router.replace("/dashboard");
@@ -76,7 +78,7 @@ export default function SignupPage() {
 
   // Google created the account but there's no profile yet — hand off to the
   // same join/create screen Finish Setup uses, instead of duplicating it.
-  if (!loading && user && !profile && !enrolled) {
+  if (!loading && user && !profile && !enrolled && !applying) {
     return <TeamEnrollmentScreen greeting={user.displayName ? `Hi, ${user.displayName}` : undefined} onComplete={() => router.push("/dashboard")} />;
   }
 
@@ -85,10 +87,18 @@ export default function SignupPage() {
     setError(null);
     setSubmitting(true);
     try {
+      if (enrollment.mode === "apply" && enrollment.teamCreationEnabled === false) {
+        // P20: apply instead of joining: create the account (which sends the verification email), then on to the application.
+        setApplying(true);
+        await signup(name, email, password);
+        router.push("/apply");
+        return;
+      }
       await signup(name, email, password);
       await enrollment.enroll(name);
       setEnrolled(true); // stays "submitting" (see below) until the effect above navigates
     } catch (err) {
+      setApplying(false);
       setError(authErrorMessage(err));
       setSubmitting(false);
     }

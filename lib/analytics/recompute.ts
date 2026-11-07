@@ -4,6 +4,7 @@ import { formatMatch } from "@/lib/analytics/game-schema";
 import { getEventEntries, notApplicableAccuracy, updateEntry, type AccuracyResult, type AutoFlag } from "@/lib/scout-entries";
 import { allianceForTeam, computeAllianceAccuracy } from "@/lib/analytics/accuracy";
 import { evaluateAutoFlagRuleIds, type FlagContext } from "@/lib/analytics/flags";
+import { builtinFormResolver, type FormResolver } from "@/lib/forms/resolver";
 
 function matchKey(type: MatchType, number: number) {
   return `${type}-${number}`;
@@ -43,7 +44,11 @@ export function eventRescorePatchChanges(patch: EventRescorePatch): boolean {
  * the Admin Panel's Rescore tab dry-run preview (P9), so the two can never
  * drift apart. Pure aside from the one FIRST API fetch.
  */
-export async function computeEventRescorePlan(teamId: string, eventCode: string, season: number): Promise<EventRescorePatch[]> {
+/**
+ * P21: `resolveForm` says which form each entry was scouted with (default: the built-in with its `formId`), because accuracy needs scoring: an
+ * entry whose form has `scoringEnabled: false` is simply "n/a" (never an error), and its automatic flags are evaluated against its own form.
+ */
+export async function computeEventRescorePlan(teamId: string, eventCode: string, season: number, resolveForm: FormResolver = builtinFormResolver): Promise<EventRescorePatch[]> {
   const matchLookup = await buildMatchLookup(eventCode, season);
   const entries = await getEventEntries(teamId, eventCode);
 
@@ -61,7 +66,8 @@ export async function computeEventRescorePlan(teamId: string, eventCode: string,
     );
     const sameTeamEntries = entries.filter((o) => o.id !== entry.id && !o.excluded && o.teamNumber === entry.teamNumber);
 
-    const accuracy = match
+    const form = resolveForm(entry);
+    const accuracy = match && form?.scoringEnabled !== false && entry.scored !== false
       ? computeAllianceAccuracy(allianceTeams, officialAllianceScore, penaltyPoints, [
           entry,
           ...sameMatchEntries.filter((o) => !o.excluded),
@@ -75,6 +81,7 @@ export async function computeEventRescorePlan(teamId: string, eventCode: string,
       allianceAccuracy: accuracy,
       sameMatchEntries,
       sameTeamEntries,
+      form,
     };
     const triggeredIds = evaluateAutoFlagRuleIds(entry, ctx);
     const previouslyDismissed = new Set(entry.autoFlags.filter((f) => f.dismissed).map((f) => f.ruleId));
@@ -103,7 +110,7 @@ export async function applyEventRescorePlan(patches: EventRescorePatch[]): Promi
  * just the new entry) is what lets a *different* robot's entry flip from
  * "Needs Robots" to "Complete" once its alliance partner gets scouted too.
  */
-export async function recomputeForEvent(teamId: string, eventCode: string, season: number): Promise<void> {
-  const patches = await computeEventRescorePlan(teamId, eventCode, season);
+export async function recomputeForEvent(teamId: string, eventCode: string, season: number, resolveForm: FormResolver = builtinFormResolver): Promise<void> {
+  const patches = await computeEventRescorePlan(teamId, eventCode, season, resolveForm);
   await applyEventRescorePlan(patches);
 }

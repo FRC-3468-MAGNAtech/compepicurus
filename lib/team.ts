@@ -15,6 +15,14 @@ export type TeamDoc = {
   fieldTeams?: FieldTeam[];
   /** P19: ids of `fieldTeams`, same order. A rules-only mirror (firestore.rules can't project a list of maps) that member `fieldTeamIds` writes are checked against. */
   fieldTeamIdList?: string[];
+  /** P21: which form each season uses (`{ [seasonId]: formId }`), set by an admin. Absent = every season uses its own default (the built-in). See lib/forms/resolve.ts `activeFormIdFor`. */
+  activeForms?: Record<string, string>;
+  /** P19/P20: the numbers of `fieldTeams`, same order: a queryable mirror (Firestore can't query inside a list of maps) so an application can check whether an account already has an FTC team. */
+  fieldTeamNumbers?: number[];
+  /** P20: the TEAM owner's uid: authoritative for ownership. Server-written only (rules refuse it from any client). See lib/team-owner.ts. */
+  ownerUid?: string;
+  /** P20: a pending ownership transfer (see `readPendingTransfer`/`livePendingTransfer` in lib/team-owner.ts). Server-written only; expires after 7 days. */
+  pendingTransfer?: unknown;
   /** P19: optional display name for the account itself (e.g. the robotics organisation), separate from the FTC teams. */
   accountName?: string | null;
   joinCode: string;

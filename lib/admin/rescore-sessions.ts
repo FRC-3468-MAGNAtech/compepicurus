@@ -1,6 +1,8 @@
 import { resolveLobbyPairScoring } from "@/lib/lobby/scoring";
 import { resolveLiveAllianceScoring } from "@/lib/live/scoring";
-import { calculateScore, getFormSchema, scoutEntryFieldsToValues } from "@/lib/scout-form/schema";
+import { calculateScore, storableScore } from "@/lib/forms/scoring";
+import { entryValues } from "@/lib/forms/legacy";
+import { builtinFormResolver, type FormResolver } from "@/lib/forms/resolver";
 import { updateEntry, type ScoutEntry } from "@/lib/scout-entries";
 import { updatePracticeSession, type PracticeSession } from "@/lib/practice-sessions";
 import type { LibraryMatch } from "@/lib/match-library";
@@ -35,10 +37,13 @@ function matchesFilter(session: PracticeSession, filter: SessionRescoreFilter): 
   return true;
 }
 
-/** Recalculates one entry's `score` from its stored `fields`, using its own `formId` — the schema-driven step every rescore starts with, per the spec. */
-function rescoredEntry(entry: ScoutEntry): ScoutEntry {
-  const schema = getFormSchema(entry.formId);
-  const score = calculateScore(schema, scoutEntryFieldsToValues(entry.fields));
+export type { FormResolver };
+
+/** Recalculates one entry's `score` from its stored values (whichever shape they were stored in) under the resolved form's scoring: the schema-driven step every rescore starts with. An entry whose form can't be found keeps its score. */
+function rescoredEntry(entry: ScoutEntry, resolveForm: FormResolver): ScoutEntry {
+  const form = resolveForm(entry);
+  if (!form) return entry;
+  const score = storableScore(calculateScore(form, entryValues(entry, form)));
   return { ...entry, score };
 }
 
@@ -73,7 +78,8 @@ export function buildSessionRescorePlan(
   entries: ScoutEntry[],
   libraryMatchesById: Map<string, LibraryMatch>,
   liveMatchesByKey: Map<string, FtcMatch>,
-  filter: SessionRescoreFilter
+  filter: SessionRescoreFilter,
+  resolveForm: FormResolver = builtinFormResolver
 ): SessionRescorePatch[] {
   const entriesBySessionId = new Map<string, ScoutEntry[]>();
   for (const e of entries) {
@@ -92,7 +98,7 @@ export function buildSessionRescorePlan(
     const match = libraryMatchesById.get(session.libraryMatchId);
     const sessionEntries = entriesBySessionId.get(session.id) ?? [];
     if (!match || sessionEntries.length !== 2) continue;
-    const rescored = sessionEntries.map(rescoredEntry) as [ScoutEntry, ScoutEntry];
+    const rescored = sessionEntries.map((e) => rescoredEntry(e, resolveForm)) as [ScoutEntry, ScoutEntry];
     const result = resolveLobbyPairScoring(match, session.alliance, rescored, session.mode, false);
 
     const entryWrites = sessionEntries
@@ -133,7 +139,7 @@ export function buildSessionRescorePlan(
     const entryA = (entriesBySessionId.get(a.id) ?? [])[0];
     const entryB = (entriesBySessionId.get(b.id) ?? [])[0];
     if (!match || !entryA || !entryB) continue;
-    const [rescoredA, rescoredB] = [rescoredEntry(entryA), rescoredEntry(entryB)];
+    const [rescoredA, rescoredB] = [rescoredEntry(entryA, resolveForm), rescoredEntry(entryB, resolveForm)];
     const result = resolveLobbyPairScoring(match, a.alliance, [rescoredA, rescoredB], a.mode, false);
 
     const entryWrites = [entryScoreWrite(entryA, rescoredA), entryScoreWrite(entryB, rescoredB)].filter(
@@ -173,7 +179,7 @@ export function buildSessionRescorePlan(
     const entryA = (entriesBySessionId.get(a.id) ?? [])[0];
     const entryB = (entriesBySessionId.get(b.id) ?? [])[0];
     if (!match || !entryA || !entryB || !a.alliance) continue;
-    const [rescoredA, rescoredB] = [rescoredEntry(entryA), rescoredEntry(entryB)];
+    const [rescoredA, rescoredB] = [rescoredEntry(entryA, resolveForm), rescoredEntry(entryB, resolveForm)];
     const result = resolveLiveAllianceScoring(match, a.alliance, [rescoredA, rescoredB]);
     if (!result) continue; // official score not posted
 

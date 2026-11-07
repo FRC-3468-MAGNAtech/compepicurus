@@ -1,5 +1,7 @@
-import type { AnalyticsColumn, GameSchema } from "@/lib/analytics/game-schema";
-import { initialScoutEntryFields, type ScoutEntry, type ScoutEntryFields } from "@/lib/scout-entries";
+import { csvHeaderFor, type AnalyticsColumn, type GameSchema } from "@/lib/analytics/game-schema";
+import type { ScoutEntry } from "@/lib/scout-entries";
+import { coerceFieldValue } from "@/lib/forms/values";
+import type { FormValues } from "@/lib/forms/types";
 import type { MatchType } from "@/lib/ftc/types";
 
 // --- Low-level RFC4180 CSV -------------------------------------------------
@@ -91,7 +93,7 @@ export function entriesToCsv(
   resolveDisplayName: (scoutName: string) => string
 ): string {
   const cols = exportableColumns(schema);
-  const header = cols.map((c) => `${c.phase} - ${c.category} - ${c.label}`);
+  const header = cols.map(csvHeaderFor);
   const rows = entries.map((e) => cols.map((c) => formatCellForCsv(c, e, resolveDisplayName(e.scoutName))));
   return serializeCsv([header, ...rows]);
 }
@@ -111,8 +113,8 @@ export type ImportedRow = {
   matchType: MatchType;
   matchNumber: number;
   teamNumber: number;
-  comments: string;
-  fields: ScoutEntryFields;
+  /** The form-field cells of the row, coerced to each field's type (P21). Normalize against the form (`normalizeValues`) before saving: it fills anything the file didn't have. */
+  values: FormValues;
 };
 
 export type ImportResult = { rows: ImportedRow[]; errors: string[] };
@@ -124,12 +126,13 @@ export function parseImportCsv(schema: GameSchema, csvText: string): ImportResul
   if (table.length === 0) return { rows: [], errors: ["The file is empty."] };
 
   const header = table[0];
-  const inputCols = exportableColumns(schema).filter((c) => c.type !== "accuracy" && c.type !== "scriptStatus" && c.key !== "scoreAuto" && c.key !== "scoreTeleop" && c.key !== "scoreEndgame" && c.key !== "scoreTotal");
+  // P21: the input columns are Match / Team / Scout plus every column derived from a form field; score, accuracy and script status are recomputed.
+  const inputCols = exportableColumns(schema).filter((c) => !!c.field || c.key === "match" || c.key === "team" || c.key === "scout");
   const colIndexByKey = new Map<string, number>();
   for (const col of inputCols) {
-    const idx = header.indexOf(`${col.phase} - ${col.category} - ${col.label}`);
+    const idx = header.indexOf(csvHeaderFor(col));
     if (idx === -1) {
-      errors.push(`Missing expected column "${col.phase} - ${col.category} - ${col.label}".`);
+      errors.push(`Missing expected column "${csvHeaderFor(col)}".`);
     } else {
       colIndexByKey.set(col.key, idx);
     }
@@ -149,14 +152,19 @@ export function parseImportCsv(schema: GameSchema, csvText: string): ImportResul
       continue;
     }
 
-    const fields: ScoutEntryFields = { ...initialScoutEntryFields };
+    const values: FormValues = {};
     for (const col of inputCols) {
-      if (col.key === "match" || col.key === "team" || col.key === "scout" || col.key === "comments") continue;
-      const cell = get(col.key).trim();
-      if (col.type === "boolean") {
-        (fields as unknown as Record<string, boolean>)[col.key] = cell.toUpperCase() === "Y";
-      } else if (col.type === "count") {
-        (fields as unknown as Record<string, number>)[col.key] = Number(cell) || 0;
+      const field = col.field;
+      if (!field) continue;
+      const cell = get(col.key);
+      if (field.type === "select" || field.type === "radio") {
+        // the table and CSV show an option's label; the stored value is its value
+        const opt = field.options?.find((o) => o.label === cell.trim() || o.value === cell.trim());
+        values[field.key] = coerceFieldValue(field, opt?.value ?? "");
+      } else if (field.type === "textarea" || field.type === "text") {
+        values[field.key] = coerceFieldValue(field, cell);
+      } else {
+        values[field.key] = coerceFieldValue(field, cell.trim());
       }
     }
 
@@ -165,8 +173,7 @@ export function parseImportCsv(schema: GameSchema, csvText: string): ImportResul
       matchType: match.type,
       matchNumber: match.number,
       teamNumber,
-      comments: get("comments"),
-      fields,
+      values,
     });
   }
 

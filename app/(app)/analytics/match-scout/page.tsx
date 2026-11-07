@@ -12,7 +12,8 @@ import { AnalyticsDataTable, type SortState } from "@/components/analytics/data-
 import { ConfigModal } from "@/components/analytics/config-modal";
 import { ImportCsvDialog } from "@/components/analytics/import-csv-dialog";
 import { useAuth } from "@/lib/auth";
-import { GAMES, DEFAULT_GAME_ID, withPracticeColumns } from "@/lib/analytics/game-schema";
+import { buildGameSchema, withPracticeColumns } from "@/lib/analytics/game-schema";
+import { useActiveForm, useForms } from "@/lib/forms/forms-context";
 import { entriesToCsv } from "@/lib/analytics/csv";
 import { recomputeForEvent } from "@/lib/analytics/recompute";
 import { useAnalyticsData, useAnalyticsEntries, useSingleEvent } from "@/lib/analytics/data-context";
@@ -55,7 +56,11 @@ export default function MatchScoutAnalyticsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
 
-  const schema = withSchemaForMode(filters.gameId, practiceMode);
+  // P21: the table is derived from the form(s) the visible entries were scouted with; importing writes with the season's active form.
+  const forms = useForms();
+  const { form: importForm } = useActiveForm(filters.gameId);
+  const schema = useMemo(() => (practiceMode ? withPracticeColumns(buildGameSchema(data.schema)) : buildGameSchema(data.schema)), [data.schema, practiceMode]);
+  const importSchema = useMemo(() => buildGameSchema(importForm), [importForm]);
 
   const nameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -112,7 +117,7 @@ export default function MatchScoutAnalyticsPage() {
   const handleRecalculate = async () => {
     if (!eventCode || !teamId) return;
     setRecalculating(true);
-    await recomputeForEvent(teamId, eventCode, eventSeason);
+    await recomputeForEvent(teamId, eventCode, eventSeason, forms.currentResolver);
     setRecalculating(false);
   };
 
@@ -141,7 +146,7 @@ export default function MatchScoutAnalyticsPage() {
       return;
     }
     withEntry(id, (e) => ({ excluded: !e.excluded }));
-    if (eventCode && teamId) void recomputeForEvent(teamId, eventCode, eventSeason);
+    if (eventCode && teamId) void recomputeForEvent(teamId, eventCode, eventSeason, forms.currentResolver);
   };
 
   const confirmDelete = () => {
@@ -242,13 +247,14 @@ export default function MatchScoutAnalyticsPage() {
         <ImportCsvDialog
           open={importOpen}
           onOpenChange={setImportOpen}
-          schema={schema}
+          schema={importSchema}
+          form={importForm}
           teamId={teamId}
           uid={user.uid}
           eventCode={eventCode}
           existingEntries={sourceEntries}
           onImported={() => {
-            void recomputeForEvent(teamId, eventCode, eventSeason);
+            void recomputeForEvent(teamId, eventCode, eventSeason, forms.currentResolver);
           }}
         />
       )}
@@ -274,7 +280,3 @@ export default function MatchScoutAnalyticsPage() {
   );
 }
 
-function withSchemaForMode(gameId: string, practiceMode: boolean) {
-  const base = GAMES[gameId] ?? GAMES[DEFAULT_GAME_ID];
-  return practiceMode ? withPracticeColumns(base) : base;
-}

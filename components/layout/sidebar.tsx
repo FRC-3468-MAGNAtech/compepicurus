@@ -12,6 +12,8 @@ import { ColorModeToggle } from "@/components/theme/color-mode-toggle";
 import { ConnectionChip } from "@/components/layout/connection-chip";
 import { FieldTeamSwitcher } from "@/components/layout/field-team-switcher";
 import { useFieldTeams } from "@/lib/field-teams-context";
+import { usePermissions } from "@/lib/permissions";
+import { usePendingApplicationCount } from "@/lib/applications-client";
 import { GlassLayerButton } from "@/components/theme/glass-layer-slider";
 import type { ConnectionNotice } from "@/lib/connection-notice";
 import { Avatar } from "@/components/ui/avatar";
@@ -25,6 +27,7 @@ function NavLink({
   onNavigate,
   scope,
   unread = false,
+  count = 0,
 }: {
   item: NavItem;
   collapsed: boolean;
@@ -32,6 +35,8 @@ function NavLink({
   scope: string;
   /** P14: show the "something new" dot (Changelog). Hidden while you're on the page itself. */
   unread?: boolean;
+  /** P20: a count badge (the platform owner's pending applications on Admin Panel). */
+  count?: number;
 }) {
   const pathname = usePathname();
   const active = item.matchPrefix ? pathname.startsWith(item.href) : pathname === item.href;
@@ -63,11 +68,23 @@ function NavLink({
         <span className="relative shrink-0">
           <Icon className="h-[18px] w-[18px]" />
           {unread && !active && collapsed && <UnreadDot className="absolute -right-1 -top-1" />}
+          {count > 0 && collapsed && <CountBadge count={count} className="absolute -right-2 -top-2" />}
         </span>
         {!collapsed && <span className="truncate">{item.label}</span>}
         {unread && !active && !collapsed && <UnreadDot className="ml-auto" />}
+        {count > 0 && !collapsed && <CountBadge count={count} className="ml-auto" />}
       </motion.div>
     </Link>
+  );
+}
+
+/** P20: "N waiting". Always the accent fill with its guarded on-accent text, so it stays legible in every theme. */
+function CountBadge({ count, className }: { count: number; className?: string }) {
+  return (
+    <span className={cn("flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] px-1.5 text-[10px] font-semibold tabular-nums text-[var(--color-primary-foreground)]", className)} data-testid="admin-count">
+      {count > 99 ? "99+" : count}
+      <span className="sr-only"> applications waiting</span>
+    </span>
   );
 }
 
@@ -187,6 +204,9 @@ function SidebarInner({
 }) {
   const role = primaryRole ? getRole(primaryRole) : null;
   const { accountName } = useFieldTeams();
+  // P20: the platform owner sees how many team applications are waiting, on the Admin Panel item.
+  const { isPlatformOwner } = usePermissions();
+  const pendingApplications = usePendingApplicationCount(isPlatformOwner);
   return (
     <>
       {/* P19: the team line is data-driven now (it used to be hard-coded): the account's optional name under the
@@ -215,7 +235,7 @@ function SidebarInner({
         ))}
         <div className="my-2 h-px bg-[var(--glass-border)]" />
         {navItems.map((item) => (
-          <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} unread={item.href === "/changelog" && changelogUnread} />
+          <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} unread={item.href === "/changelog" && changelogUnread} count={item.href === "/admin" ? pendingApplications : 0} />
         ))}
       </nav>
 

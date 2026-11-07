@@ -24,12 +24,27 @@ export type AuditAction =
   | "edit-member-roles"
   | "edit-member-teams"
   | "edit-field-teams"
+  | "approve-team-application"
+  | "request-ownership-transfer"
+  | "transfer-ownership"
+  | "decline-ownership-transfer"
+  | "cancel-ownership-transfer"
+  | "force-transfer-ownership"
   | "edit-pick-list"
   | "create-changelog-entry"
   | "edit-changelog-entry"
   | "delete-changelog-entry"
   | "edit-credits"
-  | "edit-match-library";
+  | "edit-match-library"
+  // P22: the Form Builder
+  | "create-form"
+  | "publish-form"
+  | "restore-form-version"
+  | "discard-form-draft"
+  | "archive-form"
+  | "unarchive-form"
+  | "reset-form-to-builtin"
+  | "set-active-form";
 
 export type AuditLogEntry = {
   id: string;

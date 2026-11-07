@@ -16,7 +16,10 @@ import {
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { MatchType } from "@/lib/ftc/types";
-import { DEFAULT_FORM_ID, FORMS } from "@/lib/scout-form/schema";
+import type { Form, FormValues } from "@/lib/forms/types";
+import { hasLegacyShape, legacyFieldsFromValues } from "@/lib/forms/legacy";
+import { storableScore, type ScoreResult } from "@/lib/forms/scoring";
+import { commentsFrom } from "@/lib/forms/values";
 
 export type ScoutEntryFields = {
   autoLeave: boolean;
@@ -54,7 +57,8 @@ export const initialScoutEntryFields: ScoutEntryFields = {
   redCard: false,
 };
 
-export type ScoreBreakdown = { auto: number; teleop: number; endgame: number; total: number };
+/** The three standard phase subtotals and the total; `byPhase` is only present when some other (custom) phase also scored (P21), so BIOBUZZ entries are unchanged. */
+export type ScoreBreakdown = { auto: number; teleop: number; endgame: number; total: number; byPhase?: Record<string, number> };
 
 export type AccuracyStatus = "complete" | "needs-robots" | "awaiting-results" | "not-applicable";
 
@@ -87,10 +91,6 @@ export type ManualFlagReason =
 export type AutoFlag = { ruleId: string; dismissed: boolean };
 export type ManualFlag = { id: string; reason: ManualFlagReason; note?: string; addedAt: string };
 
-/** Matches lib/analytics/game-schema.ts's DEFAULT_GAME_ID — the one game/form this season. */
-const FORM_ID = DEFAULT_FORM_ID;
-const FORM_VERSION = FORMS[DEFAULT_FORM_ID].version;
-
 /** P3: 'event' (today's Match Scout Form), 'practice' (a solo/lobby session against a library match), 'live' (scouting a real event in real time as a practice session). */
 export type ScoutEntrySource = "event" | "practice" | "live";
 /** Only meaningful for `source: "practice"` — null for 'event'/'live'. See lib/practice-sessions.ts's getCategory(). */
@@ -102,6 +102,7 @@ export type ScoutEntry = {
   uid: string;
   source: ScoutEntrySource;
   mode: ScoutEntryMode;
+  /** P21: the form (and the immutable version of it) this entry was scouted with, so it can always be read, displayed and rescored against that form. */
   formId: string;
   formVersion: number;
   scoutName: string;
@@ -109,8 +110,16 @@ export type ScoutEntry = {
   matchType: MatchType;
   matchNumber: number;
   teamNumber: number;
-  fields: ScoutEntryFields;
+  /**
+   * P21: the entry's values keyed by the form's field `key`: what every reader should use, through `entryValues()` (lib/forms/legacy.ts), which also
+   * reads pre-v2 entries. Absent on entries stored before schema v2.
+   */
+  values?: FormValues;
+  /** Legacy: BIOBUZZ's typed fields object. Present on pre-v2 entries, and still written next to `values` for BIOBUZZ-lineage forms so a rollback or an old tab keeps working. Read through `entryValues()`, not directly. */
+  fields?: ScoutEntryFields;
   score: ScoreBreakdown;
+  /** P21: present (as `false`) only on entries from a form with scoring off: they have no score, so accuracy and everything that depends on it is "n/a" for them. */
+  scored?: false;
   comments: string;
   /** Client-set ISO timestamp, usable immediately (including offline, before createdAt syncs). */
   submittedAt: string;
@@ -126,10 +135,37 @@ export type ScoutEntry = {
 
 const COLLECTION = "scoutEntries";
 
-export type SaveEntryInput = Pick<
-  ScoutEntry,
-  "scoutName" | "eventCode" | "matchType" | "matchNumber" | "teamNumber" | "fields" | "score" | "comments"
-> &
+/**
+ * P21: everything about an entry that comes from its form: which form and version, the keyed values, the (legacy-shaped) fields for BIOBUZZ
+ * lineage forms, the score as it is stored, and the summary comment. Build it with `entryPayloadFor` so every writer stores the same shape.
+ */
+export type EntryPayload = {
+  formId: string;
+  formVersion: number;
+  values: FormValues;
+  fields?: ScoutEntryFields;
+  score: ScoreBreakdown;
+  scored?: false;
+  comments: string;
+};
+
+export function entryPayloadFor(form: Pick<Form, "id" | "version" | "sections" | "scoringEnabled">, values: FormValues, score: ScoreResult): EntryPayload {
+  return {
+    formId: form.id,
+    formVersion: form.version,
+    values,
+    ...(hasLegacyShape(form) ? { fields: legacyFieldsFromValues(values) as ScoutEntryFields } : {}),
+    score: storableScore(score),
+    ...(form.scoringEnabled ? {} : { scored: false as const }),
+    comments: commentsFrom(form, values),
+  };
+}
+
+/** Does this entry have a score at all? (False for entries from a form with scoring off: their accuracy is "n/a".) */
+export const isScored = (entry: Pick<ScoutEntry, "scored">): boolean => entry.scored !== false;
+
+export type SaveEntryInput = Pick<ScoutEntry, "scoutName" | "eventCode" | "matchType" | "matchNumber" | "teamNumber"> &
+  EntryPayload &
   Partial<Pick<ScoutEntry, "source" | "mode" | "sessionId" | "libraryMatchId">>;
 
 export async function saveEntry(teamId: string, uid: string, input: SaveEntryInput): Promise<void> {
@@ -142,8 +178,6 @@ export async function saveEntry(teamId: string, uid: string, input: SaveEntryInp
     mode,
     sessionId,
     libraryMatchId,
-    formId: FORM_ID,
-    formVersion: FORM_VERSION,
     submittedAt: new Date().toISOString(),
     createdAt: serverTimestamp(),
     excluded: false,

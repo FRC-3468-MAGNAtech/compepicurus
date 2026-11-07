@@ -1,5 +1,9 @@
 import type { ScoutEntry } from "@/lib/scout-entries";
 import type { MatchType } from "@/lib/ftc/types";
+import { BIOBUZZ_FORM, DEFAULT_FORM_ID } from "@/lib/forms/builtin";
+import { entryValues } from "@/lib/forms/legacy";
+import { resolveAlias } from "@/lib/forms/values";
+import { phaseLabel, SYSTEM_FIELD_TYPES, type Form, type FormField, type FormSection } from "@/lib/forms/types";
 
 export type ColumnType =
   | "match"
@@ -30,6 +34,10 @@ export type AnalyticsColumn = {
   getSortValue?: (entry: ScoutEntry) => number | string;
   /** `type: "badge"` only — a Badge-compatible className for this row's value. */
   getBadgeClassName?: (entry: ScoutEntry) => string;
+  /** P21: the schema's own CSV header for this column (default `Phase - Category - Label`). */
+  csvHeader?: string;
+  /** P21: the form field a column was derived from (absent for the match/team/scout, score, accuracy and action columns): what CSV import coerces cells with. */
+  field?: FormField;
 };
 
 export type GameSchema = {
@@ -58,26 +66,74 @@ export function matchSortValue(entry: Pick<ScoutEntry, "matchType" | "matchNumbe
   return MATCH_TYPE_ORDER[entry.matchType] * 100_000 + entry.matchNumber;
 }
 
-const bool = (
-  key: string,
-  phase: string,
-  category: string,
-  label: string,
-  getValue: (e: ScoutEntry) => boolean
-): AnalyticsColumn => ({ key, phase, category, label, type: "boolean", sortable: true, width: 120, getValue });
+/** The three-tier header text and CSV header for a column: `Phase - Category - Label`, unless the schema overrides it. */
+export function csvHeaderFor(col: Pick<AnalyticsColumn, "phase" | "category" | "label" | "csvHeader">): string {
+  return col.csvHeader ?? `${col.phase} - ${col.category} - ${col.label}`;
+}
 
-const count = (
-  key: string,
-  phase: string,
-  category: string,
-  label: string,
-  getValue: (e: ScoutEntry) => number
-): AnalyticsColumn => ({ key, phase, category, label, type: "count", sortable: true, width: 110, getValue });
+// --- deriving columns from a form (P21) ---------------------------------------------------------------------
 
-export const BIOBUZZ_SCHEMA: GameSchema = {
-  id: "biobuzz",
-  name: "BIOBUZZ",
-  columns: [
+const STANDARD_SCORE_LABEL: Record<string, string> = { auto: "Auto", teleop: "Teleop", endgame: "Endgame" };
+const STANDARD_SCORE_KEY: Record<string, string> = { auto: "scoreAuto", teleop: "scoreTeleop", endgame: "scoreEndgame" };
+
+function fieldColumnType(f: FormField): ColumnType | null {
+  switch (f.type) {
+    case "toggle":
+    case "checkbox":
+      return "boolean";
+    case "counter":
+    case "number":
+    case "rating":
+      return "count";
+    case "select":
+    case "radio":
+    case "text":
+      return "text";
+    case "textarea":
+      return "comments";
+    default:
+      return null;
+  }
+}
+
+const WIDTH: Record<string, number> = { boolean: 120, count: 110, text: 140, comments: 260 };
+
+function fieldColumn(form: Form, section: FormSection, field: FormField, type: ColumnType, valuesOf: (e: ScoutEntry) => Record<string, unknown>): AnalyticsColumn {
+  const group = section.groups?.find((g) => g.id === field.groupId)?.title;
+  const key = field.key;
+  const getValue = (e: ScoutEntry): unknown => {
+    const v = valuesOf(e)[key];
+    if (v === undefined) return null;
+    if (type === "boolean") return v === true;
+    if (type === "count") return typeof v === "number" ? v : Number(v) || 0;
+    if (field.type === "select" || field.type === "radio") return field.options?.find((o) => o.value === v)?.label ?? String(v);
+    return typeof v === "string" ? v : String(v);
+  };
+  return {
+    key,
+    phase: section.title,
+    category: field.analytics?.category ?? group ?? section.title,
+    label: field.analytics?.label ?? field.label,
+    type,
+    sortable: type !== "comments",
+    width: WIDTH[type] ?? 120,
+    getValue,
+    ...(field.analytics?.csvHeader ? { csvHeader: field.analytics.csvHeader } : {}),
+    field,
+  };
+}
+
+/**
+ * The Match Analytics table for a form, derived entirely from the schema: the sticky Match / Team / Scout columns, one column per
+ * field with analytics `include` (three-tier header: section title > category > label), the per-phase score columns and Total (when
+ * scoring is on), the comments, the accuracy columns (when scoring is on) and the row actions. For BIOBUZZ this reproduces the
+ * previous hard-coded columns exactly (a regression test pins them).
+ */
+export function buildGameSchema(form: Form): GameSchema {
+  const valuesOf = (e: ScoutEntry) => entryValues(e, { keyAliases: form.keyAliases });
+  const columns: AnalyticsColumn[] = [];
+
+  columns.push(
     {
       key: "match",
       phase: "Information",
@@ -103,7 +159,7 @@ export const BIOBUZZ_SCHEMA: GameSchema = {
     },
     {
       key: "scout",
-      phase: "Pre-Match",
+      phase: phaseLabel(form, "prematch"),
       category: "Pre-Match",
       label: "Scout",
       type: "scoutName",
@@ -111,80 +167,101 @@ export const BIOBUZZ_SCHEMA: GameSchema = {
       sticky: true,
       width: 150,
       getValue: (e) => e.scoutName,
-    },
+    }
+  );
 
-    bool("autoLeave", "Autonomous", "Leave", "Leave", (e) => e.fields.autoLeave),
-    bool("autoPark", "Autonomous", "Park", "Park", (e) => e.fields.autoPark),
-    count("autoTipHive", "Autonomous", "Hive", "Tip Hive", (e) => e.fields.autoTipHive),
+  const commentColumns: AnalyticsColumn[] = [];
+  for (const section of form.sections) {
+    for (const field of section.fields) {
+      if ((SYSTEM_FIELD_TYPES as readonly string[]).includes(field.type)) continue;
+      if (field.analytics && field.analytics.include === false) continue;
+      const type = fieldColumnType(field);
+      if (!type) continue;
+      (type === "comments" ? commentColumns : columns).push(fieldColumn(form, section, field, type, valuesOf));
+    }
+  }
 
-    count("teleTipHive", "Teleoperated", "Hive", "Tip Hive", (e) => e.fields.teleTipHive),
-    bool("flowerBottomNectar", "Teleoperated", "Flower", "Bottom Nectar", (e) => e.fields.flowerBottomNectar),
-    count("flowerPollenNectar", "Teleoperated", "Flower", "Pollen and Nectar", (e) => e.fields.flowerPollenNectar),
-    count("gardenPollenNectar", "Teleoperated", "Garden", "Pollen and Nectar", (e) => e.fields.gardenPollenNectar),
+  if (form.scoringEnabled) {
+    const scoringPhases: string[] = [];
+    for (const s of form.sections) {
+      if (s.fields.some((f) => f.scoring && f.scoring.mode !== "none") && !scoringPhases.includes(s.phase)) scoringPhases.push(s.phase);
+    }
+    for (const phase of scoringPhases) {
+      const standard = phase in STANDARD_SCORE_KEY;
+      columns.push({
+        key: standard ? STANDARD_SCORE_KEY[phase] : `score_${phase}`,
+        phase: "General",
+        category: "Score",
+        label: STANDARD_SCORE_LABEL[phase] ?? phaseLabel(form, phase),
+        type: "count",
+        sortable: true,
+        width: 110,
+        // null (shown as an em dash) for an entry whose form had scoring off, in a table that mixes forms
+        getValue: (e) => (e.scored === false ? null : standard ? (e.score as unknown as Record<string, number>)[phase] : (e.score.byPhase?.[phase] ?? 0)),
+      });
+    }
+    columns.push({ key: "scoreTotal", phase: "General", category: "Score", label: "Total", type: "score", sortable: true, width: 110, getValue: (e) => (e.scored === false ? null : e.score.total) });
+  }
 
-    bool("endgamePark", "Endgame", "Park", "Park", (e) => e.fields.endgamePark),
+  columns.push(...commentColumns);
 
-    bool("diedDuringMatch", "General", "Incidents", "Died During Match", (e) => e.fields.diedDuringMatch),
-    bool("neverStartedMatch", "General", "Incidents", "Never Started Match", (e) => e.fields.neverStartedMatch),
-    bool("disabledByFtc", "General", "Incidents", "Disabled by FTC", (e) => e.fields.disabledByFtc),
-    bool("recoveredFromFreeze", "General", "Incidents", "Recovered from Freeze", (e) => e.fields.recoveredFromFreeze),
-    bool("tippedOver", "General", "Incidents", "Tipped Over", (e) => e.fields.tippedOver),
-    bool("yellowCard", "General", "Incidents", "Yellow Card", (e) => e.fields.yellowCard),
-    bool("redCard", "General", "Incidents", "Red Card", (e) => e.fields.redCard),
+  if (form.scoringEnabled) {
+    columns.push(
+      { key: "accuracy", phase: "General", category: "Accuracy Script", label: "Alliance Accuracy", type: "accuracy", sortable: true, width: 150, getValue: (e) => e.accuracy?.value ?? null },
+      { key: "scriptStatus", phase: "General", category: "Script Status", label: "Script Status", type: "scriptStatus", sortable: true, width: 140, getValue: (e) => e.accuracy?.status ?? "not-applicable" }
+    );
+  }
+  columns.push({ key: "actions", phase: "Actions", category: "Actions", label: "Actions", type: "actions", sortable: false, width: 160, getValue: () => null });
 
-    count("scoreAuto", "General", "Score", "Auto", (e) => e.score.auto),
-    count("scoreTeleop", "General", "Score", "Teleop", (e) => e.score.teleop),
-    count("scoreEndgame", "General", "Score", "Endgame", (e) => e.score.endgame),
-    { ...count("scoreTotal", "General", "Score", "Total", (e) => e.score.total), type: "score" },
+  return { id: form.id, name: form.name, columns };
+}
 
-    {
-      key: "comments",
-      phase: "General",
-      category: "Comments",
-      label: "Comments",
-      type: "comments",
-      sortable: false,
-      width: 260,
-      getValue: (e) => e.comments,
-    },
-    {
-      key: "accuracy",
-      phase: "General",
-      category: "Accuracy Script",
-      label: "Alliance Accuracy",
-      type: "accuracy",
-      sortable: true,
-      width: 150,
-      getValue: (e) => e.accuracy?.value ?? null,
-    },
-    {
-      key: "scriptStatus",
-      phase: "General",
-      category: "Script Status",
-      label: "Script Status",
-      type: "scriptStatus",
-      sortable: true,
-      width: 140,
-      getValue: (e) => e.accuracy?.status ?? "not-applicable",
-    },
-    {
-      key: "actions",
-      phase: "Actions",
-      category: "Actions",
-      label: "Actions",
-      type: "actions",
-      sortable: false,
-      width: 160,
-      getValue: () => null,
-    },
-  ],
-};
+/**
+ * One form that has every field any of `forms` has, so a single table (and its CSV) can show entries from different forms or different
+ * versions of one form together. Sections merge by id and fields by key (the first form's wins); a field whose key was renamed (it's an
+ * alias source in any form) is dropped in favour of its current key, since `entryValues` re-keys old values to the current one.
+ * Scoring is on if any form scores. With one form this is that form.
+ */
+export function unionForms(forms: readonly Form[]): Form {
+  if (forms.length === 1) return forms[0];
+  const [first, ...rest] = forms;
+  const aliases: Record<string, string> = {};
+  for (const f of forms) Object.assign(aliases, f.keyAliases ?? {});
 
+  const sections: FormSection[] = first.sections.map((s) => ({ ...s, groups: s.groups ? [...s.groups] : undefined, fields: [...s.fields] }));
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  const keys = new Set(sections.flatMap((s) => s.fields.map((f) => f.key)));
+  for (const form of rest) {
+    for (const s of form.sections) {
+      let target = byId.get(s.id);
+      if (!target) {
+        target = { ...s, groups: s.groups ? [...s.groups] : undefined, fields: [] };
+        sections.push(target);
+        byId.set(s.id, target);
+      }
+      for (const field of s.fields) {
+        if (keys.has(field.key)) continue;
+        keys.add(field.key);
+        target.fields.push(field);
+        const group = s.groups?.find((g) => g.id === field.groupId);
+        if (group && !target.groups?.some((g) => g.id === group.id)) target.groups = [...(target.groups ?? []), group];
+      }
+    }
+  }
+  // drop renamed fields whose current key exists
+  for (const s of sections) s.fields = s.fields.filter((f) => !(f.key in aliases && keys.has(resolveAlias(f.key, aliases)) && resolveAlias(f.key, aliases) !== f.key));
+
+  return { ...first, sections, scoringEnabled: forms.some((f) => f.scoringEnabled), keyAliases: Object.keys(aliases).length > 0 ? aliases : undefined };
+}
+
+/** The built-in forms' analytics tables, by form id. Account forms (custom or edited) are derived on demand with `buildGameSchema`. */
 export const GAMES: Record<string, GameSchema> = {
-  biobuzz: BIOBUZZ_SCHEMA,
+  [BIOBUZZ_FORM.id]: buildGameSchema(BIOBUZZ_FORM),
 };
 
-export const DEFAULT_GAME_ID = "biobuzz";
+export const BIOBUZZ_SCHEMA: GameSchema = GAMES[BIOBUZZ_FORM.id];
+
+export const DEFAULT_GAME_ID = DEFAULT_FORM_ID;
 
 /**
  * P9: Match Analytics' "Practice Scouted Matches" toggle inserts a Session

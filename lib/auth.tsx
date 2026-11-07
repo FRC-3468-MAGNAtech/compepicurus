@@ -67,7 +67,10 @@ export type UserDoc = {
   secondaryRoles: RoleId[];
   isAdmin: boolean;
   /** Set only by app/api/auth/sync-roles (Admin SDK) — see docs/ASSUMPTIONS.md (P1b). Clients can never write this (firestore.rules). */
+  /** P20: the TEAM owner (a mirror of teams/{teamId}.ownerUid, written only by the server routes in the same transaction). Authoritative is `ownerUid`; see lib/team-owner.ts. */
   isOwner: boolean;
+  /** P20: a PLATFORM owner (an email in OWNER_EMAILS, set by app/api/auth/sync-roles). Approves applications, switches team creation, force-transfers for recovery. Clients can never write it. */
+  isPlatformOwner?: boolean;
   themeId: string;
   /** P18: "light" | "dark" | "system". Separate from themeId; absent until the user first picks one (then this browser's, or the system's, applies). Ignored while a pride theme is active. */
   colorMode?: "light" | "dark" | "system";

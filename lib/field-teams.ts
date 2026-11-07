@@ -161,11 +161,14 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
 }
 
 /** The fields written to `teams/{teamId}` when the FTC team list changes. `number`/`name` mirror the first team so anything still reading the legacy fields keeps working; `fieldTeamIdList` is the id mirror firestore.rules checks member assignments against. */
-export function fieldTeamsWrite(teams: readonly FieldTeam[]): { fieldTeams: FieldTeam[]; fieldTeamIdList: string[]; number: number; name: string | null } {
+export function fieldTeamsWrite(teams: readonly FieldTeam[]): { fieldTeams: FieldTeam[]; fieldTeamIdList: string[]; fieldTeamNumbers: number[]; number: number; name: string | null } {
   const first = teams[0];
   return {
     fieldTeams: teams.map((t) => ({ id: t.id, number: t.number, name: t.name })),
     fieldTeamIdList: teams.map((t) => t.id),
+    // P20: a queryable mirror of the numbers (Firestore can't query inside a list of maps), so "does an account already
+    // have this FTC team?" can be answered with array-contains when someone applies for it.
+    fieldTeamNumbers: teams.map((t) => t.number),
     number: first.number,
     name: first.name.trim() ? first.name.trim() : null,
   };
@@ -241,16 +244,21 @@ export function matchesTeamFilter(userFieldTeamIds: readonly string[] | null | u
  * already complete (this is what makes the migration idempotent), or that there is nothing to
  * migrate from (no valid `fieldTeams` and no valid legacy `number`).
  */
-export function planTeamMigration(team: (FieldTeamSource & { fieldTeamIdList?: unknown }) | null | undefined): { fieldTeams: FieldTeam[]; fieldTeamIdList: string[] } | null {
+export function planTeamMigration(
+  team: (FieldTeamSource & { fieldTeamIdList?: unknown; fieldTeamNumbers?: unknown }) | null | undefined
+): { fieldTeams: FieldTeam[]; fieldTeamIdList: string[]; fieldTeamNumbers: number[] } | null {
   if (!team) return null;
   const teams = readFieldTeams(team);
   if (teams.length === 0) return null;
   const ids = teams.map((t) => t.id);
+  const numbers = teams.map((t) => t.number);
   const hasFieldTeams = Array.isArray(team.fieldTeams) && team.fieldTeams.length > 0 && team.fieldTeams.every(isFieldTeam);
   const mirror = Array.isArray(team.fieldTeamIdList) ? team.fieldTeamIdList : null;
   const mirrorOk = mirror !== null && mirror.length === ids.length && mirror.every((id, i) => id === ids[i]);
-  if (hasFieldTeams && mirrorOk) return null;
-  return { fieldTeams: teams, fieldTeamIdList: ids };
+  const numbersMirror = Array.isArray(team.fieldTeamNumbers) ? team.fieldTeamNumbers : null;
+  const numbersOk = numbersMirror !== null && numbersMirror.length === numbers.length && numbersMirror.every((n, i) => n === numbers[i]);
+  if (hasFieldTeams && mirrorOk && numbersOk) return null;
+  return { fieldTeams: teams, fieldTeamIdList: ids, fieldTeamNumbers: numbers };
 }
 
 /** The members that still need `fieldTeamIds` (those with no list at all) — each gets **all** the account's FTC teams, so migrating never removes anyone's view of anything. */

@@ -44,6 +44,15 @@ const { POST: createTeam } = await import("@/app/api/team/create/route");
 const { POST: joinTeam } = await import("@/app/api/team/join/route");
 const { POST: syncRoles } = await import("@/app/api/auth/sync-roles/route");
 const { POST: syncFieldTeams } = await import("@/app/api/team/sync-field-teams/route");
+const { POST: submitApplication } = await import("@/app/api/applications/route");
+const { GET: startToken } = await import("@/app/api/applications/start/route");
+const { POST: reviewApplication } = await import("@/app/api/admin/applications/route");
+const { GET: applicationConfig } = await import("@/app/api/admin/application-config/route");
+const { POST: transfer } = await import("@/app/api/team/transfer/route");
+const { GET: listTeams } = await import("@/app/api/admin/teams/route");
+const { POST: setTeamCreation } = await import("@/app/api/admin/team-creation/route");
+const serverTokens = await import("@/lib/server/application-token");
+const { FieldValue } = await import("firebase-admin/firestore");
 const { GET: publicConfig } = await import("@/app/api/public/config/route");
 const { getAdminAuth, getAdminFirestore } = await import("@/lib/firebase/admin");
 
@@ -185,6 +194,7 @@ describe("POST /api/auth/sync-roles", () => {
 
     const adminAuth = getAdminAuth()!;
     const record = await adminAuth.getUserByEmail("owner@example.com");
+    expect(record.customClaims?.platformOwner).toBeFalsy();
     expect(record.customClaims?.owner).toBeFalsy();
   });
 
@@ -212,7 +222,7 @@ describe("POST /api/auth/sync-roles", () => {
     expect(userDoc.data()).toMatchObject({ isOwner: true, isAdmin: true });
   });
 
-  it("grants owner + admin, and sets custom claims, for a verified OWNER_EMAILS match", async () => {
+  it("grants platform owner + admin, and sets the platformOwner claim, for a verified OWNER_EMAILS match", async () => {
     // The sole-member owner (FIX2): they created the team (so they have a profile, with isOwner
     // false at first), and the sync after sign-in is what makes them the owner. A verified owner
     // with *no* profile and no single team to attach to is deliberately left alone (next test).
@@ -223,11 +233,13 @@ describe("POST /api/auth/sync-roles", () => {
     const adminAuth = getAdminAuth()!;
     const db = getAdminFirestore()!;
     const record = await adminAuth.getUserByEmail("owner@example.com");
-    expect(record.customClaims?.owner).toBe(true);
+    expect(record.customClaims?.platformOwner).toBe(true);
+    expect(record.customClaims?.owner).toBeUndefined(); // the pre-P20 claim is gone
     expect(record.customClaims?.admin).toBe(true);
 
     const userDoc = await db.collection("users").doc(record.uid).get();
-    expect(userDoc.data()?.isOwner).toBe(true);
+    expect(userDoc.data()?.isPlatformOwner).toBe(true);
+    expect(userDoc.data()?.isOwner).toBe(true); // they created the team, so they are its team owner too
     expect(userDoc.data()?.isAdmin).toBe(true);
   });
 
@@ -251,7 +263,7 @@ describe("POST /api/auth/sync-roles", () => {
     const adminAuth = getAdminAuth()!;
     const record = await adminAuth.getUserByEmail("preset-admin@example.com");
     expect(record.customClaims?.admin).toBe(true);
-    expect(record.customClaims?.owner).toBeFalsy();
+    expect(record.customClaims?.platformOwner).toBeFalsy();
   });
 });
 
@@ -261,7 +273,7 @@ describe("P19 FTC teams", () => {
   async function makeLegacy(teamId: string, number: number, name: string | null) {
     const { FieldValue } = await import("firebase-admin/firestore");
     const db = getAdminFirestore()!;
-    await db.collection("teams").doc(teamId).update({ number, name, fieldTeams: FieldValue.delete(), fieldTeamIdList: FieldValue.delete() });
+    await db.collection("teams").doc(teamId).update({ number, name, fieldTeams: FieldValue.delete(), fieldTeamIdList: FieldValue.delete(), fieldTeamNumbers: FieldValue.delete() });
     const users = await db.collection("users").where("teamId", "==", teamId).get();
     await Promise.all(users.docs.map((d) => d.ref.update({ fieldTeamIds: FieldValue.delete() })));
   }
@@ -291,6 +303,7 @@ describe("P19 FTC teams", () => {
         { id: "fteam_b", number: 35794, name: "Beta" },
       ],
       fieldTeamIdList: ["ft-35792", "fteam_b"],
+      fieldTeamNumbers: [35792, 35794],
     });
     const joiner = await createTestUser("joiner-ft@example.com");
     await joinTeam(postJson({ joinCode, name: "Joiner" }, joiner));
@@ -335,6 +348,7 @@ describe("P19 FTC teams", () => {
           { id: "fteam_b", number: 35794, name: "Beta" },
         ],
         fieldTeamIdList: ["ft-35792", "fteam_b"],
+        fieldTeamNumbers: [35792, 35794],
       });
       const memberUid = await uidOf("legacy-member@example.com");
       await db.collection("users").doc(memberUid).update({ fieldTeamIds: ["fteam_b"] });
@@ -375,6 +389,604 @@ describe("P19 FTC teams", () => {
       await syncFieldTeams(postJson({}, strangerToken));
       expect((await otherRef.get()).data()?.fieldTeams).toEqual([{ id: "ft-111", number: 111, name: "Other" }]);
       expect((await otherDb.collection("teams").doc(teamId).get()).data()?.fieldTeams).toBeUndefined();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// P20: platform owner vs team owner, the application flow, the review actions and ownership transfer.
+// ---------------------------------------------------------------------------------------------
+describe("P20", () => {
+  const { issueStartToken } = serverTokens;
+  let ipCounter = 10;
+  const nextIp = () => `203.0.113.${ipCounter++}`;
+
+  const uidOfEmail = async (email: string) => (await getAdminAuth()!.getUserByEmail(email)).uid;
+  const asJson = (body: unknown, token?: string, ip?: string) =>
+    new Request("http://localhost/api", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(ip ? { "x-forwarded-for": ip } : {}) },
+      body: JSON.stringify(body),
+    });
+  const asGet = (token?: string) => new Request("http://localhost/api", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const freshToken = async (email: string) => {
+    await signInWithEmailAndPassword(clientAuth, email, "password123");
+    return clientAuth.currentUser!.getIdToken(true);
+  };
+  const docData = async (path: string) => (await getAdminFirestore()!.doc(path).get()).data();
+  // Public creation locks the moment a team exists; the helpers below build several accounts, so they open it first (as the platform owner would).
+  const enableCreation = () => getAdminFirestore()!.doc("appSettings/global").set({ teamCreationEnabled: true });
+
+  /** The platform owner (owner@example.com, in OWNER_EMAILS) with a team account of their own (FTC 1) and the claim on a fresh token. */
+  async function platformOwner() {
+    const first = await createTestUser("owner@example.com", { verified: true });
+    await enableCreation();
+    const { teamId, joinCode } = await (await createTeam(postJson({ teamNumber: 1, teamName: "Platform Team", name: "Pat Owner" }, first))).json();
+    await syncRoles(postJson({}, first));
+    return { token: await freshToken("owner@example.com"), teamId, joinCode, uid: await uidOfEmail("owner@example.com") };
+  }
+
+  /** A team account (created by `creatorEmail`, who becomes its team owner) with one extra member who is an admin and verified. */
+  async function accountWithAdmin(number: number, creatorEmail: string, adminEmail: string) {
+    const creatorToken = await createTestUser(creatorEmail, { verified: true });
+    await enableCreation();
+    const { teamId, joinCode } = await (await createTeam(postJson({ teamNumber: number, teamName: `Team ${number}`, name: "Creator" }, creatorToken))).json();
+    const adminToken = await createTestUser(adminEmail, { verified: true });
+    await joinTeam(postJson({ joinCode, name: "Second Admin" }, adminToken));
+    const adminUid = await uidOfEmail(adminEmail);
+    await getAdminFirestore()!.collection("users").doc(adminUid).update({ isAdmin: true });
+    return { teamId, joinCode, creatorUid: await uidOfEmail(creatorEmail), adminUid };
+  }
+
+  // -------------------------------------------------------------------------------------------
+  describe("platform owner vs team owner", () => {
+    it("a created team's creator is its team owner (ownerUid) and the owner mirror agrees", async () => {
+      const token = await createTestUser("maker@example.com");
+      const { teamId } = await (await createTeam(postJson({ teamNumber: 5 }, token))).json();
+      const uid = await uidOfEmail("maker@example.com");
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBe(uid);
+      expect((await docData(`users/${uid}`))?.isOwner).toBe(true);
+    });
+
+    it("bootstrap: an account with no owner keeps its existing (legacy-flagged) owner, whoever signs in first", async () => {
+      const { teamId, creatorUid, adminUid } = await accountWithAdmin(42, "legacy-owner@example.com", "legacy-admin@example.com");
+      const db = getAdminFirestore()!;
+      await db.collection("teams").doc(teamId).update({ ownerUid: FieldValue.delete() }); // an account from before P20
+      const token = await freshToken("legacy-admin@example.com");
+      const res = await syncRoles(postJson({}, token));
+      expect((await res.json()).changed).toBe(true);
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBe(creatorUid); // the flagged owner, not the member who signed in
+      expect((await docData(`users/${adminUid}`))?.isOwner).toBe(false);
+    });
+
+    it("bootstrap: with several legacy owners the earliest-created wins and the rest are demoted to admins", async () => {
+      const { teamId, creatorUid, adminUid } = await accountWithAdmin(43, "o1@example.com", "o2@example.com");
+      const db = getAdminFirestore()!;
+      await db.collection("teams").doc(teamId).update({ ownerUid: FieldValue.delete() });
+      await db.collection("users").doc(adminUid).update({ isOwner: true, createdAt: new Date(Date.now() + 60_000) });
+      await db.collection("users").doc(creatorUid).update({ createdAt: new Date(Date.now() - 60_000) });
+      await syncRoles(postJson({}, await freshToken("o2@example.com")));
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBe(creatorUid);
+      expect(await docData(`users/${adminUid}`)).toMatchObject({ isOwner: false, isAdmin: true });
+    });
+
+    it("bootstrap: an ownerless account with nobody flagged is claimed by a signing-in platform owner, and only by one", async () => {
+      const creator = await createTestUser("someone@example.com", { verified: true });
+      const { teamId, joinCode } = await (await createTeam(postJson({ teamNumber: 44 }, creator))).json();
+      const db = getAdminFirestore()!;
+      const creatorUid = await uidOfEmail("someone@example.com");
+      await db.collection("teams").doc(teamId).update({ ownerUid: FieldValue.delete() });
+      await db.collection("users").doc(creatorUid).update({ isOwner: false });
+
+      // an ordinary member signing in does not take it
+      await syncRoles(postJson({}, await freshToken("someone@example.com")));
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBeUndefined();
+
+      // the platform owner joins that account and signs in: they become its team owner
+      const platform = await createTestUser("owner@example.com", { verified: true });
+      await joinTeam(postJson({ joinCode, name: "Pat" }, platform));
+      await syncRoles(postJson({}, await freshToken("owner@example.com")));
+      const platformUid = await uidOfEmail("owner@example.com");
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBe(platformUid);
+      expect(await docData(`users/${platformUid}`)).toMatchObject({ isOwner: true, isAdmin: true, isPlatformOwner: true });
+    });
+
+    it("sync-roles never re-asserts ownership: after a transfer the platform owner signing in changes nothing", async () => {
+      const { token: platformToken, teamId, joinCode, uid: platformUid } = await platformOwner();
+      const adminToken = await createTestUser("successor@example.com", { verified: true });
+      await joinTeam(postJson({ joinCode, name: "Successor" }, adminToken));
+      const successorUid = await uidOfEmail("successor@example.com");
+      await getAdminFirestore()!.collection("users").doc(successorUid).update({ isAdmin: true });
+
+      // the platform owner (the team's owner, as its creator) hands the account over
+      await transfer(asJson({ action: "request", toUid: successorUid, confirm: "1" }, await freshToken("owner@example.com")));
+      expect((await (await transfer(asJson({ action: "accept" }, await freshToken("successor@example.com")))).json()).result).toBe("accepted");
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBe(successorUid);
+
+      // ...and then signs in again, over and over: platform owner status never takes it back
+      for (let i = 0; i < 2; i++) {
+        const res = await syncRoles(postJson({}, await freshToken("owner@example.com")));
+        expect((await res.json()).ok).toBe(true);
+      }
+      expect((await docData(`teams/${teamId}`))?.ownerUid).toBe(successorUid);
+      expect(await docData(`users/${platformUid}`)).toMatchObject({ isOwner: false, isAdmin: true, isPlatformOwner: true });
+      void platformToken;
+    });
+
+    it("grants the platformOwner claim from OWNER_EMAILS and takes it (and the old `owner` claim) away when the email leaves the list", async () => {
+      const { teamId } = await platformOwner();
+      void teamId;
+      const adminAuth = getAdminAuth()!;
+      expect((await adminAuth.getUserByEmail("owner@example.com")).customClaims).toMatchObject({ platformOwner: true, admin: true });
+      // a pre-P20 token still carrying `owner`: the next sync strips it
+      const uid = await uidOfEmail("owner@example.com");
+      await adminAuth.setCustomUserClaims(uid, { owner: true, platformOwner: true, admin: true });
+      const stale = await freshToken("owner@example.com");
+      await syncRoles(postJson({}, stale));
+      expect((await adminAuth.getUserByEmail("owner@example.com")).customClaims?.owner).toBeUndefined();
+
+      const previous = process.env.OWNER_EMAILS;
+      process.env.OWNER_EMAILS = "someone-else@example.com";
+      try {
+        await syncRoles(postJson({}, await freshToken("owner@example.com")));
+      } finally {
+        process.env.OWNER_EMAILS = previous;
+      }
+      expect((await adminAuth.getUserByEmail("owner@example.com")).customClaims?.platformOwner).toBe(false);
+      expect(await docData(`users/${uid}`)).toMatchObject({ isPlatformOwner: false, isAdmin: true }); // admin is never auto-revoked
+    });
+
+    it("only a platform owner can switch public team creation: a team owner, an admin and an unverified owner email cannot", async () => {
+      const { token } = await platformOwner();
+      const ok = await setTeamCreation(asJson({ enabled: true }, token));
+      expect(ok.status).toBe(200);
+      expect((await (await publicConfig()).json()).teamCreationEnabled).toBe(true);
+
+      await getAdminFirestore()!.doc("appSettings/global").set({ teamCreationEnabled: false });
+      const { creatorUid } = await accountWithAdmin(60, "teamowner@example.com", "teamadmin@example.com");
+      void creatorUid;
+      expect((await setTeamCreation(asJson({ enabled: true }, await freshToken("teamowner@example.com")))).status).toBe(403);
+      expect((await setTeamCreation(asJson({ enabled: true }, await freshToken("teamadmin@example.com")))).status).toBe(403);
+      expect((await setTeamCreation(asJson({ enabled: true }))).status).toBe(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  describe("POST /api/applications", () => {
+    const body = (over: Record<string, unknown> = {}) => ({
+      name: "Ada Lovelace",
+      teamNumber: "35792",
+      teamName: "Alpha Bots",
+      role: "team-coach",
+      verification: "I'm the lead mentor; our team page is linked here.",
+      link: "https://example.org/team",
+      startToken: issueStartToken(Date.now() - 10_000),
+      turnstileToken: null,
+      orgUrl: "",
+      ...over,
+    });
+    const verifiedApplicant = async (email = "ada@example.com") => createTestUser(email, { verified: true });
+
+    it("needs a signed-in, verified email", async () => {
+      expect((await submitApplication(asJson(body(), undefined, nextIp()))).status).toBe(401);
+      const unverified = await createTestUser("unverified@example.com", { verified: false });
+      const res = await submitApplication(asJson(body(), unverified, nextIp()));
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("email-unverified");
+      expect((await getAdminFirestore()!.collection("teamApplications").get()).size).toBe(0);
+    });
+
+    it("files a pending application with its private signals, and stores a hash, never the IP", async () => {
+      const token = await verifiedApplicant();
+      const ip = nextIp();
+      const res = await submitApplication(asJson(body(), token, ip));
+      expect(res.status).toBe(200);
+      const { applicationId } = await res.json();
+
+      const app = (await docData(`teamApplications/${applicationId}`))!;
+      expect(app).toMatchObject({ status: "pending", teamNumber: 35792, role: "team-coach", applicantEmail: "ada@example.com", teamId: null });
+      expect(app.expiresAt.toMillis() - app.createdAt.toMillis()).toBeGreaterThan(29.9 * 86_400_000);
+      expect(app.expiresAt.toMillis() - app.createdAt.toMillis()).toBeLessThan(30.1 * 86_400_000);
+
+      const priv = (await docData(`applicationPrivate/${applicationId}`))!;
+      expect(priv.signals).toMatchObject({ emailVerified: true, turnstile: "not-configured", emailDomain: "example.com", freeEmailProvider: false, existingAccountForNumber: false });
+      expect(priv.signals.firstApi.status).toMatch(/error|found|not-found/); // no FIRST credentials in the test: "error"
+      expect(priv.ipHash).toMatch(/^[0-9a-f]{32}$/);
+      const everything = JSON.stringify([app, priv, (await getAdminFirestore()!.collection("rateLimits").get()).docs.map((d) => d.data()), (await getAdminFirestore()!.collection("rateLimits").get()).docs.map((d) => d.id)]);
+      expect(everything).not.toContain(ip);
+      expect((await getAdminFirestore()!.collection("platformAuditLog").get()).size).toBe(1);
+    });
+
+    it("refuses a filled honeypot, a too-quick or missing or tampered start token, and files nothing", async () => {
+      const token = await verifiedApplicant();
+      const cases: [Record<string, unknown>, number, string][] = [
+        [{ orgUrl: "http://spam.example" }, 400, "rejected"],
+        [{ startToken: issueStartToken(Date.now()) }, 400, "too-fast"],
+        [{ startToken: undefined }, 400, "form-expired"],
+        [{ startToken: `${issueStartToken(Date.now() - 10_000)}x` }, 400, "form-expired"],
+        [{ startToken: issueStartToken(Date.now() - 3 * 60 * 60 * 1000) }, 400, "form-expired"],
+      ];
+      for (const [over, status, code] of cases) {
+        const res = await submitApplication(asJson(body(over), token, nextIp()));
+        expect(res.status, JSON.stringify(over)).toBe(status);
+        expect((await res.json()).code).toBe(code);
+      }
+      expect((await getAdminFirestore()!.collection("teamApplications").get()).size).toBe(0);
+    });
+
+    it("validates and reports every field problem; text is sanitized and bounded", async () => {
+      const token = await verifiedApplicant();
+      const bad = await submitApplication(asJson(body({ name: "A", teamNumber: "123456", role: "wizard", verification: "short", link: "javascript:alert(1)" }), token, nextIp()));
+      expect(bad.status).toBe(400);
+      expect(Object.keys((await bad.json()).fields).sort()).toEqual(["link", "name", "role", "teamNumber", "verification"]);
+
+      const res = await submitApplication(asJson(body({ name: "  Ada\u0000   <b>L</b> ", verification: `${"x".repeat(3000)}` }), token, nextIp()));
+      expect(res.status).toBe(200);
+      const app = (await getAdminFirestore()!.collection("teamApplications").get()).docs[0].data();
+      expect(app.applicantName).toBe("Ada <b>L</b>"); // control characters gone, whitespace collapsed (HTML is escaped at render time, never trusted)
+      expect(app.verification.length).toBe(1200);
+    });
+
+    it("rejects a disposable email domain", async () => {
+      const token = await createTestUser("burner@mailinator.com", { verified: true });
+      const res = await submitApplication(asJson(body(), token, nextIp()));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("disposable-email");
+    });
+
+    it("limits one IP to 3 applications an hour (the 4th is refused)", async () => {
+      const ip = nextIp();
+      const results: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const token = await verifiedApplicant(`bulk${i}@example.com`);
+        results.push((await submitApplication(asJson(body({ teamNumber: String(1000 + i), startToken: issueStartToken(Date.now() - 10_000) }), token, ip))).status);
+      }
+      expect(results).toEqual([200, 200, 200, 429]);
+    });
+
+    it("allows one pending application per applicant, per email (aliases included) and per team number", async () => {
+      const first = await verifiedApplicant("ada.l@gmail.com");
+      expect((await submitApplication(asJson(body(), first, nextIp()))).status).toBe(200);
+      // the same person again
+      expect((await (await submitApplication(asJson(body({ teamNumber: "2222" }), first, nextIp()))).json()).code).toBe("duplicate");
+      // another person, the same team number
+      const other = await verifiedApplicant("grace@example.com");
+      expect((await (await submitApplication(asJson(body(), other, nextIp()))).json()).code).toBe("duplicate");
+      // the same mailbox under an alias (dots and +tag on Gmail)
+      const alias = await verifiedApplicant("adal+robots@gmail.com");
+      expect((await (await submitApplication(asJson(body({ teamNumber: "3333" }), alias, nextIp()))).json()).code).toBe("duplicate");
+    });
+
+    it("lets an applicant apply again after a rejection, and ignores an expired pending application", async () => {
+      const { token: platformToken } = await platformOwner();
+      const token = await verifiedApplicant();
+      const { applicationId } = await (await submitApplication(asJson(body(), token, nextIp()))).json();
+      const rejected = await reviewApplication(asJson({ action: "reject", applicationId, reason: "Please link your team page." }, platformToken));
+      expect(rejected.status).toBe(200);
+      const again = await submitApplication(asJson(body({ startToken: issueStartToken(Date.now() - 10_000) }), token, nextIp()));
+      expect(again.status).toBe(200);
+
+      // an old pending application (past its 30 days) no longer blocks the same team number from a new applicant
+      const secondId = (await (await submitApplication(asJson(body({ teamNumber: "4444", startToken: issueStartToken(Date.now() - 10_000) }), await verifiedApplicant("late@example.com"), nextIp()))).json()).applicationId;
+      await getAdminFirestore()!.collection("teamApplications").doc(secondId).update({ expiresAt: new Date(Date.now() - 1000) });
+      const retry = await submitApplication(asJson(body({ teamNumber: "4444", startToken: issueStartToken(Date.now() - 10_000) }), await verifiedApplicant("later@example.com"), nextIp()));
+      expect(retry.status).toBe(200);
+    });
+
+    it("refuses an applicant who is already on a team, and a team number some account already has", async () => {
+      const { token: platformToken } = await platformOwner(); // FTC 1
+      void platformToken;
+      expect((await (await submitApplication(asJson(body(), await freshToken("owner@example.com"), nextIp()))).json()).code).toBe("already-member");
+
+      await accountWithAdmin(777, "creator777@example.com", "admin777@example.com");
+      const res = await submitApplication(asJson(body({ teamNumber: "777" }), await verifiedApplicant("newcomer@example.com"), nextIp()));
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("account-exists");
+      // an account's SECOND FTC team counts too (the numbers mirror)
+      const { teamId } = await accountWithAdmin(888, "creator888@example.com", "admin888@example.com");
+      await getAdminFirestore()!.collection("teams").doc(teamId).update({ fieldTeamNumbers: [888, 889] });
+      expect((await (await submitApplication(asJson(body({ teamNumber: "889" }), await verifiedApplicant("newcomer2@example.com"), nextIp()))).json()).code).toBe("account-exists");
+    });
+
+    it("refuses a blocked email or team number", async () => {
+      const { token: platformToken } = await platformOwner();
+      const token = await verifiedApplicant("blockme@example.com");
+      const { applicationId } = await (await submitApplication(asJson(body(), token, nextIp()))).json();
+      expect((await reviewApplication(asJson({ action: "block", applicationId, blockEmail: true, blockTeam: true, reason: "spam" }, platformToken))).status).toBe(200);
+
+      // the blocked email, for another team
+      const sameEmail = await submitApplication(asJson(body({ teamNumber: "5555", startToken: issueStartToken(Date.now() - 10_000) }), token, nextIp()));
+      expect((await sameEmail.json()).code).toBe("blocked");
+      // the blocked team number, from someone else
+      const sameTeam = await submitApplication(asJson(body({ startToken: issueStartToken(Date.now() - 10_000) }), await verifiedApplicant("someone-new@example.com"), nextIp()));
+      expect((await sameTeam.json()).code).toBe("blocked");
+
+      // unblocking lets them back in
+      const blocks = await getAdminFirestore()!.collection("applicationBlocks").get();
+      expect(blocks.size).toBe(2);
+      for (const b of blocks.docs) expect((await reviewApplication(asJson({ action: "unblock", blockId: b.id }, platformToken))).status).toBe(200);
+      expect((await submitApplication(asJson(body({ teamNumber: "5555", startToken: issueStartToken(Date.now() - 10_000) }), token, nextIp()))).status).toBe(200);
+    });
+
+    it("issues a signed start token with no sign-in, and the config route reports Turnstile as not configured to platform owners only", async () => {
+      const res = await startToken();
+      expect(typeof (await res.json()).token).toBe("string");
+      const { token } = await platformOwner();
+      const config = await (await applicationConfig(asGet(token))).json();
+      expect(config).toMatchObject({ turnstileSecretConfigured: false, emailConfigured: false });
+      expect((await applicationConfig(asGet(await verifiedApplicant("not-owner@example.com")))).status).toBe(403);
+      expect((await applicationConfig(asGet())).status).toBe(401);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  describe("POST /api/admin/applications (the review queue)", () => {
+    const apply = async (email: string, teamNumber: string, over: Record<string, unknown> = {}) => {
+      const token = await createTestUser(email, { verified: true });
+      const res = await submitApplication(
+        asJson(
+          { name: "Ada Lovelace", teamNumber, teamName: `Team ${teamNumber}`, role: "lead-strategist", verification: "I'm the lead mentor; see our page.", link: "", startToken: issueStartToken(Date.now() - 10_000), turnstileToken: null, orgUrl: "", ...over },
+          token,
+          nextIp()
+        )
+      );
+      return { token, applicationId: (await res.json()).applicationId as string, uid: await uidOfEmail(email) };
+    };
+
+    it("is for platform owners only", async () => {
+      const { token: platformToken } = await platformOwner();
+      const applicant = await apply("applicant@example.com", "9001");
+      expect((await reviewApplication(asJson({ action: "approve", applicationId: applicant.applicationId }))).status).toBe(401);
+      expect((await reviewApplication(asJson({ action: "approve", applicationId: applicant.applicationId }, applicant.token))).status).toBe(403);
+      // a team owner / admin of another account is not a platform owner either
+      await accountWithAdmin(61, "someowner@example.com", "someadmin@example.com");
+      expect((await reviewApplication(asJson({ action: "approve", applicationId: applicant.applicationId }, await freshToken("someowner@example.com")))).status).toBe(403);
+      // and a platform owner's claim is checked against the live OWNER_EMAILS list too
+      const previous = process.env.OWNER_EMAILS;
+      process.env.OWNER_EMAILS = "nobody@example.com";
+      try {
+        expect((await reviewApplication(asJson({ action: "approve", applicationId: applicant.applicationId }, platformToken))).status).toBe(403);
+      } finally {
+        process.env.OWNER_EMAILS = previous;
+      }
+      expect((await docData(`teamApplications/${applicant.applicationId}`))?.status).toBe("pending");
+    });
+
+    it("approve creates the team account in one go: join code, the applied FTC team, ownerUid = applicant, applicant is admin, audit entries written", async () => {
+      const { token: platformToken, uid: platformUid, teamId: platformTeamId } = await platformOwner();
+      const a = await apply("approved@example.com", "9002");
+      const res = await reviewApplication(asJson({ action: "approve", applicationId: a.applicationId }, platformToken));
+      expect(res.status).toBe(200);
+      const { teamId } = await res.json();
+
+      const team = (await docData(`teams/${teamId}`))!;
+      expect(team).toMatchObject({ number: 9002, ownerUid: a.uid, fieldTeamNumbers: [9002], fieldTeamIdList: ["ft-9002"], applicationId: a.applicationId });
+      expect(team.fieldTeams).toEqual([{ id: "ft-9002", number: 9002, name: "Team 9002" }]);
+      expect(team.joinCode).toMatch(/^[A-Z2-9]{6}$/);
+      expect(await docData(`users/${a.uid}`)).toMatchObject({ teamId, isAdmin: true, isOwner: true, primaryRole: "lead-strategist", fieldTeamIds: ["ft-9002"], name: "Ada Lovelace" });
+      expect(await docData(`teamApplications/${a.applicationId}`)).toMatchObject({ status: "approved", teamId, decidedBy: platformUid });
+
+      const db = getAdminFirestore()!;
+      const audit = await db.collection("auditLog").where("teamId", "==", teamId).get();
+      expect(audit.docs.map((d) => d.data().action)).toEqual(["approve-team-application"]);
+      expect(JSON.stringify(audit.docs[0].data())).not.toContain("approved@example.com"); // the new account's own log carries no applicant details
+      const platformLog = await db.collection("platformAuditLog").get();
+      expect(platformLog.docs.map((d) => d.data().action).sort()).toEqual(["approve-application", "submit-application"]);
+
+      // the platform owner gained nothing in the new account, and the new account has none of theirs
+      expect((await db.collection("users").where("teamId", "==", teamId).get()).docs.map((d) => d.id)).toEqual([a.uid]);
+      expect((await docData(`users/${platformUid}`))?.teamId).toBe(platformTeamId);
+    });
+
+    it("approval is atomic and idempotent: simultaneous approvals create exactly one team; deciding twice, an expired one, or one whose applicant already joined a team all fail cleanly", async () => {
+      const { token: platformToken } = await platformOwner();
+      const a = await apply("racer@example.com", "9003");
+      const db = getAdminFirestore()!;
+      const before = (await db.collection("teams").get()).size;
+      const [r1, r2] = await Promise.all([
+        reviewApplication(asJson({ action: "approve", applicationId: a.applicationId }, platformToken)),
+        reviewApplication(asJson({ action: "approve", applicationId: a.applicationId }, platformToken)),
+      ]);
+      expect([r1.status, r2.status].sort()).toEqual([200, 409]);
+      expect((await db.collection("teams").get()).size).toBe(before + 1);
+      expect((await (await reviewApplication(asJson({ action: "reject", applicationId: a.applicationId, reason: "too late" }, platformToken))).json()).code).toBe("already-decided");
+
+      const expired = await apply("expired@example.com", "9004");
+      await db.collection("teamApplications").doc(expired.applicationId).update({ expiresAt: new Date(Date.now() - 1000) });
+      expect((await (await reviewApplication(asJson({ action: "approve", applicationId: expired.applicationId }, platformToken))).json()).code).toBe("expired");
+
+      const joined = await apply("joined@example.com", "9005");
+      await db.collection("users").doc(joined.uid).set({ name: "J", email: "joined@example.com", teamId: "some-team", primaryRole: "match-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
+      const teamsBefore = (await db.collection("teams").get()).size;
+      expect((await (await reviewApplication(asJson({ action: "approve", applicationId: joined.applicationId }, platformToken))).json()).code).toBe("already-member");
+      expect((await db.collection("teams").get()).size).toBe(teamsBefore);
+      expect((await docData(`teamApplications/${joined.applicationId}`))?.status).toBe("pending");
+    });
+
+    it("won't approve a team number another account has, or an applicant who lost their verified email", async () => {
+      const { token: platformToken } = await platformOwner();
+      const a = await apply("dupe@example.com", "9006");
+      await accountWithAdmin(9006, "has9006@example.com", "has9006b@example.com"); // an account appears meanwhile
+      expect((await (await reviewApplication(asJson({ action: "approve", applicationId: a.applicationId }, platformToken))).json()).code).toBe("account-exists");
+
+      const b = await apply("unver@example.com", "9007");
+      await getAdminAuth()!.updateUser(b.uid, { emailVerified: false });
+      expect((await (await reviewApplication(asJson({ action: "approve", applicationId: b.applicationId }, platformToken))).json()).code).toBe("email-unverified");
+    });
+
+    it("reject needs a reason the applicant can read; block can end an application and stops reuse; notes stay in the private doc", async () => {
+      const { token: platformToken } = await platformOwner();
+      const a = await apply("rej@example.com", "9008");
+      expect((await (await reviewApplication(asJson({ action: "reject", applicationId: a.applicationId, reason: " " }, platformToken))).json()).code).toBe("reason-required");
+      expect((await reviewApplication(asJson({ action: "reject", applicationId: a.applicationId, reason: "We couldn't match you to this team." }, platformToken))).status).toBe(200);
+      expect(await docData(`teamApplications/${a.applicationId}`)).toMatchObject({ status: "rejected", rejectionReason: "We couldn't match you to this team." });
+
+      const b = await apply("blk@example.com", "9009");
+      expect((await (await reviewApplication(asJson({ action: "block", applicationId: b.applicationId, blockEmail: false, blockTeam: false }, platformToken))).json()).code).toBe("nothing-to-block");
+      expect((await reviewApplication(asJson({ action: "block", applicationId: b.applicationId, blockTeam: true, blockEmail: false, reason: "not a real team" }, platformToken))).status).toBe(200);
+      expect(await docData(`teamApplications/${b.applicationId}`)).toMatchObject({ status: "blocked" });
+      expect((await docData("applicationBlocks/team_9009"))?.type).toBe("team");
+
+      expect((await reviewApplication(asJson({ action: "note", applicationId: b.applicationId, notes: "  looked up their website: nothing  " }, platformToken))).status).toBe(200);
+      expect((await docData(`applicationPrivate/${b.applicationId}`))?.notes).toBe("looked up their website: nothing");
+      expect(JSON.stringify(await docData(`teamApplications/${b.applicationId}`))).not.toContain("looked up");
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  describe("POST /api/team/transfer (ownership transfer)", () => {
+    const request = (token: string, toUid: string, confirm: string) => transfer(asJson({ action: "request", toUid, confirm }, token));
+    const respondAs = async (email: string, action: "accept" | "decline" | "cancel") => transfer(asJson({ action }, await freshToken(email)));
+
+    it("happy path: request, accept: ownerUid moves in a transaction; the old owner stays an admin and loses the protections; the new owner gains them; both are audited", async () => {
+      const { teamId, creatorUid, adminUid } = await accountWithAdmin(70, "own70@example.com", "adm70@example.com");
+      const requested = await request(await freshToken("own70@example.com"), adminUid, "70");
+      expect(requested.status).toBe(200);
+      const pending = (await docData(`teams/${teamId}`))!.pendingTransfer;
+      expect(pending).toMatchObject({ fromUid: creatorUid, toUid: adminUid });
+      expect(pending.expiresAt.toMillis() - pending.requestedAt.toMillis()).toBe(7 * 86_400_000);
+      expect((await docData(`teams/${teamId}`))!.ownerUid).toBe(creatorUid); // nothing moves until accepted
+
+      const accepted = await respondAs("adm70@example.com", "accept");
+      expect(accepted.status).toBe(200);
+      const team = (await docData(`teams/${teamId}`))!;
+      expect(team.ownerUid).toBe(adminUid);
+      expect(team.pendingTransfer).toBeUndefined();
+      expect(await docData(`users/${creatorUid}`)).toMatchObject({ isOwner: false, isAdmin: true });
+      expect(await docData(`users/${adminUid}`)).toMatchObject({ isOwner: true, isAdmin: true });
+      const actions = (await getAdminFirestore()!.collection("auditLog").where("teamId", "==", teamId).get()).docs.map((d) => d.data().action).sort();
+      expect(actions).toEqual(["request-ownership-transfer", "transfer-ownership"]);
+    });
+
+    it("the recipient can decline; the owner (or the requester) can cancel; nobody else can", async () => {
+      const { teamId, adminUid } = await accountWithAdmin(71, "own71@example.com", "adm71@example.com");
+      const ownerToken = async () => freshToken("own71@example.com");
+      await request(await ownerToken(), adminUid, "71");
+      const declined = await respondAs("adm71@example.com", "decline");
+      expect(declined.status).toBe(200);
+      expect((await docData(`teams/${teamId}`))!.pendingTransfer).toBeUndefined();
+      expect((await docData(`teams/${teamId}`))!.ownerUid).not.toBe(adminUid);
+
+      await request(await ownerToken(), adminUid, "71");
+      // a bystander admin who isn't the owner, requester or recipient can't cancel
+      const bystander = await createTestUser("by71@example.com", { verified: true });
+      await joinTeam(postJson({ joinCode: (await docData(`teams/${teamId}`))!.joinCode, name: "By" }, bystander));
+      await getAdminFirestore()!.collection("users").doc(await uidOfEmail("by71@example.com")).update({ isAdmin: true });
+      expect((await respondAs("by71@example.com", "cancel")).status).toBe(403);
+      expect((await respondAs("own71@example.com", "cancel")).status).toBe(200);
+      expect((await docData(`teams/${teamId}`))!.pendingTransfer).toBeUndefined();
+      expect((await respondAs("own71@example.com", "cancel")).status).toBe(409); // nothing left to cancel
+    });
+
+    it("a request needs the owner, an admin recipient with a verified email, the typed team number, and nothing already pending", async () => {
+      const { teamId, creatorUid, adminUid } = await accountWithAdmin(72, "own72@example.com", "adm72@example.com");
+      const ownerToken = await freshToken("own72@example.com");
+      // a non-owner (even an admin) can't initiate
+      const byAdmin = await request(await freshToken("adm72@example.com"), creatorUid, "72");
+      expect(byAdmin.status).toBe(403);
+      expect((await byAdmin.json()).code).toBe("not-owner");
+      // the recipient must be an admin
+      const member = await createTestUser("mem72@example.com", { verified: true });
+      await joinTeam(postJson({ joinCode: (await docData(`teams/${teamId}`))!.joinCode, name: "Mem" }, member));
+      const memberUid = await uidOfEmail("mem72@example.com");
+      expect((await (await request(ownerToken, memberUid, "72")).json()).code).toBe("not-admin");
+      // ...with a verified email
+      await getAdminAuth()!.updateUser(adminUid, { emailVerified: false });
+      expect((await (await request(ownerToken, adminUid, "72")).json()).code).toBe("unverified-email");
+      await getAdminAuth()!.updateUser(adminUid, { emailVerified: true });
+      // the typed number must match
+      expect((await (await request(ownerToken, adminUid, "73")).json()).code).toBe("bad-confirmation");
+      expect((await (await request(ownerToken, adminUid, "")).json()).code).toBe("bad-confirmation");
+      // someone outside the team
+      const outsider = await createTestUser("out72@example.com", { verified: true });
+      void outsider;
+      expect((await (await request(ownerToken, await uidOfEmail("out72@example.com"), "72")).json()).code).toBe("no-target");
+      // yourself
+      expect((await (await request(ownerToken, creatorUid, "72")).json()).code).toBe("self");
+      // finally ok, and then only one at a time
+      expect((await request(ownerToken, adminUid, "72")).status).toBe(200);
+      expect((await (await request(ownerToken, adminUid, "72")).json()).code).toBe("pending-exists");
+    });
+
+    it("expires after 7 days: it can't be accepted, and a new request replaces it", async () => {
+      const { teamId, adminUid } = await accountWithAdmin(74, "own74@example.com", "adm74@example.com");
+      await request(await freshToken("own74@example.com"), adminUid, "74");
+      const db = getAdminFirestore()!;
+      const pending = (await docData(`teams/${teamId}`))!.pendingTransfer;
+      await db.collection("teams").doc(teamId).update({ "pendingTransfer.expiresAt": new Date(Date.now() - 1000), "pendingTransfer.requestedAt": new Date(Date.now() - 8 * 86_400_000) });
+      void pending;
+      const late = await respondAs("adm74@example.com", "accept");
+      expect(late.status).toBe(409);
+      expect((await late.json()).code).toBe("expired");
+      expect((await docData(`teams/${teamId}`))!.ownerUid).not.toBe(adminUid);
+      // the owner can simply ask again
+      expect((await request(await freshToken("own74@example.com"), adminUid, "74")).status).toBe(200);
+      expect((await respondAs("adm74@example.com", "accept")).status).toBe(200);
+    });
+
+    it("only the named recipient can accept, and only while they're still an admin with a verified email", async () => {
+      const { teamId, adminUid } = await accountWithAdmin(75, "own75@example.com", "adm75@example.com");
+      await request(await freshToken("own75@example.com"), adminUid, "75");
+      expect((await respondAs("own75@example.com", "accept")).status).toBe(403); // not addressed to the owner
+      await getAdminFirestore()!.collection("users").doc(adminUid).update({ isAdmin: false });
+      expect((await (await respondAs("adm75@example.com", "accept")).json()).code).toBe("recipient-not-admin");
+      await getAdminFirestore()!.collection("users").doc(adminUid).update({ isAdmin: true });
+      expect((await respondAs("adm75@example.com", "accept")).status).toBe(200);
+      expect((await docData(`teams/${teamId}`))!.ownerUid).toBe(adminUid);
+    });
+
+    it("a request voided by a recovery transfer in between can't be accepted afterwards", async () => {
+      const { teamId, creatorUid, adminUid } = await accountWithAdmin(76, "own76@example.com", "adm76@example.com");
+      await request(await freshToken("own76@example.com"), adminUid, "76");
+      // the ownership changes underneath it (as a force-transfer would do, which also clears the pending record)
+      const db = getAdminFirestore()!;
+      await db.collection("teams").doc(teamId).update({ ownerUid: "someone-else" });
+      expect((await (await respondAs("adm76@example.com", "accept")).json()).code).toBe("stale");
+      expect((await docData(`teams/${teamId}`))!.ownerUid).toBe("someone-else");
+      void creatorUid;
+    });
+
+    it("a platform owner can force a recovery transfer of any account (reason, recent sign-in and typed number required); it is labelled and logged twice; nobody else can", async () => {
+      const { teamId, creatorUid, adminUid } = await accountWithAdmin(77, "own77@example.com", "adm77@example.com");
+      const { token: platformToken, uid: platformUid } = await platformOwner();
+      const force = (token: string, over: Record<string, unknown> = {}) => transfer(asJson({ action: "force", teamId, toUid: adminUid, confirm: "77", reason: "The owner graduated and can't be reached.", ...over }, token));
+
+      expect((await force(await freshToken("own77@example.com"))).status).toBe(403); // the team's own owner has no force power
+      expect((await (await force(platformToken, { reason: "" })).json()).code).toBe("reason-required");
+      expect((await (await force(platformToken, { confirm: "1" })).json()).code).toBe("bad-confirmation");
+      expect((await (await force(platformToken, { toUid: "nobody" })).json()).code).toBe("no-target");
+
+      // a pending request by the old owner is voided by it
+      await request(await freshToken("own77@example.com"), adminUid, "77");
+      const done = await force(await freshToken("owner@example.com"));
+      expect(done.status).toBe(200);
+      const team = (await docData(`teams/${teamId}`))!;
+      expect(team.ownerUid).toBe(adminUid);
+      expect(team.pendingTransfer).toBeUndefined();
+      expect(await docData(`users/${creatorUid}`)).toMatchObject({ isOwner: false, isAdmin: true });
+      expect(await docData(`users/${adminUid}`)).toMatchObject({ isOwner: true, isAdmin: true });
+
+      const db = getAdminFirestore()!;
+      const teamLog = (await db.collection("auditLog").where("teamId", "==", teamId).get()).docs.map((d) => d.data()).find((d) => d.action === "force-transfer-ownership")!;
+      expect(teamLog.actorName).toContain("platform owner, recovery");
+      expect(teamLog.target.reason).toContain("graduated");
+      const platformLog = (await db.collection("platformAuditLog").get()).docs.map((d) => d.data()).find((d) => d.action === "force-transfer-ownership")!;
+      expect(platformLog.actorUid).toBe(platformUid);
+
+    });
+
+    it("the recovery list shows accounts' FTC teams, owner and admins only: no join codes, and platform owners only", async () => {
+      await accountWithAdmin(78, "own78@example.com", "adm78@example.com");
+      const { token } = await platformOwner();
+      const res = await listTeams(asGet(token));
+      expect(res.status).toBe(200);
+      const { teams } = await res.json();
+      const t = teams.find((x: { fieldTeams: { number: number }[] }) => x.fieldTeams[0]?.number === 78);
+      expect(t.admins.map((a: { email: string }) => a.email).sort()).toEqual(["adm78@example.com", "own78@example.com"]);
+      expect(t.ownerName).toBe("Creator");
+      expect(JSON.stringify(teams)).not.toMatch(/joinCode|[A-Z2-9]{6}"/);
+      expect((await listTeams(asGet(await freshToken("own78@example.com")))).status).toBe(403);
+      expect((await listTeams(asGet())).status).toBe(401);
     });
   });
 });
