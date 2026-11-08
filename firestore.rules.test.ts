@@ -2845,6 +2845,241 @@ describe("P25: profiles/{uid} and the users/{uid}.avatar mirror", () => {
   });
 });
 
+// P26: page access. The page-access doc, the access requests, and the writes that follow a page's access (assignments and
+// attendance: the Assignments page; scout targets: Scout Status). Reads of those collections stay open to the team.
+describe("P26: page access in the rules", () => {
+  const LEAD = "p26-lead"; // primary Lead Scout
+  const SECOND_LEAD = "p26-second-lead"; // match-scout with a SECONDARY Lead Scout role
+  const COACH = "p26-coach"; // Team Coach
+  const MEDIA = "p26-media"; // Media
+  const OUTSIDER = "p26-outsider"; // another team's admin
+  const EVENT = "USWABON1";
+  const asUid = (uid: string) => testEnv.authenticatedContext(uid).firestore();
+  const settings = () => doc(asUid(ADMIN_UID), "teams", TEAM_ID, "settings", "pageAccess");
+
+  const version = { id: "v1", createdAt: "2026-01-01T00:00:00.000Z", slots: [] };
+  const assignments = () => ({ teamId: TEAM_ID, eventCode: EVENT, current: version, previous: null });
+  const attendance = () => ({ teamId: TEAM_ID, eventCode: EVENT, uids: [SCOUT_UID] });
+  const targets = (uid: string) => ({ teamId: TEAM_ID, eventCode: EVENT, ranges: { qualification: "1-10" }, maxOverrides: {}, individual: {}, extraScouts: [], updatedBy: uid, updatedAt: new Date() });
+
+  // The page-access doc as the app writes it (lib/page-access/store.tsx pageAccessDocData), from a list of [page, roles] and overrides.
+  const pageAccessData = (pageRoles: Record<string, string[]>, memberOverrides: Record<string, { grant: string[]; deny: string[] }> = {}, uid = ADMIN_UID) => ({
+    roleGrants: {},
+    pageRoles,
+    memberOverrides,
+    updatedBy: uid,
+    updatedAt: serverTimestamp(),
+  });
+  const DEFAULT_ROLES = { assignments: ["lead-scout"], "scout-status": ["lead-scout", "team-coach"] };
+  const seedDoc = (pageRoles: Record<string, string[]>, memberOverrides: Record<string, { grant: string[]; deny: string[] }> = {}) =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "teams", TEAM_ID, "settings", "pageAccess"), { ...pageAccessData(pageRoles, memberOverrides), updatedAt: new Date() });
+    });
+
+  const canWrite = async (uid: string, collectionName: "assignments" | "eventAttendance" | "scoutTargets") => {
+    const db = asUid(uid);
+    const id = `${TEAM_ID}_${EVENT}`;
+    const data = collectionName === "assignments" ? assignments() : collectionName === "eventAttendance" ? attendance() : targets(uid);
+    try {
+      await setDoc(doc(db, collectionName, id), data);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: false, isOwner: false, themeId: "team" };
+      await setDoc(doc(db, "users", LEAD), { ...base, name: "Lead", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [] });
+      await setDoc(doc(db, "users", SECOND_LEAD), { ...base, name: "Second", teamId: TEAM_ID, primaryRole: "match-scout", secondaryRoles: ["media", "lead-scout"] });
+      await setDoc(doc(db, "users", COACH), { ...base, name: "Coach", teamId: TEAM_ID, primaryRole: "team-coach", secondaryRoles: [] });
+      await setDoc(doc(db, "users", MEDIA), { ...base, name: "Media", teamId: TEAM_ID, primaryRole: "media", secondaryRoles: [] });
+      await setDoc(doc(db, "users", OUTSIDER), { ...base, name: "Out", teamId: OTHER_TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: true });
+    });
+  });
+
+  describe("gated writes with no page-access doc yet (the defaults)", () => {
+    it("Assignments and attendance: admins, Lead Scouts (primary or secondary); nobody else", async () => {
+      for (const c of ["assignments", "eventAttendance"] as const) {
+        expect(await canWrite(ADMIN_UID, c), `admin ${c}`).toBe(true);
+        expect(await canWrite(OWNER_UID, c), `owner ${c}`).toBe(true);
+        expect(await canWrite(LEAD, c), `lead ${c}`).toBe(true);
+        expect(await canWrite(SECOND_LEAD, c), `secondary lead ${c}`).toBe(true);
+        expect(await canWrite(COACH, c), `coach ${c}`).toBe(false);
+        expect(await canWrite(MEDIA, c), `media ${c}`).toBe(false);
+        expect(await canWrite(SCOUT_UID, c), `scout ${c}`).toBe(false);
+        expect(await canWrite(OUTSIDER, c), `outsider ${c}`).toBe(false);
+      }
+    });
+
+    it("Scout Status targets: admins, Lead Scouts and Team Coaches", async () => {
+      expect(await canWrite(ADMIN_UID, "scoutTargets")).toBe(true);
+      expect(await canWrite(LEAD, "scoutTargets")).toBe(true);
+      expect(await canWrite(SECOND_LEAD, "scoutTargets")).toBe(true);
+      expect(await canWrite(COACH, "scoutTargets")).toBe(true);
+      expect(await canWrite(MEDIA, "scoutTargets")).toBe(false);
+      expect(await canWrite(SCOUT_UID, "scoutTargets")).toBe(false);
+    });
+  });
+
+  describe("gated writes follow the page-access doc", () => {
+    it("the same answers once the doc holds the defaults", async () => {
+      await seedDoc(DEFAULT_ROLES);
+      expect(await canWrite(LEAD, "assignments")).toBe(true);
+      expect(await canWrite(COACH, "assignments")).toBe(false);
+      expect(await canWrite(COACH, "scoutTargets")).toBe(true);
+      expect(await canWrite(SCOUT_UID, "scoutTargets")).toBe(false);
+    });
+
+    it("the role matrix: taking a role off a page closes it, giving one a page opens it", async () => {
+      await seedDoc({ assignments: ["media"], "scout-status": ["lead-scout"] });
+      expect(await canWrite(MEDIA, "assignments")).toBe(true);
+      expect(await canWrite(LEAD, "assignments")).toBe(false);
+      expect(await canWrite(SECOND_LEAD, "assignments")).toBe(true); // via the secondary Media role
+      expect(await canWrite(COACH, "scoutTargets")).toBe(false);
+      expect(await canWrite(LEAD, "scoutTargets")).toBe(true);
+      expect(await canWrite(ADMIN_UID, "assignments")).toBe(true); // admins always
+    });
+
+    it("a page the doc doesn't list falls back to its default roles", async () => {
+      await seedDoc({ "scout-status": ["lead-scout", "team-coach"] }); // no `assignments` key
+      expect(await canWrite(LEAD, "assignments")).toBe(true);
+      expect(await canWrite(MEDIA, "assignments")).toBe(false);
+    });
+
+    it("an explicit grant opens a page the roles don't; an explicit deny closes one they do (and never an admin)", async () => {
+      await seedDoc(DEFAULT_ROLES, { [MEDIA]: { grant: ["assignments"], deny: [] }, [LEAD]: { grant: [], deny: ["assignments"] }, [ADMIN_UID]: { grant: [], deny: ["assignments"] } });
+      expect(await canWrite(MEDIA, "assignments")).toBe(true);
+      expect(await canWrite(MEDIA, "scoutTargets")).toBe(false); // only that page
+      expect(await canWrite(LEAD, "assignments")).toBe(false);
+      expect(await canWrite(LEAD, "scoutTargets")).toBe(true);
+      expect(await canWrite(ADMIN_UID, "assignments")).toBe(true);
+    });
+
+    it("a deny beats a grant on the same page", async () => {
+      await seedDoc(DEFAULT_ROLES, { [LEAD]: { grant: ["assignments"], deny: ["assignments"] } });
+      expect(await canWrite(LEAD, "assignments")).toBe(false);
+    });
+
+    it("another team's settings never apply: reading is team-scoped too", async () => {
+      await seedDoc({ assignments: ["media"] });
+      await assertFails(getDoc(doc(asUid(OUTSIDER), "teams", TEAM_ID, "settings", "pageAccess")));
+      await assertSucceeds(getDoc(doc(asUid(SCOUT_UID), "teams", TEAM_ID, "settings", "pageAccess")));
+    });
+
+    it("reading assignments, attendance and targets stays open to the whole team", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "assignments", `${TEAM_ID}_${EVENT}`), assignments());
+        await setDoc(doc(ctx.firestore(), "eventAttendance", `${TEAM_ID}_${EVENT}`), attendance());
+      });
+      await seedDoc({ assignments: [] });
+      await assertSucceeds(getDoc(doc(asUid(MEDIA), "assignments", `${TEAM_ID}_${EVENT}`)));
+      await assertSucceeds(getDoc(doc(asUid(MEDIA), "eventAttendance", `${TEAM_ID}_${EVENT}`)));
+    });
+  });
+
+  describe("the page-access doc", () => {
+    it("is written only by admins (and the owner), never by anyone else", async () => {
+      await assertSucceeds(setDoc(settings(), pageAccessData(DEFAULT_ROLES)));
+      await assertSucceeds(setDoc(doc(asUid(OWNER_UID), "teams", TEAM_ID, "settings", "pageAccess"), pageAccessData(DEFAULT_ROLES, {}, OWNER_UID)));
+      for (const uid of [LEAD, COACH, SCOUT_UID, MEDIA]) {
+        await assertFails(setDoc(doc(asUid(uid), "teams", TEAM_ID, "settings", "pageAccess"), pageAccessData(DEFAULT_ROLES, {}, uid)));
+      }
+      await assertFails(setDoc(doc(asUid(OUTSIDER), "teams", TEAM_ID, "settings", "pageAccess"), pageAccessData(DEFAULT_ROLES, {}, OUTSIDER)));
+      // a role can't give itself the right by being granted the page that edits it: the doc is admin-only whatever it says
+      await seedDoc({ "team-management": ["lead-scout"] }, { [LEAD]: { grant: ["team-management"], deny: [] } });
+      await assertFails(updateDoc(doc(asUid(LEAD), "teams", TEAM_ID, "settings", "pageAccess"), { memberOverrides: {}, updatedBy: LEAD, updatedAt: serverTimestamp() }));
+    });
+
+    it("is validated: the writer, a server timestamp, the field list, and only the pageAccess doc exists", async () => {
+      await assertFails(setDoc(settings(), pageAccessData(DEFAULT_ROLES, {}, SCOUT_UID))); // updatedBy must be the writer
+      await assertFails(setDoc(settings(), { ...pageAccessData(DEFAULT_ROLES), updatedAt: new Date("2020-01-01") }));
+      await assertFails(setDoc(settings(), { ...pageAccessData(DEFAULT_ROLES), extra: 1 }));
+      await assertFails(setDoc(settings(), { ...pageAccessData(DEFAULT_ROLES), pageRoles: ["assignments"] }));
+      await assertFails(setDoc(doc(asUid(ADMIN_UID), "teams", TEAM_ID, "settings", "other"), pageAccessData(DEFAULT_ROLES)));
+      await assertSucceeds(setDoc(settings(), pageAccessData(DEFAULT_ROLES)));
+      await assertFails(deleteDoc(settings()));
+    });
+
+    it("an admin's write and its audit entry commit together in one batch, as lib/page-access/store.tsx does", async () => {
+      const db = asUid(ADMIN_UID);
+      const batch = writeBatch(db);
+      batch.set(doc(db, "teams", TEAM_ID, "settings", "pageAccess"), pageAccessData(DEFAULT_ROLES));
+      batch.set(doc(collection(db, "auditLog")), { teamId: TEAM_ID, uid: ADMIN_UID, actorName: "Admin Person", action: "edit-page-access", target: {}, before: null, after: null, createdAt: serverTimestamp() });
+      await assertSucceeds(batch.commit());
+    });
+  });
+
+  describe("access requests", () => {
+    const request = (uid: string, pageId = "assignments", over: Record<string, unknown> = {}) => ({ teamId: TEAM_ID, uid, name: "Someone", pageId, pageTitle: "Assignments", status: "pending", createdAt: serverTimestamp(), ...over });
+    const ref = (db: ReturnType<typeof asUid>, uid: string, pageId = "assignments") => doc(db, "teams", TEAM_ID, "pageAccessRequests", `${uid}_${pageId}`);
+
+    it("a member creates their own pending request for a restricted page", async () => {
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+    });
+
+    it("not for someone else, not with another id, not already decided, not for an open or admin page, not with extra fields", async () => {
+      const db = asUid(MEDIA);
+      await assertFails(setDoc(ref(db, SCOUT_UID), request(SCOUT_UID)));
+      await assertFails(setDoc(doc(db, "teams", TEAM_ID, "pageAccessRequests", "whatever"), request(MEDIA)));
+      await assertFails(setDoc(ref(db, MEDIA), request(MEDIA, "assignments", { status: "approved" })));
+      await assertFails(setDoc(ref(db, MEDIA, "dashboard"), request(MEDIA, "dashboard")));
+      await assertFails(setDoc(ref(db, MEDIA, "admin-panel"), request(MEDIA, "admin-panel")));
+      await assertFails(setDoc(ref(db, MEDIA), request(MEDIA, "assignments", { extra: true })));
+      await assertFails(setDoc(doc(asUid(OUTSIDER), "teams", TEAM_ID, "pageAccessRequests", `${OUTSIDER}_assignments`), request(OUTSIDER)));
+    });
+
+    it("the requester reads their own; admins read all; another member reads none of anyone else's", async () => {
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+      await assertSucceeds(getDoc(ref(asUid(MEDIA), MEDIA)));
+      await assertSucceeds(getDoc(ref(asUid(ADMIN_UID), MEDIA)));
+      await assertFails(getDoc(ref(asUid(SCOUT_UID), MEDIA)));
+      await assertSucceeds(getDocs(query(collection(asUid(MEDIA), "teams", TEAM_ID, "pageAccessRequests"), where("uid", "==", MEDIA))));
+      await assertSucceeds(getDocs(collection(asUid(ADMIN_UID), "teams", TEAM_ID, "pageAccessRequests")));
+      await assertFails(getDocs(collection(asUid(MEDIA), "teams", TEAM_ID, "pageAccessRequests"))); // rules aren't filters
+    });
+
+    it("only an admin decides it, and only the status moves", async () => {
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+      const decide = (db: ReturnType<typeof asUid>, uid: string, status: string, extra: Record<string, unknown> = {}) => updateDoc(ref(db, MEDIA), { status, decidedBy: uid, decidedAt: serverTimestamp(), ...extra });
+      await assertFails(decide(asUid(MEDIA), MEDIA, "approved")); // you can't approve yourself
+      await assertFails(decide(asUid(LEAD), LEAD, "approved"));
+      await assertFails(decide(asUid(ADMIN_UID), ADMIN_UID, "approved", { pageId: "team-management" })); // nothing else may change
+      await assertFails(decide(asUid(ADMIN_UID), ADMIN_UID, "pending"));
+      await assertFails(decide(asUid(ADMIN_UID), SCOUT_UID, "approved")); // decidedBy must be the admin
+      await assertSucceeds(decide(asUid(ADMIN_UID), ADMIN_UID, "approved"));
+      await assertFails(decide(asUid(ADMIN_UID), ADMIN_UID, "denied")); // decided once
+    });
+
+    it("approving adds the grant and marks the request in one batch; the member then can write", async () => {
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+      await seedDoc(DEFAULT_ROLES);
+      const db = asUid(ADMIN_UID);
+      const batch = writeBatch(db);
+      batch.update(ref(db, MEDIA), { status: "approved", decidedBy: ADMIN_UID, decidedAt: serverTimestamp() });
+      batch.set(doc(db, "teams", TEAM_ID, "settings", "pageAccess"), pageAccessData(DEFAULT_ROLES, { [MEDIA]: { grant: ["assignments"], deny: [] } }));
+      await assertSucceeds(batch.commit());
+      expect(await canWrite(MEDIA, "assignments")).toBe(true);
+    });
+
+    it("after a denial the member can ask again; a pending one can't be re-sent", async () => {
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+      await assertFails(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA))); // already pending
+      await assertSucceeds(updateDoc(ref(asUid(ADMIN_UID), MEDIA), { status: "denied", decidedBy: ADMIN_UID, decidedAt: serverTimestamp() }));
+      await assertFails(setDoc(ref(asUid(SCOUT_UID), MEDIA), request(MEDIA))); // not yours to re-send
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+    });
+
+    it("is never deleted", async () => {
+      await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
+      await assertFails(deleteDoc(ref(asUid(MEDIA), MEDIA)));
+      await assertFails(deleteDoc(ref(asUid(ADMIN_UID), MEDIA)));
+    });
+  });
+});
+
 describe("P16: scoutTargets/{teamId}_{eventCode}", () => {
   const LEAD_UID = "lead-scout-1"; // primary role lead-scout
   const SECOND_LEAD_UID = "second-lead-1"; // primary match-scout, SECONDARY lead-scout

@@ -36,7 +36,9 @@ const MATCH_SOURCE_LABELS: Record<AssignmentMatchSource, string> = {
 
 export default function AssignmentsPage() {
   const { user, profile } = useAuth();
-  const { isAdmin } = usePermissions();
+  // P26: anyone who can open Assignments (admins, Lead Scouts by default, or anyone an admin granted) edits it: the rules follow the same access.
+  const { can } = usePermissions();
+  const canEdit = can("editAssignments");
   const teamId = profile?.teamId ?? null;
   const { events: activeEvents, primaryCode } = useActiveEvents();
   // Active events (primary first) lead the picker; the rest of the season's events follow.
@@ -146,7 +148,7 @@ export default function AssignmentsPage() {
 
   const myAssignments = !assignments?.current || !user ? [] : assignments.current.slots.filter((s) => s.scoutUid === user.uid);
 
-  if (!isAdmin) {
+  if (!canEdit) {
     return (
       <div className="flex flex-col gap-6">
         <div>

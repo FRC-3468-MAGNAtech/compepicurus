@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, ShieldCheck } from "lucide-react";
+import { KeyRound, Pencil, ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ export function MemberRow({
   editState,
   highlight,
   onEdit,
+  onPageAccess,
   selection,
 }: {
   member: TeamMember;
@@ -35,6 +36,8 @@ export function MemberRow({
   /** Pulses the theme glow once — set briefly after this member was saved. */
   highlight?: boolean;
   onEdit?: () => void;
+  /** P26: opens the member's page-access editor (admins only; omitted for everyone else). */
+  onPageAccess?: () => void;
   /** P19: bulk-assign selection. Omitted when there is only one FTC team; `disabled` for rows the viewer can't edit. */
   selection?: { checked: boolean; onChange: (checked: boolean) => void; disabled: boolean };
 }) {
@@ -88,6 +91,12 @@ export function MemberRow({
           </Badge>
         ))}
         <FieldTeamChips ids={member.fieldTeamIds} />
+
+        {onPageAccess && (
+          <Button size="sm" variant="glass" className="gap-1.5" onClick={onPageAccess} aria-label={`Page access for ${member.name}`} data-testid={`page-access-${member.uid}`}>
+            <KeyRound className="h-3.5 w-3.5" /> Page access
+          </Button>
+        )}
 
         {editState.canEdit ? (
           <Button size="sm" variant="glass" className="gap-1.5" onClick={onEdit} aria-label={`Edit ${member.name}`}>

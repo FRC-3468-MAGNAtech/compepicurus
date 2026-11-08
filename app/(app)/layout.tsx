@@ -14,6 +14,8 @@ import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
 import { useAuth } from "@/lib/auth";
 import { useConnectionNotice } from "@/lib/use-connection-state";
 import { FieldTeamsProvider } from "@/lib/field-teams-context";
+import { PageGuard } from "@/components/page-access/page-guard";
+import { PageAccessProvider } from "@/lib/page-access/store";
 import { FormsProvider } from "@/lib/forms/forms-context";
 import { OwnershipTransferBanner } from "@/components/layout/ownership-transfer-banner";
 import { ImmersiveContext, useImmersiveValue } from "@/lib/shell-immersive";
@@ -78,6 +80,8 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   return (
     // P19: one shared subscription to the account's FTC teams for the whole signed-in app.
     <FieldTeamsProvider>
+      {/* P26: one shared subscription to the account's page access, for the nav, the route guard and the permissions. */}
+      <PageAccessProvider>
       <FormsProvider>
       <ImmersiveContext.Provider value={immersiveValue}>
       <div className="mx-auto flex w-full max-w-[1600px] gap-4 px-3 pb-6 pt-4 lg:px-6">
@@ -89,7 +93,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
             <OwnershipTransferBanner className="mb-4" />
             {isPlaceholderPage && <PlaceholderBanner className="mb-4" />}
             <LiveMatchPill />
-            <PageTransition>{children}</PageTransition>
+            <PageTransition>
+              <PageGuard>{children}</PageGuard>
+            </PageTransition>
           </main>
           <SiteFooter className="mt-10" />
         </div>
@@ -98,6 +104,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       </div>
       </ImmersiveContext.Provider>
       </FormsProvider>
+      </PageAccessProvider>
     </FieldTeamsProvider>
   );
 }

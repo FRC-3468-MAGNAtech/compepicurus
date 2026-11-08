@@ -17,15 +17,18 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApplicationsPanel } from "@/components/admin/applications-panel";
 import { RecoveryPanel } from "@/components/admin/recovery-panel";
 import { FormsPanel } from "@/components/forms/forms-panel";
+import { PageAccessPanel } from "@/components/page-access/page-access-panel";
 import { ReviewPanelHost } from "@/components/templates/review-panel";
 import { usePendingApplicationCount } from "@/lib/applications-client";
 
-type AdminTab = "match-library" | "forms" | "sessions" | "rescore" | "audit-log" | "backups" | "applications" | "templates" | "recovery";
+type AdminTab = "match-library" | "forms" | "page-access" | "sessions" | "rescore" | "audit-log" | "backups" | "applications" | "templates" | "recovery";
 
 const TAB_LABELS: Record<AdminTab, string> = {
   "match-library": "Match Library",
   // P22: the Form Builder (owner and admin)
   forms: "Forms",
+  // P26: who can open which page (admins only: this whole panel is admin-only)
+  "page-access": "Page Access",
   sessions: "Sessions",
   rescore: "Rescore",
   "audit-log": "Audit Log",
@@ -130,6 +133,7 @@ export default function AdminPanelPage() {
 
       {tab === "match-library" && <MatchLibraryPanel onOpenRescore={() => setTab("rescore")} />}
       {tab === "forms" && can("manageForms") && <FormsPanel onOpenRescore={() => setTab("rescore")} />}
+      {tab === "page-access" && <PageAccessPanel />}
       {tab === "sessions" && <SessionsPanel />}
       {tab === "rescore" && <RescorePanel />}
       {tab === "audit-log" && <AuditLogPanel />}

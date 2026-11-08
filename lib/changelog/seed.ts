@@ -87,6 +87,34 @@ export const STARTER_ENTRIES: StarterEntry[] = [
       { type: "new", text: "Admins can preview any role's dashboard with **View as role**." },
     ],
   },
+  {
+    key: "v0-6-0",
+    version: "v0.6.0",
+    title: "Match List, reorderable events, and fixes",
+    date: "2026-11-07",
+    summary: "See the whole schedule in one place, put the active events in the order you want, and a few things that were annoying.",
+    changes: [
+      { type: "new", text: "**Match List** — the schedule and results for the events we're signed up for, with Practice, Qualifications and Playoffs tabs, our teams highlighted, a next-match marker, team search and a refresh button." },
+      { type: "new", text: "**Active Events** can be dragged into order (or moved with the arrows). The first event is always the primary one." },
+      { type: "improved", text: "The condensed Active Events bar shows every event's code, so nothing looks different from the next one." },
+      { type: "improved", text: "**Credits** opens in a clean view for everyone; admins press **Edit credits** to change it and **Done** to finish." },
+      { type: "fixed", text: "Switching your profile between **public and private** now saves the moment you pick it, and you always see your own profile." },
+    ],
+  },
+  {
+    key: "v0-7-0",
+    version: "v0.7.0",
+    title: "Page access",
+    date: "2026-11-07",
+    summary: "Some pages are now only for the roles that need them, and admins decide who gets what.",
+    changes: [
+      { type: "new", text: "**Page access** — every page is either open to everyone, limited to certain roles, or admin-only. Admins manage it in **Admin Panel > Page Access**: a role-by-role table, per-member extras, and a **Preview as member** view." },
+      { type: "new", text: "If you open a page you can't use, you get a clear message and a **Request access** button; admins approve or deny requests in Page Access." },
+      { type: "improved", text: "**Scout Accuracy** and **Scout Status** are now for Lead Scouts and Team Coaches, **Assignments** for Lead Scouts, **Event Selection** for Lead Scouts, Lead Strategists and Team Coaches, and **Team Management** for Team Coaches. Admins and the owner can open everything, and an admin can change any of this." },
+      { type: "improved", text: "Who can change **Assignments** and the **Scout Status** targets now follows who can open those pages." },
+      { type: "improved", text: "Dashboard, Match Scout Form, Analytics (except Scout Status), Practice Scouting, My Scouting, People, Changelog, Credits, Account Settings and Match List stay open to everyone." },
+    ],
+  },
 ];
 
 /** The Firestore doc id for a starter entry — deterministic, so two admins opening the page at once can't create it twice. */

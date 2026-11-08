@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronsLeft, ChevronsRight, LogOut, Trophy } from "lucide-react";
 import { mainNav, secondaryNav, type NavItem } from "@/lib/nav";
+import { visibleNav } from "@/lib/page-access/nav";
+import { useAccessUser, usePageAccess } from "@/lib/page-access/store";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/motion";
 import { ColorModeToggle } from "@/components/theme/color-mode-toggle";
@@ -102,7 +104,14 @@ export function Sidebar({ mobileOpen, onClose, connection = null }: { mobileOpen
   const router = useRouter();
   const name = profile?.name ?? "";
   const isAdmin = profile?.isAdmin ?? false;
-  const visibleSecondaryNav = secondaryNav.filter((item) => item.href !== "/admin" || isAdmin);
+  // P26: the nav hides pages this person can't open (the same check as the route guard). The Admin Panel is the admin-only page.
+  const pageAccess = usePageAccess();
+  const accessUser = useAccessUser();
+  const canOpen = accessUser ? pageAccess.can : null;
+  const visibleSecondaryNav = visibleNav(
+    secondaryNav.filter((item) => item.href !== "/admin" || isAdmin),
+    canOpen
+  );
   const changelogUnread = useChangelogUnread(profile?.teamId ?? null, profile?.lastSeenChangelogAt);
 
   const handleLogout = () => {
@@ -208,6 +217,9 @@ function SidebarInner({
   // P20: the platform owner sees how many team applications are waiting, on the Admin Panel item.
   const { isPlatformOwner } = usePermissions();
   const pendingApplications = usePendingApplicationCount(isPlatformOwner);
+  const pageAccess = usePageAccess();
+  const accessUser = useAccessUser();
+  const canOpen = accessUser ? pageAccess.can : null;
   return (
     <>
       {/* P19: the team line is data-driven now (it used to be hard-coded): the account's optional name under the
@@ -231,7 +243,7 @@ function SidebarInner({
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto py-1">
-        {mainNav.map((item) => (
+        {visibleNav(mainNav, canOpen).map((item) => (
           <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} scope={scope} />
         ))}
         <div className="my-2 h-px bg-[var(--glass-border)]" />

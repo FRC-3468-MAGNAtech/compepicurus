@@ -156,6 +156,47 @@ service cloud.firestore {
       return isSignedIn() && (p.isAdmin == true || p.primaryRole in editors || p.secondaryRoles.hasAny(editors));
     }
 
+    // P26: page access. `canAccessPage()` in lib/page-access/access.ts is the twin of this (keep both in sync): an admin
+    // (the owner is always one) can always; otherwise a person can use a restricted page when one of their roles (primary OR
+    // secondary) is in the page's role list in `teams/{teamId}/settings/pageAccess`, or the page is in their member
+    // `grant` list, and the page is NOT in their `deny` list. The doc stores, beside the editable `roleGrants`, a
+    // `pageRoles` mirror (page id -> the roles that have it) because rules can't loop over a map or a list. Until an admin
+    // session has created the doc (a one-time, idempotent migration), and for a page the doc doesn't list, the page's
+    // default roles apply: each call site below passes them (the same ones as the PAGES registry in lib/page-access/pages.ts).
+    function pageAccessPath() {
+      return /databases/$(database)/documents/teams/$(myProfile().teamId)/settings/pageAccess;
+    }
+
+    function hasAnyRoleOf(roles) {
+      return myProfile().primaryRole in roles || myProfile().secondaryRoles.hasAny(roles);
+    }
+
+    function pageAccessAllowed(pageId, defaultRoles) {
+      return isSignedIn() && (
+        myProfile().isAdmin == true
+        || (exists(pageAccessPath())
+          ? (((get(pageAccessPath()).data.get('pageRoles', {}).get(pageId, null) == null
+                ? hasAnyRoleOf(defaultRoles)
+                : hasAnyRoleOf(get(pageAccessPath()).data.pageRoles[pageId]))
+              || pageId in get(pageAccessPath()).data.get('memberOverrides', {}).get(request.auth.uid, {}).get('grant', []))
+            && !(pageId in get(pageAccessPath()).data.get('memberOverrides', {}).get(request.auth.uid, {}).get('deny', [])))
+          : hasAnyRoleOf(defaultRoles)));
+    }
+
+    // P26: the restricted pages that can be requested (the ids in lib/page-access/pages.ts; keep in sync).
+    function requestablePageIds() {
+      return ['lead-scout-form', 'pit-scout-form', 'team-strategy-form', 'match-strategy-form', 'drive-reflection-form',
+              'helper-form', 'scout-status', 'scout-accuracy', 'assignments', 'event-selection', 'team-management'];
+    }
+
+    function validPageAccessDoc(d) {
+      return d.keys().hasOnly(['roleGrants', 'pageRoles', 'memberOverrides', 'updatedBy', 'updatedAt'])
+        && d.keys().hasAll(['roleGrants', 'pageRoles', 'memberOverrides', 'updatedBy', 'updatedAt'])
+        && d.roleGrants is map && d.pageRoles is map && d.memberOverrides is map
+        && d.updatedBy == request.auth.uid
+        && d.updatedAt == request.time;
+    }
+
     match /teams/{teamId} {
       // P1b: no more public read. Team lookup by join code, the first-run
       // "does a team exist" check, and team creation itself all moved
@@ -179,6 +220,46 @@ service cloud.firestore {
         && request.resource.data.get('ownerUid', null) == resource.data.get('ownerUid', null)
         && request.resource.data.get('pendingTransfer', null) == resource.data.get('pendingTransfer', null);
       allow delete: if false;
+
+      // P26: settings docs of the account. Only `pageAccess` exists today: every teammate reads it (the navigation and the
+      // route guard need it), only admins write it (never deleted). The Admin Panel's Page Access screen is its only writer.
+      match /settings/{docId} {
+        allow read: if sameTeam(teamId);
+        allow create, update: if docId == 'pageAccess' && sameTeam(teamId) && isAdmin() && validPageAccessDoc(request.resource.data);
+        allow delete: if false;
+      }
+
+      // P26: "Request access" on the no-access screen. One doc per person and page (id `{uid}_{pageId}`): the person creates
+      // their own (pending) and may ask again after a denial; admins read them all and decide (status only). Nobody deletes.
+      match /pageAccessRequests/{requestId} {
+        allow read: if sameTeam(teamId) && (isAdmin() || resource.data.uid == request.auth.uid);
+        allow create: if sameTeam(teamId)
+          && request.resource.data.keys().hasOnly(['teamId', 'uid', 'name', 'pageId', 'pageTitle', 'status', 'createdAt'])
+          && request.resource.data.keys().hasAll(['teamId', 'uid', 'name', 'pageId', 'pageTitle', 'status', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.teamId == teamId
+          && request.resource.data.pageId in requestablePageIds()
+          && requestId == request.auth.uid + '_' + request.resource.data.pageId
+          && request.resource.data.status == 'pending'
+          && request.resource.data.name is string && request.resource.data.name.size() <= 80
+          && request.resource.data.pageTitle is string && request.resource.data.pageTitle.size() <= 60
+          && request.resource.data.createdAt == request.time;
+        allow update: if sameTeam(teamId) && (
+          (isAdmin()
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['approved', 'denied']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedBy', 'decidedAt'])
+            && request.resource.data.decidedBy == request.auth.uid
+            && request.resource.data.decidedAt == request.time)
+          || (resource.data.uid == request.auth.uid
+            && resource.data.status == 'denied'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.pageId == resource.data.pageId
+            && request.resource.data.keys().hasOnly(['teamId', 'uid', 'name', 'pageId', 'pageTitle', 'status', 'createdAt'])
+            && request.resource.data.createdAt == request.time));
+        allow delete: if false;
+      }
     }
 
     match /users/{uid} {
@@ -516,7 +597,8 @@ service cloud.firestore {
     // (P6) for the reconciliation.
     match /eventAttendance/{id} {
       allow read: if sameTeam(resource.data.teamId);
-      allow create, update: if isAdmin() && sameTeam(request.resource.data.teamId);
+      // P26: gated by the Assignments page's access (admins always; by default Lead Scouts; an admin can grant or deny others).
+      allow create, update: if pageAccessAllowed('assignments', ['lead-scout']) && sameTeam(request.resource.data.teamId);
       allow delete: if false;
     }
 
@@ -797,11 +879,12 @@ service cloud.firestore {
     match /scoutTargets/{id} {
       allow read: if sameTeam(resource.data.teamId);
 
-      allow create: if canEditScoutTargets()
+      // P26: gated by the Scout Status page's access (admins always; by default Lead Scouts and Team Coaches; configurable).
+      allow create: if pageAccessAllowed('scout-status', ['lead-scout', 'team-coach'])
         && sameTeam(request.resource.data.teamId)
         && validScoutTargets(id, request.resource.data);
 
-      allow update: if canEditScoutTargets()
+      allow update: if pageAccessAllowed('scout-status', ['lead-scout', 'team-coach'])
         && sameTeam(resource.data.teamId)
         && request.resource.data.teamId == resource.data.teamId
         && request.resource.data.eventCode == resource.data.eventCode
@@ -820,7 +903,8 @@ service cloud.firestore {
     // Form and My Scouting both need to read it, not just admins).
     match /assignments/{id} {
       allow read: if sameTeam(resource.data.teamId);
-      allow create, update: if isAdmin() && sameTeam(request.resource.data.teamId);
+      // P26: the same Assignments page access as the attendance list above.
+      allow create, update: if pageAccessAllowed('assignments', ['lead-scout']) && sameTeam(request.resource.data.teamId);
       allow delete: if false;
     }
 

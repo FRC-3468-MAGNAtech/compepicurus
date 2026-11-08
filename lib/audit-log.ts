@@ -54,7 +54,10 @@ export type AuditAction =
   | "unpublish-template"
   | "template-reviewed"
   // P25: an admin cleared a teammate's profile bio / pronouns (moderation; admins can clear, never write)
-  | "clear-profile-text";
+  | "clear-profile-text"
+  // P26: page access (the role matrix, member overrides, and deciding an access request)
+  | "edit-page-access"
+  | "decide-page-access-request";
 
 export type AuditLogEntry = {
   id: string;

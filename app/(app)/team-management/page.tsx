@@ -13,6 +13,7 @@ import { useFieldTeams } from "@/lib/field-teams-context";
 import { assignMembersToFieldTeams } from "@/lib/field-teams-actions";
 import { MemberRow } from "@/components/team/member-row";
 import { MemberEditorDialog } from "@/components/team/member-editor-dialog";
+import { MemberAccessDialog } from "@/components/page-access/page-access-panel";
 import { useAuth } from "@/lib/auth";
 import { useTeamDoc } from "@/lib/team";
 import { usePermissions } from "@/lib/permissions";
@@ -31,6 +32,8 @@ export default function TeamManagementPage() {
   // Bumped on every open so the editor remounts with a draft taken from the member's current values.
   const [editorKey, setEditorKey] = useState(0);
   const [savedUid, setSavedUid] = useState<string | null>(null);
+  // P26: the member whose page access is open (the same editor as Admin Panel > Page Access).
+  const [accessUid, setAccessUid] = useState<string | null>(null);
 
   const adminCount = members.filter((m) => m.isAdmin).length;
 
@@ -201,6 +204,7 @@ export default function TeamManagementPage() {
                 editState={editState(m)}
                 highlight={savedUid === m.uid}
                 onEdit={() => openEditor(m)}
+                onPageAccess={isAdmin ? () => setAccessUid(m.uid) : undefined}
                 selection={multiTeam ? { checked: selected.has(m.uid), onChange: (c) => toggleSelected(m.uid, c), disabled: !editState(m).canEdit } : undefined}
               />
             ))
@@ -223,6 +227,10 @@ export default function TeamManagementPage() {
           />
         )}
       </AnimatePresence>
+
+      {isAdmin && accessUid && members.some((m) => m.uid === accessUid) && (
+        <MemberAccessDialog key={accessUid} member={members.find((m) => m.uid === accessUid)!} open onOpenChange={(o) => !o && setAccessUid(null)} />
+      )}
 
       {editing && liveEditing && (
         <MemberEditorDialog

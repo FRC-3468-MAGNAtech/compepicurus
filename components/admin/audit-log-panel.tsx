@@ -50,6 +50,8 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   "unpublish-template": "Unpublish Template",
   "template-reviewed": "Template Reviewed (platform)",
   "clear-profile-text": "Cleared Profile Bio / Pronouns",
+  "edit-page-access": "Edit Page Access",
+  "decide-page-access-request": "Decide Page Access Request",
 };
 
 function toMillis(value: unknown): number {
