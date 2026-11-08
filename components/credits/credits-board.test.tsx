@@ -2,62 +2,63 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CREDITS } from "@/lib/credits/seed";
 import { CreditsBoard } from "./credits-board";
+import { CreditsEditToggle } from "./credits-edit-toggle";
 
-// FIX3: Credits must show the same content to everyone, an admin included, in
-// normal view; an admin only *adds* the inline controls (no edit mode to switch on),
-// and a non-admin never gets any. Rendered server-side, which is what the first
-// paint of the page is.
+// FIX4: Credits is a clean normal view for EVERYONE, admins included (identical markup, no controls). An admin
+// gets the editing controls only after pressing "Edit credits" (the `editing` switch, which is never the default);
+// a non-admin never gets any, even if `editing` were forced on. Rendered server-side, the page's first paint.
 
-const render = (admin: boolean) => renderToString(<CreditsBoard sections={DEFAULT_CREDITS} admin={admin} onOp={() => {}} />);
+const board = (admin: boolean, editing?: boolean) => renderToString(<CreditsBoard sections={DEFAULT_CREDITS} admin={admin} editing={editing} onOp={() => {}} />);
+const toggle = (props: Partial<Parameters<typeof CreditsEditToggle>[0]> = {}) =>
+  renderToString(<CreditsEditToggle canEdit editing={false} unsavedCount={0} onEdit={() => {}} onDone={() => {}} {...props} />);
 
-// The visible text of the markup, so the comparison ignores the extra control markup.
-const textOf = (html: string) =>
-  html
-    .replace(/<button[^>]*aria-label="[^"]*"[^>]*>.*?<\/button>/g, "") // admin icon buttons carry only an aria-label
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&#x27;|&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
+const CONTROLS = ["Add section", "Add credit", "Rename", "Delete", "Move", "Edit", "Drag"];
 
-describe("CreditsBoard in normal view", () => {
-  it("shows every section title, entry name, and description to a non-admin", () => {
-    const html = render(false);
+describe("Credits normal view", () => {
+  it("shows every section title, entry name and description to a member", () => {
+    const html = board(false);
     for (const section of DEFAULT_CREDITS) {
       expect(html).toContain(section.title);
-      for (const entry of section.entries) {
-        expect(html).toContain(entry.name.replace(/&/g, "&amp;"));
-      }
+      for (const entry of section.entries) expect(html).toContain(entry.name.replace(/&/g, "&amp;"));
     }
     expect(html).toContain("Claude (Anthropic)");
   });
 
-  it("shows an admin exactly the same content — nothing is hidden behind an edit mode", () => {
-    const member = textOf(render(false));
-    const admin = textOf(render(true));
-    // Everything a member sees, an admin sees (the admin markup only adds controls, plus "Add credit" / "Add section" buttons).
+  it("renders an admin's normal view byte-for-byte the same as a member's (no controls, nothing hidden)", () => {
+    // React's generated ids (useId) can differ between renders of different trees, so compare with them removed.
+    const strip = (html: string) => html.replace(/ (aria-controls|id|aria-describedby)="[^"]*"/g, "");
+    expect(strip(board(true))).toBe(strip(board(false)));
+    for (const label of CONTROLS) expect(board(true), label).not.toContain(label);
+    expect(board(true)).not.toMatch(/aria-label="(Edit|Delete|Rename|Move|Drag)/);
+  });
+
+  it("an admin sees the same content, plus every control, only in edit mode", () => {
+    const admin = board(true, true);
+    for (const label of CONTROLS) expect(admin, label).toContain(label);
     for (const section of DEFAULT_CREDITS) {
-      expect(member).toContain(section.title);
       expect(admin).toContain(section.title);
-      for (const entry of section.entries) {
-        expect(admin).toContain(entry.name);
-        expect(member).toContain(entry.description.replace(/&/g, "&"));
-        expect(admin).toContain(entry.description.replace(/&/g, "&"));
-      }
+      for (const entry of section.entries) expect(admin).toContain(entry.name.replace(/&/g, "&amp;"));
     }
   });
 
-  it("gives an admin the Add / Edit / Reorder / Delete controls inline by default, and a non-admin none", () => {
-    const member = render(false);
-    const admin = render(true);
-    for (const label of ["Add section", "Add credit", "Rename", "Delete", "Move", "Edit", "Drag"]) {
-      expect(admin, label).toContain(label);
-      expect(member, label).not.toContain(label);
-    }
-    expect(member).not.toMatch(/aria-label="(Edit|Delete|Rename|Move|Drag)/);
+  it("a non-admin never gets controls, even if editing is somehow on", () => {
+    const html = board(false, true);
+    for (const label of CONTROLS) expect(html, label).not.toContain(label);
+  });
+});
+
+describe("the Edit credits toggle", () => {
+  it("a non-admin never sees an Edit button (or Done)", () => {
+    const html = toggle({ canEdit: false });
+    expect(html).toBe("");
+    expect(toggle({ canEdit: false, editing: true })).toBe("");
   });
 
-  it("has no edit-mode toggle for anyone", () => {
-    for (const html of [render(true), render(false)]) expect(html.toLowerCase()).not.toMatch(/edit mode|done editing|enable editing/);
+  it("an admin starts in normal view with an Edit credits button, and sees Done only while editing", () => {
+    expect(toggle()).toContain("Edit credits");
+    expect(toggle()).not.toContain("Done");
+    const editing = toggle({ editing: true });
+    expect(editing).toContain("Done");
+    expect(editing).not.toContain("Edit credits");
   });
 });

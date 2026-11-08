@@ -32,11 +32,14 @@ type Dialogs =
   | { kind: "delete-entry"; section: CreditSection; entry: CreditEntry };
 
 /**
- * The credits sections, read-only for members and editable for admins. Every
- * change — buttons, drag and drop, dialogs — is reported as a CreditsOp
+ * The credits sections. The normal view is the same for everyone, admins included. An admin gets the editing
+ * controls (add / edit / reorder / delete) only while `editing` is on (FIX4: the page's explicit Edit credits
+ * button; never the default). Every change — buttons, drag and drop, dialogs — is reported as a CreditsOp
  * (lib/credits/ops.ts) for the page to apply transactionally.
  */
-export function CreditsBoard({ sections, admin, onOp }: { sections: CreditSection[]; admin: boolean; onOp: (op: CreditsOp) => void }) {
+export function CreditsBoard({ sections, admin: isAdmin, editing = false, onOp }: { sections: CreditSection[]; admin: boolean; editing?: boolean; onOp: (op: CreditsOp) => void }) {
+  // Controls need both: the right (admin) and the explicit mode.
+  const admin = isAdmin && editing;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<Dialogs | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);

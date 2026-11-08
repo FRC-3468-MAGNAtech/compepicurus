@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/permissions";
 import { useTeamScoutEntries } from "@/lib/scout-entries";
 import { setActiveEvents } from "@/lib/team";
-import { MAX_ACTIVE_EVENTS, setPrimaryActiveEvent, toggleActiveEvent, type ActiveEventsState } from "@/lib/active-events";
+import { MAX_ACTIVE_EVENTS, moveActiveEvent, toggleActiveEvent, type ActiveEventsState } from "@/lib/active-events";
 import {
   EVENT_STATUS_ORDER,
   countEventsByStatus,
@@ -141,7 +141,7 @@ export default function EventSelectionPage() {
         primaryCode={primaryCode}
         canEdit={isAdmin}
         onRemove={removeEvent}
-        onMakePrimary={(code) => commit(setPrimaryActiveEvent(state, code))}
+        onMove={(code, toIndex) => commit(moveActiveEvent(state, code, toIndex))}
       />
 
       {primary && <ActiveEventSummary key={primary.code} event={primary} now={now} />}

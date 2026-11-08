@@ -21,7 +21,7 @@ const MATCHES_TTL_MS = 3 * 60 * 1000;
 
 const teamsCache = new Map<string, FtcTeam[]>();
 const rankingsCache = new Map<string, { data: FtcRanking[]; expires: number; failed: boolean }>();
-const matchesCache = new Map<string, { data: OfficialMatch[]; expires: number; failed: boolean }>();
+const matchesCache = new Map<string, { data: OfficialMatch[]; expires: number; failed: boolean; fetchedAt: number }>();
 /** Event keys whose team-list fetch failed — kept beside the cache because a failure is stored as an empty list. */
 const failedTeams = new Set<string>();
 const inflight = new Set<string>();
@@ -109,9 +109,12 @@ const MATCH_TYPES: MatchType[] = ["Practice", "Qualification", "Playoff"];
  * cached as "no matches" so it isn't retried in a loop (the cache expires, so a
  * live event picks up new results on the next visit).
  */
-export function useEventMatches(requests: EventRequest[]): { matches: OfficialMatch[]; loading: boolean; error: boolean } {
+export function useEventMatches(requests: EventRequest[]): { matches: OfficialMatch[]; loading: boolean; error: boolean; updatedAt: number | null; refreshing: boolean; refresh: () => void } {
   const key = keyOf(requests);
   const [version, setVersion] = useState(0);
+  // FIX4: a manual refresh. It marks the cached entries stale (the old data stays on screen meanwhile) and re-runs the fetch effect.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [refreshPending, setRefreshPending] = useState(false);
 
   useEffect(() => {
     for (const r of parseKey(key)) {
@@ -122,31 +125,55 @@ export function useEventMatches(requests: EventRequest[]): { matches: OfficialMa
       Promise.all(MATCH_TYPES.map((type) => getMatchesForEvent(r.code, type, r.season)))
         .then((results) => {
           const data = results.flatMap((res) => (res.ok ? res.data.map((m) => ftcMatchToOfficial(r.code, m)) : []));
-          matchesCache.set(k, { data, expires: Date.now() + MATCHES_TTL_MS, failed: results.some((res) => !res.ok) });
+          const failed = results.some((res) => !res.ok);
+          // A failed refresh keeps the last good list (marked failed) instead of replacing it with nothing.
+          const previous = matchesCache.get(k);
+          matchesCache.set(k, failed && previous && previous.data.length > 0 && data.length === 0 ? { ...previous, expires: Date.now() + MATCHES_TTL_MS, failed: true } : { data, expires: Date.now() + MATCHES_TTL_MS, failed, fetchedAt: Date.now() });
         })
-        .catch(() => matchesCache.set(k, { data: [], expires: Date.now() + MATCHES_TTL_MS, failed: true }))
+        .catch(() => {
+          const previous = matchesCache.get(k);
+          matchesCache.set(k, previous && previous.data.length > 0 ? { ...previous, expires: Date.now() + MATCHES_TTL_MS, failed: true } : { data: [], expires: Date.now() + MATCHES_TTL_MS, failed: true, fetchedAt: Date.now() });
+        })
         .finally(() => {
           inflight.delete(`matches:${k}`);
           setVersion((v) => v + 1);
+          setRefreshPending(false);
         });
     }
-  }, [key]);
+  }, [key, refreshTick]);
 
-  return useMemo(() => {
+  const refresh = () => {
+    if (key === "") return; // nothing requested, nothing to wait for
+    for (const r of parseKey(key)) {
+      const cached = matchesCache.get(requestKey(r));
+      if (cached) cached.expires = 0;
+    }
+    setRefreshPending(true);
+    setRefreshTick((t) => t + 1);
+  };
+
+  const state = useMemo(() => {
     const parsed = parseKey(key);
     const matches: OfficialMatch[] = [];
     let loading = false;
     let error = false;
+    let updatedAt: number | null = null;
+    let refreshing = false;
     for (const r of parsed) {
       const cached = matchesCache.get(requestKey(r));
       if (cached) {
         matches.push(...cached.data);
         if (cached.failed) error = true;
+        // The oldest event's fetch time: "last updated" must not claim more than every event has.
+        updatedAt = updatedAt === null ? cached.fetchedAt : Math.min(updatedAt, cached.fetchedAt);
+        if (inflight.has(`matches:${requestKey(r)}`)) refreshing = true;
       } else loading = true;
     }
-    return { matches, loading, error };
+    return { matches, loading, error, updatedAt, refreshing };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, version]);
+
+  return { ...state, refreshing: state.refreshing || refreshPending, refresh };
 }
 
 /** Official rankings per event code. An event with no rankings yet (or a failed fetch) is simply absent/empty. */

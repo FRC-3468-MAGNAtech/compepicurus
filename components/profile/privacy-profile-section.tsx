@@ -35,7 +35,7 @@ export function PrivacyProfileSection() {
   const saved = state.profile;
   return (
     <ProfileEditorForm
-      key={saved ? JSON.stringify([saved.displayName, saved.bio, saved.pronouns, saved.avatar, saved.visibility]) : "new"}
+      key={JSON.stringify([saved?.displayName ?? "", saved?.bio ?? "", saved?.pronouns ?? "", saved?.avatar ?? me.avatar ?? DEFAULT_AVATAR])}
       saved={saved}
       isAdmin={me.isAdmin}
       accountName={me.name}
@@ -46,6 +46,19 @@ export function PrivacyProfileSection() {
         await saveOwnProfile({ uid: user.uid, teamId: me.teamId }, edit);
         setJustSaved(true);
       }}
+      // FIX4: the visibility choice saves by itself, with the profile's stored text (never what is half-typed in the form).
+      onSetVisibility={(visibility) =>
+        saveOwnProfile(
+          { uid: user.uid, teamId: me.teamId },
+          {
+            displayName: saved?.displayName ?? "",
+            bio: saved?.bio ?? "",
+            pronouns: saved?.pronouns ?? "",
+            avatar: saved?.avatar ?? me.avatar ?? DEFAULT_AVATAR,
+            visibility,
+          }
+        )
+      }
     />
   );
 }
@@ -62,6 +75,7 @@ export function ProfileEditorForm({
   googleUrl,
   justSaved,
   onSave,
+  onSetVisibility,
 }: {
   saved: ProfileDoc | null;
   isAdmin: boolean;
@@ -72,6 +86,8 @@ export function ProfileEditorForm({
   /** The parent's "your last save went through" (it outlives the form's restart on a save). Hidden again as soon as something is edited. */
   justSaved: boolean;
   onSave: (edit: ProfileEdit) => Promise<void>;
+  /** FIX4: called the moment a non-admin picks Public or Private (saved on its own, not with "Save profile"). Rejects when the write fails. */
+  onSetVisibility: (visibility: ProfileVisibility) => Promise<void>;
 }) {
   const ids = useId();
 
@@ -79,7 +95,16 @@ export function ProfileEditorForm({
   const [pronouns, setPronouns] = useState(saved?.pronouns ?? "");
   const [bio, setBio] = useState(saved?.bio ?? "");
   const [avatar, setAvatar] = useState<AvatarChoice>(saved?.avatar ?? accountAvatar ?? DEFAULT_AVATAR);
-  const [visibility, setVisibility] = useState<ProfileVisibility>(saved?.visibility ?? DEFAULT_PROFILE_VISIBILITY);
+  const savedVisibility: ProfileVisibility = saved?.visibility ?? DEFAULT_PROFILE_VISIBILITY;
+  const [visibility, setVisibility] = useState<ProfileVisibility>(savedVisibility);
+  // Follow the stored value when it changes under us (another device, or the write landing), without restarting the form.
+  const [seenSavedVisibility, setSeenSavedVisibility] = useState(savedVisibility);
+  if (seenSavedVisibility !== savedVisibility) {
+    setSeenSavedVisibility(savedVisibility);
+    setVisibility(savedVisibility);
+  }
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
+  const [visibilityStatus, setVisibilityStatus] = useState<"idle" | "saved" | "failed">("idle");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,8 +115,24 @@ export function ProfileEditorForm({
     sanitizeDisplayName(displayName) !== (saved?.displayName ?? "") ||
     sanitizePronouns(pronouns) !== (saved?.pronouns ?? "") ||
     sanitizeBio(bio) !== (saved?.bio ?? "") ||
-    !sameAvatar(avatar, saved?.avatar ?? accountAvatar ?? DEFAULT_AVATAR) ||
-    (!isAdmin && visibility !== (saved?.visibility ?? DEFAULT_PROFILE_VISIBILITY));
+    !sameAvatar(avatar, saved?.avatar ?? accountAvatar ?? DEFAULT_AVATAR);
+
+  const chooseVisibility = async (next: ProfileVisibility) => {
+    if (isAdmin || visibilityBusy || next === visibility) return;
+    const previous = visibility;
+    setVisibility(next);
+    setVisibilityBusy(true);
+    setVisibilityStatus("idle");
+    try {
+      await onSetVisibility(next);
+      setVisibilityStatus("saved");
+    } catch {
+      setVisibility(previous);
+      setVisibilityStatus("failed");
+    } finally {
+      setVisibilityBusy(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -168,7 +209,7 @@ export function ProfileEditorForm({
       </div>
 
       {/* Visibility */}
-      <fieldset className="flex flex-col gap-3" data-testid="visibility-group" disabled={isAdmin}>
+      <fieldset className="flex flex-col gap-3" data-testid="visibility-group" disabled={isAdmin} aria-busy={visibilityBusy}>
         <legend className="mb-1 text-sm font-semibold">Who can see your profile</legend>
         <div role="radiogroup" aria-label="Who can see your profile" className="grid gap-3 sm:grid-cols-2">
           <VisibilityOption
@@ -176,8 +217,8 @@ export function ProfileEditorForm({
             title="Public to my team"
             body="Teammates can open your profile: bio, pronouns, accuracy, practice, events and achievements."
             selected={shownVisibility === "public"}
-            disabled={isAdmin}
-            onSelect={() => setVisibility("public")}
+            disabled={isAdmin || visibilityBusy}
+            onSelect={() => void chooseVisibility("public")}
             testId="visibility-public"
           />
           <VisibilityOption
@@ -185,8 +226,8 @@ export function ProfileEditorForm({
             title="Private"
             body="Teammates who aren't admins see only your picture, name and role, and “This profile is private”."
             selected={shownVisibility === "private"}
-            disabled={isAdmin}
-            onSelect={() => setVisibility("private")}
+            disabled={isAdmin || visibilityBusy}
+            onSelect={() => void chooseVisibility("private")}
             testId="visibility-private"
           />
         </div>
@@ -195,6 +236,19 @@ export function ProfileEditorForm({
             Admins and the owner are always visible to their team, so this can&apos;t be turned off while you&apos;re an admin.
             {saved?.visibility === "private" ? " Your saved choice, Private, applies again if your role changes." : " If your role changes later, your choice here will apply."}
           </p>
+        )}
+        {!isAdmin && (
+          <p className="text-xs text-[var(--muted-foreground)]">This saves as soon as you pick it. You can always see your own profile, whichever you choose.</p>
+        )}
+        {visibilityStatus === "saved" && (
+          <span role="status" data-testid="visibility-saved" className="flex items-center gap-1.5 text-sm text-emerald-400">
+            <Check className="h-4 w-4" /> {visibility === "private" ? "Your profile is now private." : "Your profile is now public to your team."}
+          </span>
+        )}
+        {visibilityStatus === "failed" && (
+          <span role="alert" data-testid="visibility-error" className="text-sm text-red-400">
+            Couldn&apos;t change who can see your profile. Check your connection and try again. If it keeps happening, ask an admin to check that the latest security rules are deployed.
+          </span>
         )}
         <div className="flex flex-col gap-1 text-xs text-[var(--muted-foreground)]" data-testid="privacy-limits">
           <p className="font-medium text-[var(--foreground)]">What private does and doesn&apos;t do</p>

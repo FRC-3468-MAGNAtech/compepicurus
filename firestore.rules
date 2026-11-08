@@ -100,7 +100,8 @@ service cloud.firestore {
         && d.activeEventCodes.size() <= 10
         && (d.activeEventCode == null
           ? d.activeEventCodes.size() == 0
-          : d.activeEventCode is string && d.activeEventCode in d.activeEventCodes)
+          // FIX4: the primary is always the FIRST event in the order.
+          : d.activeEventCode is string && d.activeEventCodes.size() >= 1 && d.activeEventCodes[0] == d.activeEventCode)
         && (!('activeEvents' in d) || (d.activeEvents is list && d.activeEvents.size() == d.activeEventCodes.size()))
       );
     }

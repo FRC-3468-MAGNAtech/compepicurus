@@ -10,6 +10,9 @@ import { parseProfile, type ProfileDoc } from "@/lib/profile/model";
 
 // P25: reading and writing profiles/{uid}. The rules are the privacy boundary (firestore.rules); this is the plumbing.
 
+/** How long a refused profile listener waits before asking again (see useProfile). */
+export const DENIED_RETRY_MS = 20_000;
+
 export type ProfileState =
   /** Waiting for the first answer. */
   | { status: "loading" }
@@ -20,29 +23,38 @@ export type ProfileState =
   | { status: "error" };
 
 /**
- * Live profile of one member. A change of visibility while someone is looking turns "ready" into "denied" (and back)
- * at once, because the listener is re-evaluated against the rules.
+ * Live profile of one member. A change of visibility while someone is looking turns "ready" into "denied" at once
+ * (the rules re-check an open listener); turning it back is picked up on the next retry.
  */
 export function useProfile(uid: string | null, teamId: string | null): ProfileState {
   const [held, setHeld] = useState<{ key: string; state: ProfileState } | null>(null);
+  // FIX4: Firestore ends a listener for good once the rules refuse it, so "denied" would never turn back into "ready"
+  // when the member makes their profile public again. A refused listener is therefore re-opened after a pause.
+  const [attempt, setAttempt] = useState(0);
   const key = uid && teamId ? `${uid}|${teamId}` : null;
 
   useEffect(() => {
     if (!uid || !teamId || !isFirebaseConfigured()) return;
     const k = `${uid}|${teamId}`;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = onSnapshot(
       doc(db, "profiles", uid),
       (snap) => setHeld({ key: k, state: { status: "ready", profile: snap.exists() ? parseProfile(snap.data(), teamId) : null } }),
       (err) => {
-        if ((err as { code?: string }).code === "permission-denied") setHeld({ key: k, state: { status: "denied" } });
-        else {
+        if ((err as { code?: string }).code === "permission-denied") {
+          setHeld({ key: k, state: { status: "denied" } });
+          retry = setTimeout(() => setAttempt((n) => n + 1), DENIED_RETRY_MS);
+        } else {
           reportFirestoreError("profile subscription failed", err, `profiles/${uid}`);
           setHeld({ key: k, state: { status: "error" } });
         }
       }
     );
-    return unsubscribe;
-  }, [uid, teamId]);
+    return () => {
+      if (retry) clearTimeout(retry);
+      unsubscribe();
+    };
+  }, [uid, teamId, attempt]);
 
   if (!key || !isFirebaseConfigured()) return { status: "ready", profile: null };
   return held?.key === key ? held.state : { status: "loading" };

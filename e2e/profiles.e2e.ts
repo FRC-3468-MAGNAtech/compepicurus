@@ -156,6 +156,20 @@ test.describe("your own profile", () => {
     await expect(page.getByTestId("profile-limited")).toHaveCount(0);
   });
 
+  test("FIX4: you always see your own full profile, private or not, even when the read itself was refused", async ({ page }) => {
+    for (const q of ["?viewer=self", "?viewer=self&private=1", "?viewer=self&private=1&denied=1"]) {
+      await open(page, q);
+      await expect(page.getByTestId("profile-header")).toBeVisible();
+      await expect(page.getByTestId("profile-limited")).toHaveCount(0);
+    }
+    await expect(page.getByTestId("own-profile-unreadable")).toBeVisible(); // only the refused read says so
+    await open(page, "?viewer=self&private=1");
+    await expect(page.getByTestId("own-profile-unreadable")).toHaveCount(0);
+    // a teammate with a refused read still gets the limited card
+    await open(page, "?viewer=teammate&private=1&denied=1");
+    await expect(page.getByTestId("profile-limited")).toBeVisible();
+  });
+
   test("a public profile previews as the full page, and your own empty bio invites you to write one", async ({ page }) => {
     await open(page, "?viewer=self&bio=none");
     await expect(page.getByTestId("profile-bio-empty")).toContainText("You haven't written a bio yet");
@@ -207,15 +221,40 @@ test.describe("Settings > Privacy and profile", () => {
     await form.getByLabel("Pronouns (optional)").fill("she/her");
     await form.getByLabel("Bio").fill("Hello <b>team</b>\n\n\n\nsecond line");
     await expect(page.getByTestId("bio-count")).toContainText("/ 280");
+    // FIX4: the visibility choice saves on its own, and doesn't wipe what is typed but not yet saved
     await page.getByTestId("visibility-private").click();
     await expect(page.getByTestId("visibility-private")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("visibility-saved")).toContainText("now private");
+    await expect(form.getByLabel("Bio")).toHaveValue("Hello <b>team</b>\n\n\n\nsecond line");
+    await expect(page.getByRole("radio", { name: "Rocket" })).toHaveAttribute("aria-checked", "true");
     await page.screenshot({ path: `${SHOTS}/profile-editor-${info.project.name}.png`, fullPage: true });
     await page.getByTestId("save-profile").click();
 
     await expect(page.getByTestId("profile-saved")).toContainText("Saved");
+    expect(await page.evaluate(() => window.__visibilitySaves)).toEqual(["private"]);
     expect(await saves(page)).toEqual([{ displayName: "Ada L.", pronouns: "she/her", bio: "Hello team\n\nsecond line", avatar: { type: "preset", value: "rocket" }, visibility: "private" }]);
     await expect(page.getByTestId("save-profile")).toBeDisabled(); // saved: nothing left to save
     await expectNoHorizontalScroll(page);
+  });
+
+  test("FIX4: a non-admin flips public -> private -> public, each choice saves at once, and a failed save puts the choice back and says so", async ({ page }) => {
+    await open(page, "?view=editor&saved=public");
+    await expect(page.getByTestId("visibility-public")).toBeEnabled();
+    await expect(page.getByTestId("visibility-private")).toBeEnabled();
+    await expect(page.getByTestId("admin-visibility-note")).toHaveCount(0);
+    await page.getByTestId("visibility-private").click();
+    await expect(page.getByTestId("visibility-saved")).toContainText("now private");
+    await expect(page.getByTestId("visibility-private")).toHaveAttribute("aria-checked", "true");
+    await page.getByTestId("visibility-public").click();
+    await expect(page.getByTestId("visibility-saved")).toContainText("public to your team");
+    await expect(page.getByTestId("visibility-public")).toHaveAttribute("aria-checked", "true");
+    expect(await page.evaluate(() => window.__visibilitySaves)).toEqual(["private", "public"]);
+    await expect(page.getByTestId("save-profile")).toBeDisabled(); // nothing else changed
+
+    await open(page, "?view=editor&saved=public&fail=1");
+    await page.getByTestId("visibility-private").click();
+    await expect(page.getByTestId("visibility-error")).toContainText("Couldn't change who can see your profile");
+    await expect(page.getByTestId("visibility-public")).toHaveAttribute("aria-checked", "true"); // put back
   });
 
   test("the bio stops at 280 characters", async ({ page }) => {

@@ -17,6 +17,8 @@ declare global {
   interface Window {
     /** Every profile the Settings editor saved. */
     __saves?: ProfileEdit[];
+    /** FIX4: every visibility the Settings toggle saved on its own. */
+    __visibilitySaves?: string[];
     /** Every clear the moderation button performed. */
     __cleared?: string[];
   }
@@ -182,7 +184,8 @@ function ProfileFixture() {
 
   const member = ADA;
   // What the rules do: a private profile is refused to a teammate who isn't an admin (and is always readable by its owner and by admins).
-  const denied = isPrivate && viewer.uid !== "ada" && !viewer.isAdmin;
+  // `?denied=1` makes the read itself fail whoever is looking (a rules problem): your own profile must still show.
+  const denied = (isPrivate && viewer.uid !== "ada" && !viewer.isAdmin) || q.get("denied") === "1";
 
   return (
     <ProfileScreen
@@ -224,11 +227,12 @@ function EditorFixture() {
 
   useEffect(() => {
     window.__saves = [];
+    window.__visibilitySaves = [];
   }, []);
 
   return (
     <ProfileEditorForm
-      key={saved ? JSON.stringify(saved) : "new"}
+      key={JSON.stringify([saved?.displayName ?? "", saved?.bio ?? "", saved?.pronouns ?? "", saved?.avatar ?? { type: "initials", value: "" }])}
       saved={saved}
       isAdmin={isAdmin}
       accountName="Ada Lovelace"
@@ -240,6 +244,11 @@ function EditorFixture() {
         window.__saves?.push(edit);
         setSaved({ teamId: "t1", ...edit });
         setJustSaved(true);
+      }}
+      onSetVisibility={async (visibility) => {
+        if (failSave) throw new Error("offline");
+        window.__visibilitySaves?.push(visibility);
+        setSaved((prev) => ({ teamId: "t1", displayName: prev?.displayName ?? "", bio: prev?.bio ?? "", pronouns: prev?.pronouns ?? "", avatar: prev?.avatar ?? { type: "initials", value: "" }, visibility }));
       }}
     />
   );

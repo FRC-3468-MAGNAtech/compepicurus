@@ -15,6 +15,7 @@ import {
   CalendarCheck,
   UserCircle,
   CalendarRange,
+  ListOrdered,
 } from "lucide-react";
 
 export type NavItem = {
@@ -28,6 +29,7 @@ export const mainNav: NavItem[] = [
   { href: "/event", label: "Active Events", icon: CalendarCheck },
   { href: "/assignments", label: "Assignments", icon: CalendarRange },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/match-list", label: "Match List", icon: ListOrdered },
   { href: "/scout", label: "Match Scout Form", icon: ClipboardList },
   { href: "/analytics", label: "Analytics", icon: BarChart3, matchPrefix: true },
   { href: "/practice-scouting", label: "Practice Scouting", icon: FlaskConical },

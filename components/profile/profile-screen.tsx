@@ -43,7 +43,12 @@ export function ProfileScreen({
   // "Preview" is you looking as a teammate who isn't an admin would; it's only ever about yourself.
   const previewing = isSelf && preview;
   const viewerIsAdmin = viewer.isAdmin && !previewing;
-  const access: ProfileAccess = denied
+  // FIX4: your own profile is never the limited card, whatever the read said (a refused read of your own doc is a
+  // setup problem, not privacy): you see it in full, with the defaults, and a note.
+  const ownReadFailed = isSelf && denied && !previewing;
+  const access: ProfileAccess = ownReadFailed
+    ? "full"
+    : denied
     ? "limited"
     : profileAccess({ viewerUid: previewing ? "preview" : viewer.uid, viewerIsAdmin, targetUid: member.uid, targetIsAdmin: member.isAdmin, visibility: profile?.visibility });
   const canModerate = !previewing && canModerateProfile({ viewerUid: viewer.uid, viewerIsAdmin: viewer.isAdmin, targetUid: member.uid, targetIsOwner: member.isOwner });
@@ -73,6 +78,12 @@ export function ProfileScreen({
         <p data-testid="preview-banner" className="glass-card px-4 py-3 text-sm text-[var(--muted-foreground)]">
           This is what a teammate who isn&apos;t an admin sees.{" "}
           {access === "limited" ? "Your profile is private, so they only see your picture, name and role." : viewer.isAdmin ? "Admins are always visible to teammates, whatever the privacy setting says." : "Your profile is public to your team."}
+        </p>
+      )}
+
+      {ownReadFailed && (
+        <p data-testid="own-profile-unreadable" role="status" className="glass-card px-4 py-3 text-sm text-[var(--muted-foreground)]">
+          We couldn&apos;t read your saved profile settings, so you&apos;re seeing the defaults. Reload the page; if it keeps happening, ask an admin to check that the latest security rules are deployed.
         </p>
       )}
 

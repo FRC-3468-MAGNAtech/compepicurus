@@ -1028,9 +1028,22 @@ describe("FIX1: teams/{teamId} active events", () => {
   const EVENT_A = { code: "USWABON1", season: 2025, name: "Bonney Lake" };
   const EVENT_B = { code: "USWASEQ", season: 2025, name: "Seattle Qualifier" };
 
-  it("lets an admin set several active events with the primary in the list", async () => {
+  it("lets an admin set several active events with the primary first (FIX4)", async () => {
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
     await assertSucceeds(
+      updateDoc(doc(db, "teams", TEAM_ID), {
+        activeEventCode: "USWASEQ",
+        activeSeasonId: 2025,
+        activeEvent: EVENT_B,
+        activeEventCodes: ["USWASEQ", "USWABON1"],
+        activeEvents: [EVENT_B, EVENT_A],
+      })
+    );
+  });
+
+  it("FIX4: refuses a primary that is in the list but not first, and a reorder that leaves the primary behind", async () => {
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+    await assertFails(
       updateDoc(doc(db, "teams", TEAM_ID), {
         activeEventCode: "USWASEQ",
         activeSeasonId: 2025,
@@ -3704,5 +3717,85 @@ describe("P23: formTemplates", () => {
         await assertFails(updateDoc(doc(who, "formTemplates", "pub"), { reportCount: 0 }));
       }
     });
+  });
+});
+
+// FIX4: a profile's owner can always read and edit it (even private); the visibility toggle works both ways for a
+// non-admin, and is refused only for admins and the owner (forced public). Mirrors lib/profile/service.ts saveOwnProfile
+// exactly: ONE batch of the profile write plus the users/{uid}.avatar mirror, so a refusal of either fails the toggle.
+describe("FIX4: profile visibility, every viewer x every state", () => {
+  const MATE = "fix4-mate";
+  const asUid = (uid: string) => testEnv.authenticatedContext(uid).firestore();
+  const base = (over: Record<string, unknown> = {}) => ({
+    teamId: TEAM_ID,
+    displayName: "Scouty",
+    bio: "Likes counting.",
+    pronouns: "",
+    avatar: { type: "initials", value: "" },
+    visibility: "public",
+    updatedAt: serverTimestamp(),
+    ...over,
+  });
+  /** What saveOwnProfile commits. */
+  async function saveOwn(uid: string, visibility: "public" | "private", over: Record<string, unknown> = {}) {
+    const db = asUid(uid);
+    const batch = writeBatch(db);
+    batch.set(doc(db, "profiles", uid), base({ visibility, ...over }));
+    batch.update(doc(db, "users", uid), { avatar: { type: "initials", value: "" } });
+    await batch.commit();
+  }
+  const seed = (uid: string, visibility: "public" | "private") =>
+    testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "profiles", uid), base({ visibility, updatedAt: new Date() }));
+    });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users", MATE), { name: "Mate", email: "m@example.com", teamId: TEAM_ID, primaryRole: "pit-scout", secondaryRoles: [], isAdmin: false, isOwner: false, themeId: "team" });
+    });
+  });
+
+  it("a non-admin flips public -> private -> public with the app's own save batch, first save included", async () => {
+    await assertSucceeds(saveOwn(SCOUT_UID, "private")); // first save: a create
+    expect((await getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID))).data()?.visibility).toBe("private");
+    await assertSucceeds(saveOwn(SCOUT_UID, "public"));
+    expect((await getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID))).data()?.visibility).toBe("public");
+    await assertSucceeds(saveOwn(SCOUT_UID, "private"));
+    await assertSucceeds(saveOwn(SCOUT_UID, "public", { bio: "edited" }));
+  });
+
+  it("a non-admin with a pre-existing profile flips it", async () => {
+    await seed(SCOUT_UID, "public");
+    await assertSucceeds(saveOwn(SCOUT_UID, "private"));
+    await assertSucceeds(saveOwn(SCOUT_UID, "public"));
+  });
+
+  it("the owner of a profile reads and edits it in BOTH states, whoever they are", async () => {
+    for (const uid of [SCOUT_UID, MATE]) {
+      for (const v of ["public", "private"] as const) {
+        await seed(uid, v);
+        await assertSucceeds(getDoc(doc(asUid(uid), "profiles", uid)));
+        await assertSucceeds(updateDoc(doc(asUid(uid), "profiles", uid), { bio: `bio ${v}`, updatedAt: serverTimestamp() }));
+      }
+    }
+  });
+
+  it("admins and the owner can't flip to private (forced public), but can still read and edit their own and save the same value", async () => {
+    for (const uid of [ADMIN_UID, OWNER_UID]) {
+      await assertFails(saveOwn(uid, "private"));
+      await assertSucceeds(saveOwn(uid, "public"));
+      await assertSucceeds(saveOwn(uid, "public", { bio: "edited" }));
+      await assertSucceeds(getDoc(doc(asUid(uid), "profiles", uid)));
+    }
+  });
+
+  it("who can read a profile: a private one is closed to a non-admin teammate and open to its owner and every admin; a public one to the whole team", async () => {
+    await seed(SCOUT_UID, "private");
+    await assertSucceeds(getDoc(doc(asUid(SCOUT_UID), "profiles", SCOUT_UID))); // yourself
+    await assertSucceeds(getDoc(doc(asUid(ADMIN_UID), "profiles", SCOUT_UID))); // an admin
+    await assertSucceeds(getDoc(doc(asUid(OWNER_UID), "profiles", SCOUT_UID))); // the owner
+    await assertFails(getDoc(doc(asUid(MATE), "profiles", SCOUT_UID))); // a teammate: the limited card
+    await seed(SCOUT_UID, "public");
+    await assertSucceeds(getDoc(doc(asUid(MATE), "profiles", SCOUT_UID)));
   });
 });

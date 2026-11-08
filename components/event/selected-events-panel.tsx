@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarX2, ChevronDown, Clock, Star, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarX2, Check, ChevronDown, Clock, GripVertical, Star, X } from "lucide-react";
 import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
+import { moveActiveEvent } from "@/lib/active-events";
 import { getEventStatus } from "@/lib/ftc/event-status";
 import { spring, springSnappy } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -36,11 +40,15 @@ const CONDENSED_CHIP_LIMIT = 3;
 type PanelProps = {
   events: FtcEvent[];
   primaryCode: string | null;
-  /** Admins can star a primary and remove events; everyone else sees the panel read-only. */
+  /** Admins can reorder (which also sets the primary), star a primary and remove events; everyone else sees the panel read-only. */
   canEdit: boolean;
   onRemove: (event: FtcEvent) => void;
-  onMakePrimary: (code: string) => void;
+  /** FIX4: move an event to a new place in the order. The first place is the primary event, so the star is "move to 0". */
+  onMove: (code: string, toIndex: number) => void;
 };
+
+const dragGripClass =
+  "flex h-9 w-9 shrink-0 touch-none cursor-grab items-center justify-center rounded-full text-[var(--muted-foreground)] outline-none hover:bg-white/10 hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[rgba(var(--glow),0.5)] active:cursor-grabbing";
 
 /**
  * The "Selected events" panel at the top of Event Selection, plus its
@@ -57,7 +65,7 @@ type PanelProps = {
  * slot needs the page-tall container as its sticky containing block, and its
  * negative bottom margin cancels the flex gap it would otherwise add.
  */
-export function SelectedEventsPanel({ events, primaryCode, canEdit, onRemove, onMakePrimary }: PanelProps) {
+export function SelectedEventsPanel({ events, primaryCode, canEdit, onRemove, onMove }: PanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const [scrolledPast, setScrolledPast] = useState(false);
@@ -66,6 +74,36 @@ export function SelectedEventsPanel({ events, primaryCode, canEdit, onRemove, on
   const [now] = useState(() => Date.now());
 
   const hasEvents = events.length > 0;
+  const canReorder = canEdit && events.length > 1;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // Touch: press and hold on the grip to drag, so scrolling the page still works (the arrows are the no-drag way).
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  // A subtle confirmation when a move changes which event is primary (a drag to the first place, the star, or the
+  // arrows). Cleared by a timer; announced politely.
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 3500);
+    return () => clearTimeout(t);
+  }, [note]);
+
+  // Every way of changing the order goes through here, so the primary confirmation is the same for all of them.
+  const move = (code: string, toIndex: number) => {
+    const state = { events, primaryCode };
+    const next = moveActiveEvent(state, code, toIndex);
+    if (next === state) return;
+    if (next.primaryCode !== primaryCode) setNote(`${next.events[0]?.name ?? ""} is now the primary event`);
+    onMove(code, toIndex);
+  };
+  const onDragEnd = (e: DragEndEvent) => {
+    if (!e.over || e.active.id === e.over.id) return;
+    const to = events.findIndex((ev) => ev.code === e.over!.id);
+    if (to >= 0) move(String(e.active.id), to);
+  };
+
   const showBar = hasEvents && scrolledPast;
   const popoverOpen = showBar && expanded;
 
@@ -170,7 +208,10 @@ export function SelectedEventsPanel({ events, primaryCode, canEdit, onRemove, on
                       )}
                     >
                       {event.code === primaryCode && <Star className="h-3 w-3 fill-current" style={{ color: "var(--color-primary)" }} />}
-                      <span className="max-w-[11rem] truncate">{i === 0 ? event.code : event.name}</span>
+                      {/* FIX4: every chip is the event code, the same format for all of them; the full name is its tooltip. */}
+                      <span className="max-w-[11rem] truncate uppercase" title={event.name} aria-label={event.name}>
+                        {event.code}
+                      </span>
                     </span>
                   ))}
                   {extra > 0 && <span className="hidden shrink-0 rounded-full px-2 py-1 text-xs text-[var(--muted-foreground)] sm:inline">+{extra}</span>}
@@ -197,7 +238,7 @@ export function SelectedEventsPanel({ events, primaryCode, canEdit, onRemove, on
                         canEdit={canEdit}
                         now={now}
                         onRemove={onRemove}
-                        onMakePrimary={onMakePrimary}
+                        onMakePrimary={(code) => move(code, 0)}
                       />
                     ))}
                   </motion.div>
@@ -210,39 +251,97 @@ export function SelectedEventsPanel({ events, primaryCode, canEdit, onRemove, on
 
       <div ref={panelRef}>
         <GlassPanel strong className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
               Selected events ({events.length})
             </h2>
-            {events.length > 1 && canEdit && <span className="text-xs text-[var(--muted-foreground)]">Tap the star to change the primary</span>}
+            {canReorder && <span className="text-xs text-[var(--muted-foreground)]">Drag to reorder. The first event is the primary.</span>}
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            <AnimatePresence initial={false}>
-              {events.map((event) => (
-                <motion.div
-                  key={event.code}
-                  layout
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={spring}
-                  className="glass-card"
-                >
-                  <EventRow
-                    event={event}
-                    isPrimary={event.code === primaryCode}
-                    canEdit={canEdit}
-                    now={now}
-                    onRemove={onRemove}
-                    onMakePrimary={onMakePrimary}
-                  />
-                </motion.div>
-              ))}
-            </AnimatePresence>
+          <div aria-live="polite" className="min-h-[1.25rem]">
+            {note && (
+              <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={spring} data-testid="primary-note" className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
+                <Check className="h-3.5 w-3.5" aria-hidden /> {note}
+              </motion.p>
+            )}
           </div>
+          <DndContext id="selected-events" sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={events.map((e) => e.code)} strategy={rectSortingStrategy} disabled={!canReorder}>
+              <ul className={cn("grid grid-cols-1 gap-2", canReorder ? "lg:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3")} data-testid="selected-events-list">
+                <AnimatePresence initial={false}>
+                  {events.map((event, index) => (
+                    <SortableEventCard
+                      key={event.code}
+                      event={event}
+                      index={index}
+                      count={events.length}
+                      isPrimary={event.code === primaryCode}
+                      canEdit={canEdit}
+                      canReorder={canReorder}
+                      now={now}
+                      onRemove={onRemove}
+                      onMove={move}
+                    />
+                  ))}
+                </AnimatePresence>
+              </ul>
+            </SortableContext>
+          </DndContext>
         </GlassPanel>
       </div>
     </>
+  );
+}
+
+/** One selected event in the big panel: a sortable card (drag grip, up/down arrows) around the shared row. */
+function SortableEventCard({
+  event,
+  index,
+  count,
+  isPrimary,
+  canEdit,
+  canReorder,
+  now,
+  onRemove,
+  onMove,
+}: {
+  event: FtcEvent;
+  index: number;
+  count: number;
+  isPrimary: boolean;
+  canEdit: boolean;
+  canReorder: boolean;
+  now: number;
+  onRemove: (event: FtcEvent) => void;
+  onMove: (code: string, toIndex: number) => void;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: event.code, disabled: !canReorder });
+  return (
+    <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("list-none", isDragging && "relative z-10 opacity-70")} data-testid={`selected-event-${event.code}`}>
+      <motion.div layout initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} transition={spring} className="glass-card">
+        <EventRow
+          event={event}
+          isPrimary={isPrimary}
+          canEdit={canEdit}
+          now={now}
+          onRemove={onRemove}
+          onMakePrimary={(code) => onMove(code, 0)}
+          reorder={
+            canReorder
+              ? {
+                  index,
+                  count,
+                  onMove: (to) => onMove(event.code, to),
+                  grip: (
+                    <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners} aria-label={`Drag ${event.name} to reorder`} className={dragGripClass}>
+                      <GripVertical className="h-4 w-4" />
+                    </button>
+                  ),
+                }
+              : undefined
+          }
+        />
+      </motion.div>
+    </li>
   );
 }
 
@@ -253,6 +352,7 @@ function EventRow({
   now,
   onRemove,
   onMakePrimary,
+  reorder,
 }: {
   event: FtcEvent;
   isPrimary: boolean;
@@ -260,11 +360,14 @@ function EventRow({
   now: number;
   onRemove: (event: FtcEvent) => void;
   onMakePrimary: (code: string) => void;
+  /** The drag grip and up/down arrows, only in the big panel and only when there is something to reorder. */
+  reorder?: { index: number; count: number; onMove: (toIndex: number) => void; grip: React.ReactNode };
 }) {
   const status = STATUS_BADGE[getEventStatus(event, now)];
 
   return (
-    <div className="flex items-center gap-2 rounded-xl p-2.5" onClick={(e) => e.stopPropagation()}>
+    <div className="flex items-center gap-1 rounded-xl p-2.5 sm:gap-2" onClick={(e) => e.stopPropagation()}>
+      {reorder?.grip}
       <motion.button
         type="button"
         whileTap={{ scale: 0.85 }}
@@ -292,6 +395,28 @@ function EventRow({
       <Badge variant={status.variant} className="hidden shrink-0 sm:inline-flex">
         {status.label}
       </Badge>
+      {reorder && (
+        <>
+          <button
+            type="button"
+            onClick={() => reorder.onMove(reorder.index - 1)}
+            disabled={reorder.index === 0}
+            aria-label={`Move ${event.name} up`}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] hover:bg-white/10 hover:text-[var(--foreground)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => reorder.onMove(reorder.index + 1)}
+            disabled={reorder.index === reorder.count - 1}
+            aria-label={`Move ${event.name} down`}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] hover:bg-white/10 hover:text-[var(--foreground)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        </>
+      )}
       {canEdit && (
         <motion.button
           type="button"
