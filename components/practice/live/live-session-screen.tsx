@@ -15,6 +15,9 @@ import { calculateScore } from "@/lib/forms/scoring";
 import { useLockedForm } from "@/lib/forms/forms-context";
 import { deletePracticeSession, updatePracticeSession, type PracticeSession } from "@/lib/practice-sessions";
 import { entryPayloadFor, getEntriesForSession, saveEntry } from "@/lib/scout-entries";
+import type { StickyNote } from "@/lib/forms/types";
+import { joinNotes } from "@/lib/forms/values";
+import { notesForSave } from "@/lib/sticky-notes";
 import { LoadError } from "@/components/practice/load-error";
 import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
@@ -46,7 +49,7 @@ export function LiveSessionScreen({
   const [error, setError] = useState<FirestoreFailure | null>(null);
   const scoutFormRef = useRef<ScoutFormHandle>(null);
   // the comments drawer's text, which is the form's `comments` value (ScoutForm commentsMode="popout")
-  const [comments, setComments] = useState("");
+  const [notes, setNotes] = useState<StickyNote[]>([]);
 
   const stream = parseStreamUrl(streamUrl);
   const matchKey = session.eventCode && session.matchType && session.matchNumber !== null ? liveMatchKey(session.eventCode, session.matchType, session.matchNumber) : null;
@@ -97,7 +100,7 @@ export function LiveSessionScreen({
         matchType: session.matchType!,
         matchNumber: session.matchNumber!,
         teamNumber,
-        ...entryPayloadFor(form, values.values, score),
+        ...entryPayloadFor(form, values.values, score, { stickyNotes: notesForSave(notes) }),
         source: "live",
         mode: null,
         sessionId: session.id,
@@ -156,11 +159,11 @@ export function LiveSessionScreen({
             lockedFields={["teamNumber"]}
             prefill={{ teamNumber, scoutName: session.scoutName }}
             commentsMode="popout"
-            comments={comments}
-            onCommentsChange={setComments}
+            comments={joinNotes(notes)}
+            onCommentsChange={() => undefined}
           />
         }
-        comments={{ value: comments, onChange: setComments, label: `Robot: #${teamNumber}` }}
+        comments={{ notes, onChange: setNotes, label: `Robot: #${teamNumber}` }}
         notice={
           <>
             {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before submitting.</p>}

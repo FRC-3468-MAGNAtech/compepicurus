@@ -7,7 +7,11 @@ import { checkForm } from "@/lib/forms/validate";
 import { visibleFieldKeys } from "@/lib/forms/visibility";
 import * as oracle from "@/lib/forms/fixtures/biobuzz-v1";
 import { BIOBUZZ_SCHEMA as OLD_TABLE } from "@/lib/forms/fixtures/biobuzz-v1-game-schema";
-import { BIOBUZZ_SCHEMA as NEW_TABLE, buildGameSchema, csvHeaderFor } from "@/lib/analytics/game-schema";
+import { BIOBUZZ_SCHEMA as NEW_TABLE_FULL, buildGameSchema, csvHeaderFor } from "@/lib/analytics/game-schema";
+
+// P28: BIOBUZZ now has the sticky notes panel on, which adds ONE derived column (Notes) to its table. Everything else must still be exactly the old table, so the
+// comparison is against the new table without that one column; a separate test pins that it is the only difference.
+const NEW_TABLE = { ...NEW_TABLE_FULL, columns: NEW_TABLE_FULL.columns.filter((c) => c.key !== "stickyNotes") };
 import { entriesToCsv, parseImportCsv } from "@/lib/analytics/csv";
 import { entryPayloadFor, type ScoutEntry } from "@/lib/scout-entries";
 import { evaluateAutoFlagRuleIds } from "@/lib/analytics/flags";
@@ -230,7 +234,11 @@ describe("BIOBUZZ regression: the Match Analytics table", () => {
   });
 
   it("derives the same table twice (it is a pure function of the form)", () => {
-    expect(buildGameSchema(BIOBUZZ_FORM).columns.map((c) => c.key)).toEqual(NEW_TABLE.columns.map((c) => c.key));
+    expect(buildGameSchema(BIOBUZZ_FORM).columns.map((c) => c.key)).toEqual(NEW_TABLE_FULL.columns.map((c) => c.key));
+    // the one difference from the old table: a derived Notes column, just before the accuracy columns
+    expect(NEW_TABLE_FULL.columns.filter((c) => !NEW_TABLE.columns.includes(c)).map((c) => c.key)).toEqual(["stickyNotes"]);
+    const keys = NEW_TABLE_FULL.columns.map((c) => c.key);
+    expect(keys.indexOf("stickyNotes")).toBe(keys.indexOf("accuracy") - 1);
   });
 });
 

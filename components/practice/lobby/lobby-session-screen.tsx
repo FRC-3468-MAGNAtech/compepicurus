@@ -19,6 +19,9 @@ import { calculateScore } from "@/lib/forms/scoring";
 import { useLockedForm } from "@/lib/forms/forms-context";
 import { claimSessionId, updatePracticeSession } from "@/lib/practice-sessions";
 import { entryPayloadFor, getEntriesForSession, saveEntry } from "@/lib/scout-entries";
+import type { StickyNote } from "@/lib/forms/types";
+import { joinNotes } from "@/lib/forms/values";
+import { notesForSave } from "@/lib/sticky-notes";
 import { markPlayerSubmitted, useLobbySessions, type LobbyDoc, type LobbyPlayer } from "@/lib/lobby";
 import { LOBBY_CONFIG } from "@/lib/lobby/config";
 import { LoadError } from "@/components/practice/load-error";
@@ -64,7 +67,7 @@ export function LobbySessionScreen({
   const [error, setError] = useState<FirestoreFailure | null>(null);
   const [ending, setEnding] = useState(false);
   // the comments drawer's text, which is the form's `comments` value (ScoutForm commentsMode="popout")
-  const [comments, setComments] = useState("");
+  const [notes, setNotes] = useState<StickyNote[]>([]);
   const resolveTriggered = useRef(false);
   const scoutFormRef = useRef<ScoutFormHandle>(null);
 
@@ -173,7 +176,7 @@ export function LobbySessionScreen({
         matchType: mySession.matchType!,
         matchNumber: mySession.matchNumber!,
         teamNumber: myRobot,
-        ...entryPayloadFor(form, values.values, score),
+        ...entryPayloadFor(form, values.values, score, { stickyNotes: notesForSave(notes) }),
         source: "practice",
         mode: lobby.mode,
         sessionId: mySession.id,
@@ -270,11 +273,11 @@ export function LobbySessionScreen({
                   lockedFields={["teamNumber"]}
                   prefill={{ teamNumber: myRobot, scoutName: profile?.name ?? "" }}
                   commentsMode="popout"
-                  comments={comments}
-                  onCommentsChange={setComments}
+                  comments={joinNotes(notes)}
+                  onCommentsChange={() => undefined}
                 />
               }
-              comments={{ value: comments, onChange: setComments, label: `Robot: #${myRobot}` }}
+              comments={{ notes, onChange: setNotes, label: `Robot: #${myRobot}` }}
               notice={
                 <>
                   {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before submitting.</p>}

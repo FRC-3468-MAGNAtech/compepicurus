@@ -148,6 +148,9 @@ export function activeFormIdFor(season: { id: string; formId: string }, activeFo
 export function canBeActive(catalog: FormCatalog, formId: string): boolean {
   const doc = catalog.docs.get(formId);
   if (doc?.archived) return false;
+  // P28: only a match-scout form can be a season's active form (the team's other forms have their own pages)
+  const resolved = resolveForm(catalog, formId);
+  if (resolved && resolved.formType !== "match-scout") return false;
   if (BUILTIN_FORMS[formId]) return true;
   return !!doc && doc.publishedVersion !== null;
 }

@@ -92,3 +92,42 @@ describe("PageGuard", () => {
     expect(render("/dashboard")).toContain("PAGE CONTENT"); // open pages never wait
   });
 });
+
+describe("PageGuard: the P28 form pages", () => {
+  const FORM_PAGES: [string, string[]][] = [
+    ["/lead-scout-form", ["lead-scout"]],
+    ["/match-strategy-form", ["lead-strategist"]],
+    ["/drive-reflection-form", ["drive-team"]],
+  ];
+
+  beforeEach(() => {
+    accessUser = person();
+    config = defaultPageAccessConfig();
+    loaded = true;
+  });
+
+  it("each opens for its default role (primary or secondary) and shows the no-access screen to everyone else", () => {
+    for (const [path, roles] of FORM_PAGES) {
+      for (const role of ["match-scout", "pit-scout", "pit-team", "drive-team", "lead-scout", "lead-strategist", "team-coach", "media", "judge-awards"] as const) {
+        accessUser = person({ primaryRole: role });
+        expect(render(path).includes("PAGE CONTENT"), `${role} -> ${path}`).toBe(roles.includes(role));
+      }
+      accessUser = person({ primaryRole: "match-scout", secondaryRoles: [roles[0] as never] });
+      expect(render(path), `secondary ${path}`).toContain("PAGE CONTENT");
+    }
+  });
+
+  it("an explicit grant opens one, an explicit deny closes it (even for the right role), and admins always open them", () => {
+    for (const [path] of FORM_PAGES) {
+      const id = path.slice(1);
+      accessUser = person({ primaryRole: "media" });
+      config = setMemberPageState(defaultPageAccessConfig(), "u1", id, "grant");
+      expect(render(path), `grant ${path}`).toContain("PAGE CONTENT");
+      accessUser = person({ primaryRole: "lead-scout", secondaryRoles: ["lead-strategist", "drive-team"] });
+      config = setMemberPageState(defaultPageAccessConfig(), "u1", id, "deny");
+      expect(render(path), `deny ${path}`).not.toContain("PAGE CONTENT");
+      accessUser = person({ isAdmin: true });
+      expect(render(path), `admin ${path}`).toContain("PAGE CONTENT");
+    }
+  });
+});

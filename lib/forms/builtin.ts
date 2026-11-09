@@ -1,5 +1,6 @@
 import type { Form, FormField, FormSection } from "@/lib/forms/types";
 import { formContentHash } from "@/lib/forms/hash";
+import { TEAM_BUILTIN_FORMS } from "@/lib/forms/builtin-team-forms";
 
 // P21: the forms that live in code. BIOBUZZ is just the first one: this file is the ONLY place in the app that names a
 // game element. It must behave exactly like the pre-v2 hard-coded form (lib/forms/fixtures/biobuzz-v1.ts is the frozen
@@ -131,12 +132,14 @@ export const BIOBUZZ_FORM: Form = {
   status: "published",
   scoringEnabled: true,
   sections,
+  // P28: the sticky notes panel is on for the Match Scout Form by default (its notes are saved with the entry and fold into the old Comments column)
+  stickyNotes: { enabled: true, defaultOpen: false },
   origin: "built-in",
   createdBy: "system",
 };
 
 /** Every form defined in code, by id. An account's override (copy-on-write) of one of these lives in Firestore and wins when it exists. */
-export const BUILTIN_FORMS: Readonly<Record<string, Form>> = { biobuzz: BIOBUZZ_FORM };
+export const BUILTIN_FORMS: Readonly<Record<string, Form>> = { biobuzz: BIOBUZZ_FORM, ...TEAM_BUILTIN_FORMS };
 
 export const DEFAULT_FORM_ID = "biobuzz";
 

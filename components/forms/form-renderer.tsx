@@ -48,6 +48,10 @@ export type FormRendererProps = {
   /** Reported whenever the number of differences or the linked plan changes. */
   onPlanChange?: (info: { differences: number; linkedEntryId: string | null }) => void;
   disabled?: boolean;
+  /** P28: a category's heading when the form wants it to say more than its title (the Lead Scout's "RED / 1111, 2222"). */
+  sectionTitle?: (section: FormSection) => string | undefined;
+  /** P28: categories tinted with the chosen alliance's colour. */
+  tintedSections?: ReadonlySet<string>;
 };
 
 const ALLIANCE = {
@@ -56,7 +60,7 @@ const ALLIANCE = {
 } as const;
 
 export function FormRenderer(props: FormRendererProps) {
-  const { form, values, onValuesChange, entry, onEntryChange, events, teams, allianceTeams, renderMatchPicker, errors = {}, photoTarget = null, onPendingPhotos, plan, onPlanChange, disabled } = props;
+  const { form, values, onValuesChange, entry, onEntryChange, events, teams, allianceTeams, renderMatchPicker, errors = {}, photoTarget = null, onPendingPhotos, plan, onPlanChange, disabled, sectionTitle, tintedSections } = props;
 
   const visible = useMemo(() => visibleFieldKeys(form, values), [form, values]);
   // Keys the person has changed themselves: the plan and the schedule never overwrite those.
@@ -222,8 +226,15 @@ export function FormRenderer(props: FormRendererProps) {
     const layout = layoutOf(section);
     const shown = (f: FormField) => isSystemField(f) || visible.has(f.key);
     return (
-      <section key={section.id} aria-label={section.title} className="glass-card flex flex-col gap-4 p-4" data-testid={`form-section-${section.id}`}>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">{section.title}</h2>
+      <section
+        key={section.id}
+        aria-label={sectionTitle?.(section) ?? section.title}
+        className={cn("glass-card flex flex-col gap-4 border p-4", tintedSections?.has(section.id) && entry.alliance ? ALLIANCE[entry.alliance].tint : "border-transparent")}
+        data-testid={`form-section-${section.id}`}
+      >
+        <h2 className={cn("text-sm font-semibold uppercase tracking-wide", tintedSections?.has(section.id) && entry.alliance ? ALLIANCE[entry.alliance].text : "text-[var(--muted-foreground)]")} data-testid="section-title">
+          {sectionTitle?.(section) ?? section.title}
+        </h2>
         {layout.ungrouped.filter(shown).map((f) => (isSystemField(f) ? systemField(f) : control(f, f.key)))}
         {layout.groups.map(({ group, fields }) => {
           const list = fields.filter(shown);

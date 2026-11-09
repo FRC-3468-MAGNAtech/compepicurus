@@ -1244,12 +1244,13 @@ describe("P23 templates", () => {
   });
 
   describe("official templates", () => {
-    it("seeds BIOBUZZ and the Blank starter once, for the platform owner only, and adds a version when the content changes", async () => {
+    it("seeds the official templates once, for the platform owner only, and adds a version when the content changes", async () => {
       const a = await account("u-owner@example.com");
       const p = await platformOwner();
       expect((await call({ action: "seed-official" }, a.token)).status).toBe(403);
       const first = await call({ action: "seed-official" }, p.token);
-      expect(first.body.results).toEqual([{ id: "official-biobuzz", result: "created" }, { id: "official-blank", result: "created" }]);
+      // BIOBUZZ, the Blank starter and (P28) the Lead Scout, Match Strategy and Drive Reflection forms
+      expect(first.body.results).toEqual(["official-biobuzz", "official-blank", "official-lead-scout", "official-match-strategy", "official-drive-reflection"].map((id) => ({ id, result: "created" })));
       expect(await doc("formTemplates/official-biobuzz")).toMatchObject({ visibility: "public", official: true, version: 1, authorName: "CompEpicurus", importCount: 0 });
       expect((await doc("formTemplates/official-blank"))?.form.sections.map((s: any) => s.title)).toEqual(["Pre-Match", "Autonomous", "Teleoperated", "Endgame", "Misc"]);
       expect((await call({ action: "seed-official" }, p.token)).body.results.every((r: any) => r.result === "unchanged")).toBe(true);

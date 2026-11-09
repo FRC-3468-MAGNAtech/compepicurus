@@ -7,6 +7,9 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScoutForm, type ScoutFormValues } from "@/components/scout/scout-form";
+import { StickyNotesLayout } from "@/components/forms/sticky-notes-panel";
+import { notesForSave } from "@/lib/sticky-notes";
+import type { StickyNote } from "@/lib/forms/types";
 import type { AssignedMatch } from "@/components/scout/match-picker-dialog";
 import { useActiveEvents } from "@/lib/active-event";
 import { orderPrimaryFirst, pickDefaultActiveEvent } from "@/lib/active-events";
@@ -73,6 +76,8 @@ function MatchScoutFormContent() {
 
   const { assignments } = useAssignments(teamId, activeEvent?.code ?? null);
   const { entries } = useTeamScoutEntries(teamId);
+  // P28: the sticky notes written while scouting this robot (saved with the entry; the old Comments column folds them in)
+  const [notes, setNotes] = useState<StickyNote[]>([]);
   const [loadedAssignment, setLoadedAssignment] = useState<{ match: AssignedMatch; teamNumber: number } | null>(null);
 
   const nextAssignment = assignments?.current && user && activeEvent ? findNextAssignment(assignments.current.slots, user.uid, activeEvent.code, entries) : null;
@@ -98,8 +103,9 @@ function MatchScoutFormContent() {
       matchType: values.match.type,
       matchNumber: values.match.match.matchNumber,
       teamNumber: values.teamNumber,
-      ...entryPayloadFor(form, values.values, score),
+      ...entryPayloadFor(form, values.values, score, { stickyNotes: notesForSave(notes) }),
     });
+    setNotes([]);
     // Recomputes the whole event's accuracy/flags (not just this entry) so a
     // different robot's entry can flip from "Needs Robots" to resolved once
     // its alliance partner is scouted too. Fire-and-forget: it never throws
@@ -142,6 +148,7 @@ function MatchScoutFormContent() {
       {!formsLoaded ? (
         <div className="glass-card h-64 animate-pulse" />
       ) : (
+      <StickyNotesLayout enabled={!!form.stickyNotes?.enabled} defaultOpen={form.stickyNotes?.defaultOpen} notes={notes} onChange={setNotes}>
       <ScoutForm
         key={`${form.id}@${form.version}`}
         schema={form}
@@ -157,6 +164,7 @@ function MatchScoutFormContent() {
         prefill={{ scoutName: name, ...effectiveLoaded }}
         onSubmit={handleSubmit}
       />
+      </StickyNotesLayout>
       )}
     </div>
   );

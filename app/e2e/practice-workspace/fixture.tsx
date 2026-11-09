@@ -10,6 +10,8 @@ import { ScoutingWorkspace } from "@/components/practice/scouting-workspace";
 import { VideoPlayer } from "@/components/video/video-player";
 import type { VideoPlayerHandle } from "@/components/video/types";
 import { BIOBUZZ_FORM } from "@/lib/forms/builtin";
+import type { StickyNote } from "@/lib/forms/types";
+import { joinNotes } from "@/lib/forms/values";
 import { calculateScore } from "@/lib/forms/scoring";
 
 declare global {
@@ -25,7 +27,7 @@ function Fixture() {
   const mode = useSearchParams().get("mode") === "competitive" ? "competitive" : "trial";
   const novideo = useSearchParams().get("novideo") === "1";
   const [robot, setRobot] = useState(0);
-  const [comments, setComments] = useState("");
+  const [notes, setNotes] = useState<StickyNote[]>([]);
   const [done, setDone] = useState(false);
   const [saved] = useState<NonNullable<Window["__submitted"]>>(() => []);
   const form = useRef<ScoutFormHandle>(null);
@@ -43,7 +45,7 @@ function Fixture() {
     saved.push({ team: ROBOTS[robot], comments: String(v.values.comments ?? ""), autoLeave: v.values.autoLeave === true });
     if (robot === ROBOTS.length - 1) return setDone(true);
     setRobot((r) => r + 1);
-    setComments("");
+    setNotes([]);
   };
 
   return (
@@ -70,11 +72,11 @@ function Fixture() {
             lockedFields={["teamNumber"]}
             prefill={{ teamNumber: ROBOTS[robot], scoutName: "Fixture Scout" }}
             commentsMode="popout"
-            comments={comments}
-            onCommentsChange={setComments}
+            comments={joinNotes(notes)}
+            onCommentsChange={() => undefined}
           />
         }
-        comments={{ value: comments, onChange: setComments, label: `Robot ${robot + 1}: #${ROBOTS[robot]}` }}
+        comments={{ notes, onChange: setNotes, label: `Robot ${robot + 1}: #${ROBOTS[robot]}` }}
         actions={
           <>
             <Button variant="ghost" className="gap-1.5 text-red-300">

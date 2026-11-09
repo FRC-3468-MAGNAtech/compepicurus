@@ -1,4 +1,5 @@
 import { BIOBUZZ_FORM } from "@/lib/forms/builtin";
+import { DRIVE_REFLECTION_FORM, LEAD_SCOUT_FORM, MATCH_STRATEGY_FORM } from "@/lib/forms/builtin-team-forms";
 import { createBlankForm } from "@/lib/forms/new-form";
 import type { Form } from "@/lib/forms/types";
 import { buildTemplateContent, type TemplateContent } from "@/lib/templates/build";
@@ -19,9 +20,19 @@ function blankStarter(): Form {
 export function officialTemplates(): OfficialTemplate[] {
   const biobuzz = buildTemplateContent({ form: BIOBUZZ_FORM, name: "BIOBUZZ Match Scout", description: "The official 2026 BIOBUZZ match scouting form: Hive, Flower and Garden scoring, parking, and incident flags.", tags: ["biobuzz", "2026", "match scout", "official"] });
   const blank = buildTemplateContent({ form: blankStarter(), name: "Blank (standard phases)", description: "The five standard categories and the locked system fields, ready to build on. Scoring is off until you turn it on.", tags: ["starter", "blank"] });
-  if (!biobuzz.ok || !blank.ok) throw new Error(`The official templates must be valid: ${[...(biobuzz.ok ? [] : biobuzz.errors), ...(blank.ok ? [] : blank.errors)].join("; ")}`);
+  // P28: the three match-based forms are public templates too, so another account can start from them
+  const lead = buildTemplateContent({ form: LEAD_SCOUT_FORM, name: "Lead Scout", description: LEAD_SCOUT_FORM.description, tags: ["lead scout", "alliance", "official"] });
+  const strategy = buildTemplateContent({ form: MATCH_STRATEGY_FORM, name: "Match Strategy", description: MATCH_STRATEGY_FORM.description, tags: ["strategy", "alliance", "official"] });
+  const reflection = buildTemplateContent({ form: DRIVE_REFLECTION_FORM, name: "Drive Reflection", description: DRIVE_REFLECTION_FORM.description, tags: ["reflection", "alliance", "official"] });
+  const all = [biobuzz, blank, lead, strategy, reflection];
+  const failed = all.flatMap((r) => (r.ok ? [] : r.errors));
+  if (failed.length > 0) throw new Error(`The official templates must be valid: ${failed.join("; ")}`);
+  const content = (r: (typeof all)[number]) => (r as { ok: true; content: TemplateContent }).content;
   return [
-    { id: "official-biobuzz", content: biobuzz.content },
-    { id: "official-blank", content: blank.content },
+    { id: "official-biobuzz", content: content(biobuzz) },
+    { id: "official-blank", content: content(blank) },
+    { id: "official-lead-scout", content: content(lead) },
+    { id: "official-match-strategy", content: content(strategy) },
+    { id: "official-drive-reflection", content: content(reflection) },
   ];
 }

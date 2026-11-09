@@ -24,6 +24,9 @@ import {
   stepSplit,
   widthToFraction,
 } from "@/lib/workspace/layout";
+import { StickyNotesList } from "@/components/forms/sticky-notes-panel";
+import type { StickyNote } from "@/lib/forms/types";
+import { noteCount } from "@/lib/sticky-notes";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +40,8 @@ import { cn } from "@/lib/utils";
 //  - Nothing here touches playback: no pause control is added, nothing covers the player's own controls (the drawer pushes the video aside instead of overlapping it),
 //    and the comments drawer never takes focus unless it's opened. Competitive's no-pause rule lives in the player and is unchanged.
 
-export type WorkspaceComments = { value: string; onChange: (text: string) => void; /** "Robot 1: #1234" */ label: string };
+/** P28: the drawer holds the same sticky notes as every other form (one mechanism); the entry's `comments` text is derived from them. */
+export type WorkspaceComments = { notes: StickyNote[]; onChange: (notes: StickyNote[]) => void; /** "Robot 1: #1234" */ label: string };
 
 export type ScoutingWorkspaceProps = {
   /** The video (or stream) node. It is placed in a 16:9 box the workspace sizes; put overlays (a "Ready?" cover) inside it. `null` for a screen with no video. */
@@ -99,19 +103,12 @@ function VideoStage({ children, dragging, className }: { children: ReactNode; dr
   );
 }
 
-/** The comments drawer's contents: which robot, an auto-growing textarea bound to the form's `comments` value, and a close button. */
+/**
+ * The comments drawer's contents (P28): which robot, and the robot's sticky notes: the same note cards as every other form (add, colour, pin, delete). Opened on
+ * purpose (the tab, the C key) it puts the cursor in the first note, starting one when there are none; closed, it never takes focus. The first note's text box keeps
+ * the old `comments-input` test id.
+ */
 function CommentsPanel({ comments, onClose, className, autoFocusKey }: { comments: WorkspaceComments; onClose: () => void; className?: string; autoFocusKey: number }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 360)}px`;
-  }, [comments.value]);
-  // opened on purpose (the tab, the C key): the text box is ready to type in. Closed, it never takes focus.
-  useEffect(() => {
-    if (autoFocusKey > 0) ref.current?.focus({ preventScroll: true });
-  }, [autoFocusKey]);
   return (
     <section aria-label="Comments" data-testid="comments-drawer" className={cn("glass-overlay flex flex-col gap-2 border border-[var(--glass-border)] p-3", className)}>
       <header className="flex items-center justify-between gap-2">
@@ -122,17 +119,9 @@ function CommentsPanel({ comments, onClose, className, autoFocusKey }: { comment
           <X className="h-4 w-4" />
         </button>
       </header>
-      <textarea
-        ref={ref}
-        data-testid="comments-input"
-        aria-label={`Comments for ${comments.label}`}
-        rows={4}
-        value={comments.value}
-        maxLength={5000}
-        onChange={(e) => comments.onChange(e.target.value)}
-        placeholder="Anything notable about this robot…"
-        className="min-h-24 w-full resize-none rounded-2xl border border-[var(--glass-border)] bg-white/5 px-4 py-3 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)] focus:shadow-[0_0_0_3px_rgba(var(--glow),0.25)]"
-      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <StickyNotesList notes={comments.notes} onChange={comments.onChange} firstInputTestId="comments-input" focusKey={autoFocusKey} />
+      </div>
       <p className="text-[11px] text-[var(--muted-foreground)]">Saved with this robot&apos;s entry. The video keeps playing.</p>
     </section>
   );
@@ -332,7 +321,7 @@ export function ScoutingWorkspace({ video, videoNote, form, actions, notice, com
   };
 
   const dragging = dragPx !== null || dragSplit !== null;
-  const commentsDot = !!comments && comments.value.trim() !== "";
+  const commentsDot = !!comments && noteCount(comments.notes) > 0;
 
   const toolbar = (
     <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 px-1">

@@ -21,12 +21,15 @@ async function openLibrary(page: Page, tab: "public" | "mine" = "public") {
 }
 
 const ids = (page: Page) => library(page).locator("[data-template-card]").evaluateAll((els) => els.map((e) => e.getAttribute("data-template-card")));
+// P28 added three official templates (Lead Scout, Match Strategy, Drive Reflection); the older orderings are checked without them
+const NEW_OFFICIAL = ["official-lead-scout", "official-match-strategy", "official-drive-reflection"];
+const olderIds = async (page: Page) => (await ids(page)).filter((id) => !NEW_OFFICIAL.includes(id ?? ""));
 
 test.describe("template library", () => {
   test("lists public templates with their facts and an Official badge, and never anyone's private ones", async ({ page }) => {
     await open(page);
     await openLibrary(page);
-    expect(new Set(await ids(page))).toEqual(new Set(["official-biobuzz", "official-blank", "pub-pit", "pub-drive", "pub-reported", "mine-public"]));
+    expect(new Set(await ids(page))).toEqual(new Set(["official-biobuzz", "official-blank", ...NEW_OFFICIAL, "pub-pit", "pub-drive", "pub-reported", "mine-public"]));
     const official = card(page, "official-biobuzz");
     await expect(official).toContainText("BIOBUZZ Match Scout");
     await expect(official).toContainText("Official");
@@ -44,10 +47,10 @@ test.describe("template library", () => {
     await open(page);
     await openLibrary(page);
     // newest first by default
-    expect(await ids(page)).toEqual(["pub-pit", "pub-drive", "official-biobuzz", "official-blank", "pub-reported", "mine-public"]);
+    expect(await olderIds(page)).toEqual(["pub-pit", "pub-drive", "official-biobuzz", "official-blank", "pub-reported", "mine-public"]);
     await page.getByLabel("Sort by").click();
     await page.getByRole("option", { name: "Most used" }).click();
-    expect(await ids(page)).toEqual(["pub-pit", "official-biobuzz", "official-blank", "pub-drive", "mine-public", "pub-reported"]);
+    expect(await olderIds(page)).toEqual(["pub-pit", "official-biobuzz", "official-blank", "pub-drive", "mine-public", "pub-reported"]);
     await page.getByLabel("Sort by").click();
     await page.getByRole("option", { name: "Newest" }).click();
     expect((await ids(page))[0]).toBe("pub-pit");
@@ -63,7 +66,7 @@ test.describe("template library", () => {
     await page.getByRole("button", { name: /^drive/ }).click();
     expect(await ids(page)).toEqual(["pub-drive"]);
     await page.getByRole("button", { name: /^drive/ }).click();
-    expect((await ids(page)).length).toBe(6);
+    expect((await ids(page)).length).toBe(6 + NEW_OFFICIAL.length);
   });
 
   test("previews the real form with a test fill that never saves", async ({ page }) => {

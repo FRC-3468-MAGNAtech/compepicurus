@@ -29,11 +29,14 @@ import {
   type PracticeSession,
 } from "@/lib/practice-sessions";
 import { entryPayloadFor, getEntriesForSession, saveEntry } from "@/lib/scout-entries";
+import type { StickyNote } from "@/lib/forms/types";
+import { joinNotes } from "@/lib/forms/values";
+import { notesForSave } from "@/lib/sticky-notes";
 import type { LibraryMatch } from "@/lib/match-library";
 import { LoadError } from "@/components/practice/load-error";
 import { describeFirestoreError, type FirestoreFailure } from "@/lib/firestore-errors";
 
-type PendingRobot = { teamNumber: number; values: ScoutFormValues; score: ScoreResult };
+type PendingRobot = { teamNumber: number; values: ScoutFormValues; score: ScoreResult; stickyNotes: StickyNote[] };
 
 export function SessionScreen({
   session,
@@ -55,7 +58,8 @@ export function SessionScreen({
   const [readyOverlay, setReadyOverlay] = useState(true);
   const [videoEnded, setVideoEnded] = useState(false);
   // The comments drawer's text for the robot being scouted: it is the form's `comments` value (ScoutForm commentsMode="popout"), cleared for each robot.
-  const [comments, setComments] = useState("");
+  // P28: the drawer's sticky notes for the robot being scouted (its `comments` text is derived from them); cleared for each robot.
+  const [notes, setNotes] = useState<StickyNote[]>([]);
   const [breakMenuOpen, setBreakMenuOpen] = useState(false);
   const [pendingRobot, setPendingRobot] = useState<PendingRobot | null>(null);
   const [changeMatchConfirmOpen, setChangeMatchConfirmOpen] = useState(false);
@@ -90,7 +94,7 @@ export function SessionScreen({
       matchType: libraryMatch.matchType,
       matchNumber: libraryMatch.matchNumber,
       teamNumber: robot.teamNumber,
-      ...entryPayloadFor(form, robot.values.values, robot.score),
+      ...entryPayloadFor(form, robot.values.values, robot.score, { stickyNotes: robot.stickyNotes }),
       source: "practice",
       mode: session.mode,
       sessionId: session.id,
@@ -107,7 +111,7 @@ export function SessionScreen({
     setValidationError(false);
     const values = handle.getValues();
     const score = calculateScore(form, values.values);
-    const robot: PendingRobot = { teamNumber, values, score };
+    const robot: PendingRobot = { teamNumber, values, score, stickyNotes: notesForSave(notes) };
 
     if (!isLastRobot) {
       setPendingRobot(robot);
@@ -175,7 +179,7 @@ export function SessionScreen({
       setBreakMenuOpen(false);
       setPendingRobot(null);
       setRobotIndex((i) => i + 1);
-      setComments("");
+      setNotes([]);
       setReadyOverlay(true);
       setVideoEnded(false);
       videoRef.current?.seek(windowStart(libraryMatch.video));
@@ -268,11 +272,11 @@ export function SessionScreen({
             lockedFields={["teamNumber"]}
             prefill={{ teamNumber, scoutName: session.scoutName }}
             commentsMode="popout"
-            comments={comments}
-            onCommentsChange={setComments}
+            comments={joinNotes(notes)}
+            onCommentsChange={() => undefined}
           />
         }
-        comments={{ value: comments, onChange: setComments, label: `Robot ${robotIndex + 1}: #${teamNumber}` }}
+        comments={{ notes, onChange: setNotes, label: `Robot ${robotIndex + 1}: #${teamNumber}` }}
         notice={
           <>
             {validationError && <p className="mt-2 text-sm font-medium text-red-300">Fill in the form before continuing.</p>}

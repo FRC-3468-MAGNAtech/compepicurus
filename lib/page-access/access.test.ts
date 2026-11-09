@@ -194,7 +194,7 @@ describe("navigation hiding", () => {
 
   it("a plain Match Scout loses the restricted pages and the Admin Panel, and keeps the open ones", () => {
     const l = labels(user());
-    for (const hidden of ["Active Events", "Assignments", "Scout Accuracy", "Team Management", "Admin Panel"]) expect(l, hidden).not.toContain(hidden);
+    for (const hidden of ["Active Events", "Assignments", "Scout Accuracy", "Team Management", "Admin Panel", "Lead Scout Form", "Match Strategy Form", "Drive Reflection Form"]) expect(l, hidden).not.toContain(hidden);
     for (const shown of ["Dashboard", "Match List", "Match Scout Form", "Analytics", "Practice Scouting", "My Scouting", "People", "Changelog", "Credits", "Account Settings", "Team Settings"]) expect(l, shown).toContain(shown);
   });
 

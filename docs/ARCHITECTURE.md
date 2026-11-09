@@ -2314,6 +2314,14 @@ no layout shift, moderation, the Settings editor incl. an admin's disabled toggl
 
 **Photos (Vercel Blob).** `lib/blob/` (`paths.ts` path building and parsing, `compress.ts`, `client.ts`, `upload-queue.ts`), `lib/server/blob-auth.ts` (`authorizeBlobUpload`, `authorizeBlobDelete`, `pageIdForForm`), routes `app/api/blob/upload` and `app/api/blob/delete`. Setup: `docs/DEPLOYMENT.md` section 13.
 
+## P28 — Sticky notes and the match-based forms
+
+**Built-in forms** (`lib/forms/builtin-team-forms.ts`): `LEAD_SCOUT_FORM` (`lead-scout-v1`), `MATCH_STRATEGY_FORM` (`match-strategy-v1`), `DRIVE_REFLECTION_FORM` (`drive-reflection-v1`), in `BUILTIN_FORMS` (and as official templates in `lib/templates/official.ts`). `BIOBUZZ_FORM` has `stickyNotes: { enabled: true }`. `canBeActive` (`lib/forms/resolve.ts`) is true only for match-scout forms.
+
+**Sticky notes.** `lib/sticky-notes.ts` (pure: `newNote`, `addNote`, `editNote`, `deleteNote`, `setNoteColor`, `togglePin`, `sortNotes`, `noteCount`, `notesForSave`, `NOTE_COLORS`, `clampPanelWidth`), `components/forms/sticky-notes-panel.tsx` (`StickyNotesList`, `StickyNotesPanel`, `StickyNotesLayout`). Entries store `stickyNotes: StickyNote[]`; `entryPayloadFor(..., { stickyNotes })` derives `comments`. The practice workspace's `WorkspaceComments` is now `{ notes, onChange, label }` (`components/practice/scouting-workspace.tsx`), used by the solo, live and lobby screens.
+
+**Form pages.** `lib/forms/form-page-logic.ts` (`allianceTeamsFor`, `allianceTitle`, `resetSlotValues`, `trimSlots`, `validateSubmission`, `buildSubmission`), `components/forms/form-page.tsx` (`FormPageView`, plain props), `form-page-connected.tsx` (`FormPage`: live data, the existing `MatchPickerDialog`, `saveFormEntry`), `form-renderer.tsx` gained `sectionTitle` and `tintedSections`. Routes `app/(app)/{lead-scout-form,match-strategy-form,drive-reflection-form}/page.tsx`; nav items in `lib/nav.ts`; page ids and default roles in `lib/page-access/pages.ts` (P26). Fixture `/e2e/form-page`.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`
