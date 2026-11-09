@@ -5,6 +5,7 @@ import { Maximize2, Monitor, RotateCcw, Smartphone, Tablet } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ScoutForm, type ScoutFormHandle } from "@/components/scout/scout-form";
+import { GenericPreview, type GenericPreviewHandle } from "@/components/forms/builder/generic-preview";
 import { phaseLabel, type Form, type FormValues } from "@/lib/forms/types";
 import type { ScoreResult } from "@/lib/forms/scoring";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,7 @@ const DEVICES: { id: Device; label: string; icon: typeof Smartphone }[] = [
 
 /** What changes the shape of the rendered form (so the preview remounts and re-applies defaults), as a cheap signature. */
 function signature(form: Form): string {
-  return JSON.stringify([form.scoringEnabled, form.phaseLabels, form.sections.map((s) => [s.id, s.visible, s.phase, s.accent, s.groups, s.fields.map((f) => [f.id, f.key, f.type, f.required, f.default, f.options, f.visibleWhen, f.min, f.max, f.step, f.scale, f.decimals, f.ui, f.tip, f.helpText, f.label, f.scoring])])]);
+  return JSON.stringify([form.scoringEnabled, form.phaseLabels, form.sections.map((s) => [s.id, s.visible, s.phase, s.accent, s.groups, s.fields.map((f) => [f.id, f.key, f.type, f.required, f.default, f.options, f.visibleWhen, f.min, f.max, f.step, f.scale, f.decimals, f.ui, f.tip, f.helpText, f.label, f.scoring, f.steps, f.rows, f.cols, f.disabledCells, f.maxCount, f.capture, f.endLabels, f.ticks])]), form.formType, form.compareWith, form.stickyNotes]);
 }
 
 export function LivePreview({ form, framed = true }: { form: Form; framed?: boolean }) {
@@ -34,12 +35,16 @@ export function LivePreview({ form, framed = true }: { form: Form; framed?: bool
   const [notice, setNotice] = useState<string | null>(null);
   const [filled, setFilled] = useState<FormValues>({});
   const handle = useRef<ScoutFormHandle>(null);
+  const genericHandle = useRef<GenericPreviewHandle>(null);
   const deferred = useDeferredValue(form);
   const sig = useMemo(() => signature(deferred), [deferred]);
 
   const frame = (fullHeight: boolean) => (
     <div className={cn("overflow-auto rounded-3xl border border-[var(--glass-border)] bg-[var(--background)] p-3", fullHeight ? "max-h-[72vh]" : "max-h-[60vh]")} data-testid={`preview-frame-${device}`}>
       <div className={cn("mx-auto max-w-full", WIDTH[device])}>
+        {deferred.formType !== "match-scout" ? (
+          <GenericPreview key={`${sig}:${resetCount}`} ref={genericHandle} form={deferred} initialValues={filled} onValues={setFilled} />
+        ) : (
         <ScoutForm
           key={`${sig}:${resetCount}`}
           ref={handle}
@@ -55,6 +60,7 @@ export function LivePreview({ form, framed = true }: { form: Form; framed?: bool
             setScore(s);
           }}
         />
+        )}
       </div>
     </div>
   );
@@ -84,7 +90,7 @@ export function LivePreview({ form, framed = true }: { form: Form; framed?: bool
         variant="glass"
         size="sm"
         onClick={() => {
-          const ok = handle.current?.validate() ?? true;
+          const ok = (deferred.formType !== "match-scout" ? genericHandle.current?.validate() : handle.current?.validate()) ?? true;
           setNotice(ok ? "Everything required is filled in." : "Some required fields are empty (shown in red).");
         }}
       >
@@ -114,7 +120,7 @@ export function LivePreview({ form, framed = true }: { form: Form; framed?: bool
 
   return (
     <div className="flex flex-col gap-3" data-testid="live-preview">
-      <p className="text-xs text-[var(--muted-foreground)]">A test fill of the real scout form. Nothing you enter here is saved.</p>
+      <p className="text-xs text-[var(--muted-foreground)]">A test fill of the real form{deferred.formType !== "match-scout" ? ", with sample events and teams" : ""}. Nothing you enter here is saved.</p>
       {controls}
       {scoreLine}
       {notice && (

@@ -132,7 +132,7 @@ describe("BIOBUZZ regression: stored entries (the adapter)", () => {
     for (let i = 0; i < 50; i++) {
       const values = normalizeValues(BIOBUZZ_FORM, randomValues(rand));
       const payload = entryPayloadFor(BIOBUZZ_FORM, values, calculateScore(BIOBUZZ_FORM, values));
-      expect(payload.fields).toEqual(oracle.valuesToScoutEntryFields(values));
+      expect(payload.fields).toEqual(oracle.valuesToScoutEntryFields(values as never));
       expect(payload.comments).toBe(String(values.comments ?? ""));
       expect(payload.formId).toBe("biobuzz");
       expect(payload.formVersion).toBe(1);
@@ -187,7 +187,7 @@ function legacyEntries(n: number): ScoutEntry[] {
 describe("BIOBUZZ regression: the Match Analytics table", () => {
   it("has the same columns, in the same order, with the same headers", () => {
     const strip = (cols: typeof OLD_TABLE.columns) => cols.map((c) => ({ key: c.key, phase: c.phase, category: c.category, label: c.label, type: c.type, sortable: c.sortable, sticky: c.sticky, width: c.width }));
-    expect(strip(NEW_TABLE.columns)).toEqual(strip(OLD_TABLE.columns));
+    expect(strip(NEW_TABLE.columns as never)).toEqual(strip(OLD_TABLE.columns));
     expect(NEW_TABLE.columns.map(csvHeaderFor)).toEqual(OLD_TABLE.columns.map((c) => `${c.phase} - ${c.category} - ${c.label}`));
   });
 

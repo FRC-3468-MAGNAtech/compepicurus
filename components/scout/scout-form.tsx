@@ -13,7 +13,12 @@ import { CounterControl } from "@/components/scout/counter-control";
 import { FieldToggle } from "@/components/scout/field-toggle";
 import { CheckboxTile } from "@/components/scout/checkbox-tile";
 import { ACCENT_TOKENS, FieldIcon } from "@/components/scout/field-icons";
-import { FieldLabel, FieldTip, NumberField, RadioTiles, RatingStars, SelectField } from "@/components/scout/field-inputs";
+import { FieldLabel, FieldTip, MatrixField, NumberField, RadioTiles, RatingStars, SelectField, SliderField } from "@/components/scout/field-inputs";
+import { SequenceField } from "@/components/scout/sequence-field";
+import { PhotoField } from "@/components/forms/photo-field";
+import { PlanDiffIcon } from "@/components/forms/plan-diff-icon";
+import { TeamSelect, type TeamOption } from "@/components/forms/team-select";
+import type { PhotoTarget } from "@/components/forms/photo-upload";
 import { SectionNav, type ScoutSection } from "@/components/scout/section-nav";
 import { ScoreBar } from "@/components/scout/score-bar";
 import { MatchPickerDialog, type AssignedMatch } from "@/components/scout/match-picker-dialog";
@@ -25,7 +30,7 @@ import { calculateScore, type ScoreResult } from "@/lib/forms/scoring";
 import { defaultValues, validateValues } from "@/lib/forms/values";
 import { fieldWithRole } from "@/lib/forms/meta";
 import { visibleFieldKeys } from "@/lib/forms/visibility";
-import { phaseLabel, SYSTEM_FIELD_TYPES, type FieldValue, type Form, type FormField, type FormSection, type FormValues } from "@/lib/forms/types";
+import { isSystemField, phaseLabel, type FormValue, type Form, type FormField, type FormSection, type FormValues, type ImageValue } from "@/lib/forms/types";
 import { MATCH_TYPE_PREFIX } from "@/lib/analytics/game-schema";
 import type { FtcEvent } from "@/lib/ftc/types";
 
@@ -88,7 +93,6 @@ export type ScoutFormProps = {
 
 const FLAG_SECTION_NOTE = "These don't affect score but are saved with the submission.";
 
-const isSystemField = (f: FormField): boolean => (SYSTEM_FIELD_TYPES as readonly string[]).includes(f.type);
 const fieldId = (key: string) => `scout-field-${key}`;
 
 /** A scored field's points, when it scores per toggle-on / per tally and the form scores at all (what the toggle and counter tiles show). */
@@ -116,44 +120,42 @@ export function RenderedField(props: RenderedFieldProps) {
 type RenderedFieldProps = {
   form: Form;
   field: FormField;
-  value: FieldValue | undefined;
+  value: FormValue | undefined;
   locked: boolean;
   error?: string;
-  onChange: (key: string, value: FieldValue) => void;
+  onChange: (key: string, value: FormValue) => void;
+  /** P27: where the value is stored when it isn't the field's own key (a per-team group's `t1_notes`). */
+  storageKey?: string;
+  /** P27: the teams at the chosen event, for a team picker inside a group. */
+  teams?: TeamOption[];
+  /** P27: where photos go (null until the event and team are known). */
+  photoTarget?: PhotoTarget | null;
+  /** P27: which photos are still uploading, by field, so a submit can attach them to the entry afterwards. */
+  onPendingPhotos?: (storageKey: string, ids: string[]) => void;
+  /** P27: set when this answer differs from the plan ("Planned: Hive"): a caution icon beside it. */
+  planNote?: string;
 };
 
 /** A tile (toggle, counter) with its scouting tip beside it: a tile is a button, so the tip button can't live inside it. */
-function TileWithTip({ field, children }: { field: FormField; children: ReactNode }) {
-  if (!field.tip) return <>{children}</>;
+function TileWithTip({ field, children, planNote }: { field: FormField; children: ReactNode; planNote?: string }) {
+  if (!field.tip && !planNote) return <>{children}</>;
   return (
     <div className="flex items-center gap-1">
       <div className="min-w-0 flex-1">{children}</div>
-      <FieldTip label={field.label} tip={field.tip} />
+      {planNote && <PlanDiffIcon text={planNote} />}
+      {field.tip && <FieldTip label={field.label} tip={field.tip} />}
     </div>
   );
 }
 
-function RenderedFieldControl({
-  form,
-  field,
-  value,
-  locked,
-  error,
-  onChange,
-}: {
-  form: Form;
-  field: FormField;
-  value: FieldValue | undefined;
-  locked: boolean;
-  error?: string;
-  onChange: (key: string, value: FieldValue) => void;
-}) {
-  const id = fieldId(field.key);
+function RenderedFieldControl({ form, field, value, locked, error, onChange, storageKey, teams, photoTarget, onPendingPhotos, planNote }: RenderedFieldProps) {
+  const k = storageKey ?? field.key;
+  const id = fieldId(k);
   const icon = field.ui?.icon ? <FieldIcon name={field.ui.icon} /> : undefined;
   const size = field.ui?.size;
   const wrap = (control: ReactNode) => (
-    <div data-field-key={field.key}>
-      <FieldLabel htmlFor={id} label={field.label} required={field.required} helpText={field.helpText} icon={icon} tip={field.tip} />
+    <div data-field-key={k}>
+      <FieldLabel htmlFor={id} label={field.label} required={field.required} helpText={field.helpText} icon={icon} tip={field.tip} extra={planNote ? <PlanDiffIcon text={planNote} /> : undefined} />
       {control}
       {error && (
         <p role="alert" className="mt-1 text-xs font-medium text-red-300">
@@ -166,17 +168,17 @@ function RenderedFieldControl({
   switch (field.type) {
     case "toggle":
       return (
-        <div data-field-key={field.key}>
-          <TileWithTip field={field}>
-          <FieldToggle label={field.label} pointsWhenOn={tilePoints(form, field)} helpText={field.helpText} checked={Boolean(value)} disabled={locked} size={size} icon={icon} onChange={(v) => onChange(field.key, v)} />
+        <div data-field-key={k}>
+          <TileWithTip field={field} planNote={planNote}>
+          <FieldToggle label={field.label} pointsWhenOn={tilePoints(form, field)} helpText={field.helpText} checked={Boolean(value)} disabled={locked} size={size} icon={icon} onChange={(v) => onChange(k, v)} />
           </TileWithTip>
           {error && <p role="alert" className="mt-1 text-xs font-medium text-red-300">{error}</p>}
         </div>
       );
     case "counter":
       return (
-        <div data-field-key={field.key}>
-          <TileWithTip field={field}>
+        <div data-field-key={k}>
+          <TileWithTip field={field} planNote={planNote}>
           <CounterControl
             label={field.label}
             pointsPer={tilePoints(form, field)}
@@ -188,25 +190,62 @@ function RenderedFieldControl({
             disabled={locked}
             size={size}
             icon={icon}
-            onChange={(v) => onChange(field.key, v)}
+            onChange={(v) => onChange(k, v)}
           />
           </TileWithTip>
         </div>
       );
     case "number":
       return wrap(
-        <NumberField id={id} value={typeof value === "number" || typeof value === "string" ? value : ""} min={field.min} max={field.max} decimals={field.decimals} disabled={locked} invalid={!!error} placeholder={field.placeholder} onChange={(v) => onChange(field.key, v)} />
+        <NumberField id={id} value={typeof value === "number" || typeof value === "string" ? value : ""} min={field.min} max={field.max} decimals={field.decimals} disabled={locked} invalid={!!error} placeholder={field.placeholder} onChange={(v) => onChange(k, v)} />
       );
     case "text":
-      return wrap(<Input id={id} value={String(value ?? "")} disabled={locked} aria-invalid={!!error || undefined} onChange={(e) => onChange(field.key, e.target.value)} placeholder={field.placeholder} />);
+      return wrap(<Input id={id} value={String(value ?? "")} disabled={locked} aria-invalid={!!error || undefined} onChange={(e) => onChange(k, e.target.value)} placeholder={field.placeholder} />);
     case "textarea":
-      return wrap(<Textarea id={id} rows={3} value={String(value ?? "")} disabled={locked} aria-invalid={!!error || undefined} onChange={(e) => onChange(field.key, e.target.value)} placeholder={field.placeholder} />);
+      return wrap(<Textarea id={id} rows={3} value={String(value ?? "")} disabled={locked} aria-invalid={!!error || undefined} onChange={(e) => onChange(k, e.target.value)} placeholder={field.placeholder} />);
     case "select":
-      return wrap(<SelectField id={id} value={String(value ?? "")} options={field.options ?? []} disabled={locked} placeholder={field.placeholder} onChange={(v) => onChange(field.key, v)} />);
+      return wrap(<SelectField id={id} value={String(value ?? "")} options={field.options ?? []} disabled={locked} placeholder={field.placeholder} onChange={(v) => onChange(k, v)} />);
     case "radio":
-      return wrap(<RadioTiles label={field.label} value={String(value ?? "")} options={field.options ?? []} disabled={locked} onChange={(v) => onChange(field.key, v)} />);
+      return wrap(<RadioTiles label={field.label} value={String(value ?? "")} options={field.options ?? []} disabled={locked} onChange={(v) => onChange(k, v)} />);
     case "rating":
-      return wrap(<RatingStars label={field.label} value={Number(value) || 0} scale={field.scale ?? 5} disabled={locked} onChange={(v) => onChange(field.key, v)} />);
+      return wrap(<RatingStars label={field.label} value={Number(value) || 0} scale={field.scale ?? 5} disabled={locked} onChange={(v) => onChange(k, v)} />);
+    case "slider":
+      return wrap(
+        <SliderField
+          id={id}
+          label={field.label}
+          value={typeof value === "number" ? value : (field.min ?? 1)}
+          min={field.min ?? 1}
+          max={field.max ?? 5}
+          step={field.step ?? 1}
+          ticks={field.ticks}
+          endLabels={field.endLabels}
+          disabled={locked}
+          onChange={(v) => onChange(k, v)}
+        />
+      );
+    case "sequence":
+      return wrap(<SequenceField label={field.label} steps={field.steps ?? []} value={Array.isArray(value) ? (value as string[]) : []} disabled={locked} onChange={(v) => onChange(k, v)} />);
+    case "matrix":
+      return wrap(<MatrixField label={field.label} rows={field.rows ?? []} cols={field.cols ?? []} disabledCells={field.disabledCells} value={value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, boolean>) : {}} disabled={locked} onChange={(v) => onChange(k, v)} />);
+    case "image":
+      return wrap(
+        <PhotoField
+          label={field.label}
+          fieldKey={k}
+          value={Array.isArray(value) ? (value as ImageValue[]) : []}
+          maxCount={field.maxCount ?? 1}
+          capture={field.capture}
+          required={field.required}
+          disabled={locked}
+          target={photoTarget ?? null}
+          onChange={(v) => onChange(k, v)}
+          onPendingChange={(ids) => onPendingPhotos?.(k, ids)}
+        />
+      );
+    case "teamPicker":
+      // A team picker with a key of its own sits in a per-team group (the match's own team picker is rendered by <ScoutForm/> itself).
+      return wrap(<TeamSelect id={id} label={field.label} value={typeof value === "number" ? value : ""} teams={teams ?? []} disabled={locked} invalid={!!error} onChange={(t) => onChange(k, t)} />);
     case "checkbox":
       // Rendered in batched groups by renderFieldList below, never alone.
       return null;
@@ -378,7 +417,7 @@ export const ScoutForm = forwardRef<ScoutFormHandle, ScoutFormProps>(function Sc
     return () => observer.disconnect();
   }, [layout, renderedSections]);
 
-  const setFieldValue = (key: string, value: FieldValue) => {
+  const setFieldValue = (key: string, value: FormValue) => {
     if (popout && commentsField && key === commentsField.key) {
       onCommentsChange?.(String(value));
       return;

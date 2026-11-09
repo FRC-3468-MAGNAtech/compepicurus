@@ -273,3 +273,21 @@ firebase deploy --only firestore:rules
 
 Nothing needs migrating: a member has no profile document until they save one, and until then their profile is shown with the defaults (`DEFAULT_PROFILE_VISIBILITY` in `lib/profile/config.ts`, public to their team). Admins' and the owner's profiles are always visible to teammates whatever their saved preference says.
 Moderation clears are recorded in the Audit Log as "Cleared Profile Bio / Pronouns".
+
+## 13. Photo uploads (Vercel Blob)
+
+The form `image` field stores photos in Vercel Blob. Until a Blob store is connected, `/api/blob/upload` and `/api/blob/delete` answer `503 not-configured` and the app keeps working (the form shows that photos can't be uploaded yet).
+
+1. In the Vercel dashboard open your project, go to the **Storage** tab and **Create** a **Blob** store. Choose **Public** access (the app uploads with `access: "public"`).
+2. **Connect** the store to the project for **Production and Preview** (Development too if offered). Vercel adds the `BLOB_READ_WRITE_TOKEN` environment variable for you.
+3. For local development, run `vercel env pull .env.local` (or copy the token from the store's settings into `.env.local` by hand). Never commit it. `.env.example` lists the variable name only.
+4. Redeploy so the new variable is picked up.
+
+How it works and what to know:
+
+- **Uploads go straight from the browser to Vercel Blob.** Our route `/api/blob/upload` only issues a one-use token for one path, after checking the signed-in user, their team, and that they can open the page that owns the form. The photo bytes never pass through a Vercel Function, so the 4.5 MB function body limit does not apply (the app still compresses to about 1600 px JPEG and caps files at 6 MB).
+- **Blob URLs are public but unguessable.** The path is `kind/teamId/eventCode/teamNumber/uidTag-random.jpg` with 128 bits of randomness and no user-entered text. Anyone who has a URL can view the photo without signing in, so don't treat photos as private.
+- **Quotas.** The free (Hobby) plan has limits on storage and data transfer. Check the current numbers on Vercel's pricing page rather than relying on this document, and watch the store's usage in the dashboard during the season.
+- **`onUploadCompleted` is not relied on.** Vercel's completion webhook can't reach `localhost`, so the browser takes the URL from `upload()`'s result and saves it with the form entry instead. The route accepts the webhook and does nothing with it.
+- **Deletes** go through `/api/blob/delete`: only the person who uploaded a photo, or an admin or team owner of the same team, can delete it. Photos of another team are always refused.
+- **Offline.** Photos wait in the browser (IndexedDB) and upload when the connection returns, so a scout in a bad-wifi pit doesn't lose them.

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useBuilder } from "@/components/forms/builder/context";
 import type { DragData } from "@/components/forms/builder/dnd";
 import { BIOBUZZ_FORM } from "@/lib/forms/builtin";
-import { addField, defaultField, FIELD_TYPE_LABEL, findField, insertFromForm, isSystemField, type SourceRef } from "@/lib/forms/edit";
+import { addField, addSystemField, defaultField, defaultTeamPicker, FIELD_TYPE_LABEL, missingSystemFields, findField, insertFromForm, isSystemField, type SourceRef } from "@/lib/forms/edit";
 import { describeScoring } from "@/lib/forms/diff";
 import { USER_FIELD_TYPES, type FormSection, type UserFieldType } from "@/lib/forms/types";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,10 @@ const TYPE_HINT: Record<UserFieldType, string> = {
   select: "Dropdown list",
   radio: "Pick one (tiles)",
   rating: "Stars",
+  slider: "Drag along a range",
+  image: "Take or attach photos",
+  sequence: "Ordered steps",
+  matrix: "Grid of checkboxes",
 };
 
 /** Where a click-to-add goes: the selected category, the category of the selected field, else the first category after Pre-Match. */
@@ -100,6 +104,8 @@ export function Palette() {
         ))}
       </section>
 
+      <PickerSection target={target} />
+
       <section className="flex flex-col gap-1.5">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Insert from BIOBUZZ</h3>
         <p className="text-[11px] text-[var(--muted-foreground)]">Copies a category, group or field with its point values. Groups and fields go into the selected category.</p>
@@ -108,6 +114,53 @@ export function Palette() {
         ))}
       </section>
     </div>
+  );
+}
+
+/** P27: the pickers a form can carry (event, match, alliance, team, scout: locked once placed) and the team picker for inside a per-team group. */
+function PickerSection({ target }: { target: string | null }) {
+  const { form, update, select } = useBuilder();
+  const missing = missingSystemFields(form);
+  const section = form.sections.find((s) => s.id === target);
+  const repeatGroup = section?.groups?.find((g) => g.repeat);
+  return (
+    <section className="flex flex-col gap-1.5" data-testid="palette-pickers">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Pickers</h3>
+      <p className="text-[11px] text-[var(--muted-foreground)]">Locked once placed: they can move within Pre-Match but not be deleted.</p>
+      {missing.map((f) => (
+        <div key={f.type} className="flex items-center gap-1 rounded-xl border border-[var(--glass-border)] bg-white/[0.04] pl-3 pr-1">
+          <div className="min-w-0 flex-1 py-1.5 text-sm font-medium">{FIELD_TYPE_LABEL[f.type]}</div>
+          <Button variant="ghost" size="icon" aria-label={`Add ${FIELD_TYPE_LABEL[f.type]}`} onClick={() => update((x) => addSystemField(x, f.type as never))}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+      ))}
+      {missing.length === 0 && <p className="text-[11px] text-[var(--muted-foreground)]">This form has every picker.</p>}
+      <div className="flex items-center gap-1 rounded-xl border border-[var(--glass-border)] bg-white/[0.04] pl-3 pr-1">
+        <div className="min-w-0 flex-1 py-1.5">
+          <div className="text-sm font-medium">Team picker (per-team box)</div>
+          <div className="truncate text-[11px] text-[var(--muted-foreground)]">{repeatGroup ? `Goes in "${repeatGroup.title}"` : "Needs a per-team group in the selected category"}</div>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Add team picker to the per-team group"
+          disabled={!target || !repeatGroup}
+          onClick={() => {
+            if (!target || !repeatGroup) return;
+            let id: string | null = null;
+            update((f) => {
+              const field = defaultTeamPicker(f);
+              id = field.id;
+              return addField(f, target, field, { groupId: repeatGroup.id });
+            });
+            if (id) select({ kind: "field", id });
+          }}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+    </section>
   );
 }
 

@@ -2,8 +2,11 @@ import type { ScoutEntry } from "@/lib/scout-entries";
 import type { MatchType } from "@/lib/ftc/types";
 import { BIOBUZZ_FORM, DEFAULT_FORM_ID } from "@/lib/forms/builtin";
 import { entryValues } from "@/lib/forms/legacy";
-import { resolveAlias } from "@/lib/forms/values";
-import { phaseLabel, SYSTEM_FIELD_TYPES, type Form, type FormField, type FormSection } from "@/lib/forms/types";
+import { matrixCells, resolveAlias } from "@/lib/forms/values";
+import { repeatGroupOf, slotKey } from "@/lib/forms/repeat";
+import { countSteps, parseSequenceSummary, summarizeSequence } from "@/lib/forms/sequence";
+import { joinNotes } from "@/lib/forms/values";
+import { isSystemField, phaseLabel, type Form, type FormField, type FormSection, type FormValues, type ImageValue } from "@/lib/forms/types";
 
 export type ColumnType =
   | "match"
@@ -17,7 +20,10 @@ export type ColumnType =
   | "scriptStatus"
   | "actions"
   | "text"
-  | "badge";
+  | "badge"
+  // P27: a sticky-notes cell (joined with " | ", collapsed to one line like Comments) and a photo gallery cell (thumbnails and a count)
+  | "notes"
+  | "photos";
 
 export type AnalyticsColumn = {
   key: string;
@@ -38,6 +44,12 @@ export type AnalyticsColumn = {
   csvHeader?: string;
   /** P21: the form field a column was derived from (absent for the match/team/scout, score, accuracy and action columns): what CSV import coerces cells with. */
   field?: FormField;
+  /** P27: the storage key this column reads and CSV import writes, when it isn't the field's own key (a per-team slot `t1_notes`). */
+  valueKey?: string;
+  /** P27: how CSV import turns this column's cell into stored values, for the columns that aren't one plain value (a matrix cell, a sequence's summary, photo links). */
+  parseCell?: (cell: string, values: FormValues) => void;
+  /** P27: a column computed from other columns (a photo count, the count of each sequence step, notes, plan differences): exported, never imported. */
+  derived?: boolean;
 };
 
 export type GameSchema = {
@@ -84,11 +96,16 @@ function fieldColumnType(f: FormField): ColumnType | null {
     case "counter":
     case "number":
     case "rating":
+    case "slider":
       return "count";
     case "select":
     case "radio":
     case "text":
+    case "teamPicker":
+    case "sequence":
       return "text";
+    case "image":
+      return "photos";
     case "textarea":
       return "comments";
     default:
@@ -96,31 +113,126 @@ function fieldColumnType(f: FormField): ColumnType | null {
   }
 }
 
-const WIDTH: Record<string, number> = { boolean: 120, count: 110, text: 140, comments: 260 };
+const WIDTH: Record<string, number> = { boolean: 120, count: 110, text: 140, comments: 260, notes: 260, photos: 180 };
 
-function fieldColumn(form: Form, section: FormSection, field: FormField, type: ColumnType, valuesOf: (e: ScoutEntry) => Record<string, unknown>): AnalyticsColumn {
+function fieldColumn(form: Form, section: FormSection, field: FormField, type: ColumnType, valuesOf: (e: ScoutEntry) => Record<string, unknown>, slot: number | null = null): AnalyticsColumn {
   const group = section.groups?.find((g) => g.id === field.groupId)?.title;
-  const key = field.key;
+  // P27: a field in a per-team group is one column per slot, read and written under its slot key (t1_notes)
+  const key = slot === null ? field.key : slotKey(slot, field.key);
   const getValue = (e: ScoutEntry): unknown => {
     const v = valuesOf(e)[key];
     if (v === undefined) return null;
     if (type === "boolean") return v === true;
     if (type === "count") return typeof v === "number" ? v : Number(v) || 0;
     if (field.type === "select" || field.type === "radio") return field.options?.find((o) => o.value === v)?.label ?? String(v);
+    if (field.type === "sequence") return Array.isArray(v) ? summarizeSequence(field.steps ?? [], v as string[]) : "";
+    if (field.type === "image") return Array.isArray(v) ? (v as ImageValue[]).map((p) => p.url).join(" | ") : "";
     return typeof v === "string" ? v : String(v);
   };
+  const label = field.analytics?.label ?? field.label;
+  const parseCell: AnalyticsColumn["parseCell"] | undefined =
+    field.type === "sequence"
+      ? (cell, values) => {
+          values[key] = parseSequenceSummary(field.steps ?? [], cell);
+        }
+      : field.type === "image"
+        ? (cell, values) => {
+            values[key] = cell
+              .split("|")
+              .map((u) => u.trim())
+              .filter((u) => /^https:\/\//.test(u))
+              .map((url) => ({ url, pathname: "", size: 0, contentType: "" }));
+          }
+        : undefined;
   return {
     key,
     phase: section.title,
     category: field.analytics?.category ?? group ?? section.title,
-    label: field.analytics?.label ?? field.label,
+    label: slot === null ? label : `${label} (team ${slot})`,
     type,
-    sortable: type !== "comments",
+    sortable: type !== "comments" && type !== "photos",
     width: WIDTH[type] ?? 120,
     getValue,
-    ...(field.analytics?.csvHeader ? { csvHeader: field.analytics.csvHeader } : {}),
+    ...(field.analytics?.csvHeader ? { csvHeader: slot === null ? field.analytics.csvHeader : `${field.analytics.csvHeader} (team ${slot})` } : {}),
     field,
+    ...(slot !== null ? { valueKey: key } : {}),
+    ...(parseCell ? { parseCell } : {}),
   };
+}
+
+/**
+ * Every column one field produces. Most fields are one column; a repeating group's field is one per slot; and P27's richer fields add more: a matrix is one
+ * yes/no column per cell, a sequence adds a count per step, photos add a photo count. Extra columns that are computed (counts) are `derived`: exported, never imported.
+ */
+function columnsForField(form: Form, section: FormSection, field: FormField, valuesOf: (e: ScoutEntry) => Record<string, unknown>): AnalyticsColumn[] {
+  const group = section.groups?.find((g) => g.id === field.groupId)?.title;
+  const category = field.analytics?.category ?? group ?? section.title;
+  const label = field.analytics?.label ?? field.label;
+  const rep = repeatGroupOf(section, field);
+
+  if (field.type === "matrix") {
+    // One boolean per cell, keyed `${rowKey}_${colKey}` inside the field's value (a repeating group isn't allowed to hold a matrix: checkForm doesn't forbid it, but slots then read their own record)
+    const slots = rep ? Array.from({ length: rep.repeat.maxSlots }, (_, i) => i + 1) : [null];
+    return slots.flatMap((slot) => {
+      const vk = slot === null ? field.key : slotKey(slot, field.key);
+      return matrixCells(field).map((cell): AnalyticsColumn => {
+        const row = field.rows?.find((r) => cell.startsWith(`${r.key}_`) && field.cols?.some((c) => cell === `${r.key}_${c.key}`));
+        const col = field.cols?.find((c) => cell === `${row?.key}_${c.key}`);
+        return {
+          key: `${vk}__${cell}`,
+          phase: section.title,
+          category,
+          label: `${label}: ${row?.label ?? cell} / ${col?.label ?? ""}${slot === null ? "" : ` (team ${slot})`}`,
+          type: "boolean",
+          sortable: true,
+          width: 120,
+          getValue: (e) => {
+            const v = valuesOf(e)[vk];
+            return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, boolean>)[cell] === true : v === undefined ? null : false;
+          },
+          field,
+          valueKey: vk,
+          parseCell: (text, values) => {
+            const rec = values[vk] && typeof values[vk] === "object" && !Array.isArray(values[vk]) ? { ...(values[vk] as Record<string, boolean>) } : {};
+            rec[cell] = text.trim() === "Y";
+            values[vk] = rec;
+          },
+        };
+      });
+    });
+  }
+
+  const type = fieldColumnType(field);
+  if (!type) return [];
+  const slots = rep ? Array.from({ length: rep.repeat.maxSlots }, (_, i) => i + 1) : [null];
+  const out: AnalyticsColumn[] = [];
+  for (const slot of slots) {
+    out.push(fieldColumn(form, section, field, type, valuesOf, slot));
+    const vk = slot === null ? field.key : slotKey(slot, field.key);
+    const suffix = slot === null ? "" : ` (team ${slot})`;
+    if (field.type === "image") {
+      out.push({ key: `${vk}__count`, phase: section.title, category, label: `${label} (photos)${suffix}`, type: "count", sortable: true, width: 110, derived: true, getValue: (e) => (Array.isArray(valuesOf(e)[vk]) ? (valuesOf(e)[vk] as unknown[]).length : null) });
+    }
+    if (field.type === "sequence") {
+      for (const step of field.steps ?? []) {
+        out.push({
+          key: `${vk}__step_${step.id}`,
+          phase: section.title,
+          category,
+          label: `${label}: ${step.label} (count)${suffix}`,
+          type: "count",
+          sortable: true,
+          width: 110,
+          derived: true,
+          getValue: (e) => {
+            const v = valuesOf(e)[vk];
+            return Array.isArray(v) ? (countSteps(field.steps ?? [], v as string[])[step.id] ?? 0) : null;
+          },
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -173,11 +285,9 @@ export function buildGameSchema(form: Form): GameSchema {
   const commentColumns: AnalyticsColumn[] = [];
   for (const section of form.sections) {
     for (const field of section.fields) {
-      if ((SYSTEM_FIELD_TYPES as readonly string[]).includes(field.type)) continue;
+      if (isSystemField(field)) continue;
       if (field.analytics && field.analytics.include === false) continue;
-      const type = fieldColumnType(field);
-      if (!type) continue;
-      (type === "comments" ? commentColumns : columns).push(fieldColumn(form, section, field, type, valuesOf));
+      for (const column of columnsForField(form, section, field, valuesOf)) (column.type === "comments" ? commentColumns : columns).push(column);
     }
   }
 
@@ -204,6 +314,14 @@ export function buildGameSchema(form: Form): GameSchema {
   }
 
   columns.push(...commentColumns);
+
+  // P27: the sticky notes (joined with " | ") and, for a plan-versus-actual form, how many answers differed from the plan
+  if (form.stickyNotes?.enabled) {
+    columns.push({ key: "stickyNotes", phase: "Misc", category: "Notes", label: "Notes", type: "notes", sortable: false, width: 260, derived: true, getValue: (e) => joinNotes(e.stickyNotes) });
+  }
+  if (form.compareWith) {
+    columns.push({ key: "planDifferences", phase: "General", category: "Plan", label: "Differences from plan", type: "count", sortable: true, width: 150, derived: true, getValue: (e) => e.planDifferences ?? null });
+  }
 
   if (form.scoringEnabled) {
     columns.push(

@@ -2300,6 +2300,20 @@ no layout shift, moderation, the Settings editor incl. an admin's disabled toggl
 
 **UI.** `components/page-access/`: `parts.tsx` (`RoleMatrix`, `MemberAccessEditor`, `PreviewAsMember`, `RequestsList`), `page-access-panel.tsx` (`PageAccessPanelView` plain props; `PageAccessPanel` connected = Admin Panel > Page Access; `MemberAccessDialog` = Team Management's per-member "Page access"), `no-access-screen.tsx`, `page-guard.tsx`. Fixture `/e2e/page-access`.
 
+## P27 — Form system extensions
+
+**Schema (`lib/forms/types.ts`, `validate.ts`).** `FormType` (`FORM_TYPES`), `REQUIRED_SYSTEM_FIELDS`, `SYSTEM_FIELD_KEYS`, `isSystemField` (a system-typed field under its fixed key). New `FieldType`s: `slider`, `image`, `sequence`, `matrix` (user types) and `eventPicker`, `alliancePicker` (system). Field settings: `endLabels`, `ticks`, `maxCount`, `capture`, `steps: SequenceStep[]`, `rows` / `cols: MatrixAxis[]`, `disabledCells`. `FormGroup.repeat: GroupRepeat`. `Form.stickyNotes: StickyNotesConfig`, `Form.compareWith: CompareWith`. Value types `FormValue`, `ImageValue`, `StickyNote`. New `checkForm` codes: `slider-*`, `sequence-*`, `matrix-*`, `repeat-*`, `compare-*`, `system-field-key`, `team-picker-key`.
+
+**Pure modules (`lib/forms/`).** `repeat.ts` (`slotKey`, `parseSlotKey`, `valueSlots`, `slotCountFor`, `repeatGroupOf`, `maxRepeatSlots`), `sequence.ts` (`normalizeSequence`, `addStep`, `canAddStep`, `moveStep`, `removeStep`, `isMovable`, `summarizeSequence`, `countSteps`, `parseSequenceSummary`), `compare.ts` (`findPlanEntry`, `expandFieldMap`, `diffAgainstPlan`, `prefillFromPlan`, `plannedText`, `differenceSummary`, `sameValue`), `values.ts` (`matrixCells`, `coerceImages`, `joinNotes`; defaults, coercion, normalising and required checks for every new type and slot), `edit.ts` (`setGroupRepeat`, `setFormStickyNotes`, `setFormCompareWith`, `setFormType`, `defaultTeamPicker`, `addSystemField`, `missingSystemFields`), `new-form.ts` (`systemFieldsFor(formType)`, `createBlankForm({ formType })`).
+
+**Entries.** `lib/form-entries-model.ts` (`FormEntry`, `formEntryDoc`, `toFormEntry`, `formEntryToRow`, `formMatchKey`, `parseFormMatchKey`; no Firestore client) and `lib/form-entries.ts` (`saveFormEntry`, `updateFormEntry`, `deleteFormEntry`, `useFormEntries`). `ScoutEntry` gained optional `stickyNotes`, `alliance`, `linkedEntryId`, `planDifferences`; `entryPayloadFor(form, values, score, { stickyNotes })` and `derivedComments`. **`formEntries/{entryId}`** rules (`formEntryCreateAllowed`, `validFormEntry`) and indexes: see ASSUMPTIONS P27-8.
+
+**Analytics and CSV.** `AnalyticsColumn` gained `valueKey`, `parseCell`, `derived`; `ColumnType` gained `notes` and `photos` (drawn in `components/analytics/data-table.tsx`). `buildGameSchema` derives per-slot, per-cell, per-step and photo-count columns, a Notes column (when the form has sticky notes) and a Differences-from-plan column. CSV export/import in `lib/analytics/csv.ts` use them.
+
+**Renderer.** `components/forms/form-renderer.tsx` (`FormRenderer`, `FormEntryState`), `team-select.tsx`, `plan-diff-icon.tsx`, `photo-field.tsx`, `photo-upload.tsx` (`PhotoUploadProvider`, `usePhotoUploads`, `PhotoTarget`), `components/scout/sequence-field.tsx`, `SliderField` / `MatrixField` in `components/scout/field-inputs.tsx`; `RenderedField` takes `storageKey`, `teams`, `photoTarget`, `onPendingPhotos`, `planNote`. Builder: `p27-inspectors.tsx`, `p27-form-settings.tsx`, `generic-preview.tsx`, the palette's Pickers section. Fixture `/e2e/form-renderer`.
+
+**Photos (Vercel Blob).** `lib/blob/` (`paths.ts` path building and parsing, `compress.ts`, `client.ts`, `upload-queue.ts`), `lib/server/blob-auth.ts` (`authorizeBlobUpload`, `authorizeBlobDelete`, `pageIdForForm`), routes `app/api/blob/upload` and `app/api/blob/delete`. Setup: `docs/DEPLOYMENT.md` section 13.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

@@ -1,5 +1,6 @@
-import type { FieldType, Form, FormField, FormGroup, FormSection, PhaseKey, UserFieldType, VisibleWhen } from "@/lib/forms/types";
-import { SYSTEM_FIELD_TYPES } from "@/lib/forms/types";
+import type { CompareWith, FieldType, Form, FormField, FormGroup, FormSection, FormType, GroupRepeat, PhaseKey, StickyNotesConfig, SystemFieldType, UserFieldType, VisibleWhen } from "@/lib/forms/types";
+import { systemFieldsFor } from "@/lib/forms/new-form";
+import { isSystemField as isSystemFieldBase } from "@/lib/forms/types";
 import { FORM_LIMITS, scoringModesFor } from "@/lib/forms/validate";
 
 // P22: the pure editing operations behind the Form Builder. Every function takes a Form and returns a new Form (never mutates), so the
@@ -9,7 +10,7 @@ import { FORM_LIMITS, scoringModesFor } from "@/lib/forms/validate";
 
 export const KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 
-export const isSystemField = (f: Pick<FormField, "type">): boolean => (SYSTEM_FIELD_TYPES as readonly string[]).includes(f.type);
+export const isSystemField = (f: Pick<FormField, "type" | "key">): boolean => isSystemFieldBase(f);
 
 // --- ids and keys ----------------------------------------------------------------------------------------------
 
@@ -134,9 +135,15 @@ export const FIELD_TYPE_LABEL: Record<FieldType, string> = {
   select: "Dropdown",
   radio: "Pick one",
   rating: "Rating",
+  slider: "Slider",
+  image: "Photos",
+  sequence: "Step sequence",
+  matrix: "Checkbox grid",
   matchPicker: "Match picker",
   teamPicker: "Team picker",
   scoutName: "Scout name",
+  eventPicker: "Event picker",
+  alliancePicker: "Alliance picker",
 };
 
 /** A new field of `type` with sensible defaults: nothing scores until the author turns scoring on; it's in analytics with the aggregate that fits its type. */
@@ -148,9 +155,35 @@ export function defaultField(form: Form, type: UserFieldType, label?: string, ra
     type,
     label: text,
     scoring: { mode: "none" },
-    analytics: { include: true, aggregate: type === "counter" || type === "number" || type === "rating" ? "avg" : type === "text" || type === "textarea" ? "list" : type === "select" || type === "radio" ? "last" : "rate" },
+    analytics: { include: true, aggregate: type === "counter" || type === "number" || type === "rating" || type === "slider" ? "avg" : type === "text" || type === "textarea" || type === "image" ? "list" : type === "select" || type === "radio" || type === "sequence" ? "last" : "rate" },
   };
   switch (type) {
+    case "slider":
+      return { ...base, min: 1, max: 5, step: 1, ticks: true, endLabels: { min: "Low", max: "High" } };
+    case "image":
+      return { ...base, maxCount: 1, capture: true };
+    case "sequence":
+      return {
+        ...base,
+        steps: [
+          { id: "start", label: "Start", maxCount: 1, pin: "first" },
+          { id: "step1", label: "Step 1", maxCount: 0, pin: null },
+          { id: "end", label: "End", maxCount: 1, pin: "last" },
+        ],
+      };
+    case "matrix":
+      return {
+        ...base,
+        rows: [
+          { key: "row1", label: "Row 1" },
+          { key: "row2", label: "Row 2" },
+        ],
+        cols: [
+          { key: "col1", label: "Column 1" },
+          { key: "col2", label: "Column 2" },
+        ],
+        disabledCells: [],
+      };
     case "counter":
       return { ...base, min: 0, step: 1 };
     case "number":
@@ -567,6 +600,11 @@ export function changeFieldType(form: Form, fieldId: string, type: UserFieldType
     if (type === "counter") Object.assign(next, { min: 0, step: 1 });
     if (type === "number") Object.assign(next, { decimals: 0 });
     if (type === "rating") Object.assign(next, { scale: 5 });
+    // P27: a slider, photos, a sequence and a grid start from their own defaults (nothing carries over from the old type)
+    if (type === "slider" || type === "image" || type === "sequence" || type === "matrix") {
+      const { min, max, step, ticks, endLabels, maxCount, capture, steps, rows, cols, disabledCells } = fresh;
+      Object.assign(next, JSON.parse(JSON.stringify({ min, max, step, ticks, endLabels, maxCount, capture, steps, rows, cols, disabledCells })));
+    }
     if (CHOICE_TYPES.has(type)) next.options = f.options && f.options.length >= 2 ? f.options : fresh.options;
     if (NUMERIC_TYPES.has(type) && f.unrealisticAbove !== undefined && NUMERIC_TYPES.has(f.type)) next.unrealisticAbove = f.unrealisticAbove;
     if (TEXT_TYPES.has(type) && f.placeholder) next.placeholder = f.placeholder;
@@ -636,4 +674,78 @@ export function repairDuplicates(form: Form, rand?: () => number): { form: Form;
     return { ...s, id, ...(groups ? { groups } : {}), fields };
   });
   return { form: fixes.length > 0 ? { ...form, sections } : form, fixes };
+}
+
+// --- P27: per-team groups, sticky notes, plan comparison, form type ---------------------------------------------------------
+
+/** Turns a group into a per-team repeating group (one box per team of the chosen alliance, up to `maxSlots`), or back into a plain one with `null`. */
+export function setGroupRepeat(form: Form, sectionId: string, groupId: string, repeat: GroupRepeat | null): Form {
+  return withSection(form, sectionId, (s) => ({
+    ...s,
+    groups: s.groups?.map((g) => {
+      if (g.id !== groupId) return g;
+      const { repeat: _old, ...rest } = g;
+      void _old;
+      return repeat ? { ...rest, repeat: { source: repeat.source, maxSlots: clamp(Math.trunc(repeat.maxSlots), 1, FORM_LIMITS.repeatSlots) } } : rest;
+    }),
+  }));
+}
+
+/** The sticky notes panel setting; \`null\` removes it. */
+export function setFormStickyNotes(form: Form, config: StickyNotesConfig | null): Form {
+  const { stickyNotes: _old, ...rest } = form;
+  void _old;
+  return config ? { ...rest, stickyNotes: { enabled: config.enabled, defaultOpen: config.enabled && config.defaultOpen } } : rest;
+}
+
+/** The plan-versus-actual setting; \`null\` removes it. */
+export function setFormCompareWith(form: Form, config: CompareWith | null): Form {
+  const { compareWith: _old, ...rest } = form;
+  void _old;
+  return config ? { ...rest, compareWith: config } : rest;
+}
+
+/**
+ * Changes what the form is for. The system fields the new type requires are added to the first Pre-Match category (an existing one is kept, and an extra
+ * one the new type doesn't need stays: the builder places those freely). Scoring is turned off for a non-scoring type only when nothing scores.
+ */
+export function setFormType(form: Form, formType: FormType): Form {
+  if (form.formType === formType) return form;
+  const have = new Set(form.sections.flatMap((s) => s.fields).filter(isSystemField).map((f) => f.type));
+  const missing = systemFieldsFor(formType).filter((f) => !have.has(f.type as SystemFieldType));
+  const target = form.sections.find((s) => s.phase === "prematch") ?? form.sections[0];
+  let next: Form = { ...form, formType };
+  if (target && missing.length > 0) {
+    const taken = new Set(next.sections.flatMap((s) => s.fields).map((f) => f.id));
+    next = withSection(next, target.id, (s) => ({ ...s, fields: [...missing.filter((f) => !taken.has(f.id)), ...s.fields] }));
+  }
+  return next;
+}
+
+/** A new team picker for inside a per-team group (not the match's own team picker, which is a locked system field): a normal, deletable field that holds that slot's team and can be changed. */
+export function defaultTeamPicker(form: Form, label = "Team", rand?: () => number): FormField {
+  return {
+    id: newId("f", allIds(form), rand),
+    key: uniqueKey(form, keyFromLabel(label) === "teamNumber" ? "team" : keyFromLabel(label)),
+    type: "teamPicker",
+    label,
+    scoring: { mode: "none" },
+    analytics: { include: true, aggregate: "last" },
+  };
+}
+
+/** The system pickers (event, match, alliance, team, scout) a form doesn't have yet: what the builder offers to place. */
+export function missingSystemFields(form: Form): FormField[] {
+  const have = new Set(form.sections.flatMap((s) => s.fields).filter(isSystemField).map((f) => f.type));
+  return (["eventPicker", "matchPicker", "alliancePicker", "teamPicker", "scoutName"] as const)
+    .filter((t) => !have.has(t))
+    .flatMap((t) => systemFieldsFor("lead-scout").concat(systemFieldsFor("pit-scout")).concat(systemFieldsFor("match-scout")).filter((f) => f.type === t).slice(0, 1));
+}
+
+/** Places a missing system picker in the first Pre-Match category (where the locked fields live). A picker the form already has is not added twice. */
+export function addSystemField(form: Form, type: SystemFieldType): Form {
+  const field = missingSystemFields(form).find((f) => f.type === type);
+  const target = form.sections.find((s) => s.phase === "prematch");
+  if (!field || !target) return form;
+  return withSection(form, target.id, (s) => ({ ...s, fields: [...s.fields, field] }));
 }

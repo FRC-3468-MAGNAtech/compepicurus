@@ -25,7 +25,8 @@ import {
 import { summarizeBulk, validateBulk } from "@/lib/library/bulk";
 import { buildManualMatchDoc, emptyRawMatch, validateRawMatch } from "@/lib/library/manual-match";
 import { applyPickOp, sanitizePicks, type PickOp } from "@/lib/pick-list/ops";
-import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, deleteField, collection, addDoc, writeBatch, runTransaction, query, where, serverTimestamp } from "firebase/firestore";
+import { setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, deleteField, collection, addDoc, writeBatch, runTransaction, query, where, serverTimestamp, arrayUnion } from "firebase/firestore";
+import { formEntryDoc, type NewFormEntry } from "@/lib/form-entries-model";
 
 // Unverified in this environment — no Java / firebase-tools available here
 // to run the Emulator Suite (see docs/ASSUMPTIONS.md, "P1: rules tests").
@@ -3076,6 +3077,183 @@ describe("P26: page access in the rules", () => {
       await assertSucceeds(setDoc(ref(asUid(MEDIA), MEDIA), request(MEDIA)));
       await assertFails(deleteDoc(ref(asUid(MEDIA), MEDIA)));
       await assertFails(deleteDoc(ref(asUid(ADMIN_UID), MEDIA)));
+    });
+  });
+});
+
+// P27: formEntries/{entryId}: the entries of the team's other forms. Create needs the form's page access (P26), update is the writer's own values and notes (or
+// an admin), delete is admin-only, every teammate reads.
+describe("P27: formEntries", () => {
+  const LEAD = "p27-lead";
+  const PIT = "p27-pit";
+  const STRATEGIST = "p27-strategist";
+  const DRIVER = "p27-driver";
+  const PIT_TEAM = "p27-pit-team";
+  const MEDIA = "p27-media";
+  const OUTSIDER = "p27-outsider";
+  const asUid = (uid: string) => testEnv.authenticatedContext(uid).firestore();
+
+  const input = (formType: NewFormEntry["formType"], over: Partial<NewFormEntry> = {}): NewFormEntry => ({
+    scoutName: "Someone",
+    formId: `${formType}-v1`,
+    formVersion: 1,
+    formType,
+    eventCode: "USWABON1",
+    values: { notes: "hello" },
+    ...over,
+  });
+  const create = (uid: string, formType: NewFormEntry["formType"], over: Partial<NewFormEntry> = {}, docOver: Record<string, unknown> = {}) =>
+    addDoc(collection(asUid(uid), "formEntries"), { ...formEntryDoc(TEAM_ID, uid, input(formType, over)), ...docOver });
+  const ok = async (uid: string, formType: NewFormEntry["formType"]) => {
+    try {
+      await create(uid, formType);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const seedEntry = async (uid: string, formType: NewFormEntry["formType"] = "pit-scout"): Promise<string> => {
+    let id = "";
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const ref = doc(collection(ctx.firestore(), "formEntries"));
+      id = ref.id;
+      await setDoc(ref, { ...formEntryDoc(TEAM_ID, uid, input(formType), () => new Date()) });
+    });
+    return id;
+  };
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: false, isOwner: false, themeId: "team" };
+      await setDoc(doc(db, "users", LEAD), { ...base, name: "Lead", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [] });
+      await setDoc(doc(db, "users", PIT), { ...base, name: "Pit", teamId: TEAM_ID, primaryRole: "pit-scout", secondaryRoles: [] });
+      await setDoc(doc(db, "users", STRATEGIST), { ...base, name: "Strategist", teamId: TEAM_ID, primaryRole: "lead-strategist", secondaryRoles: [] });
+      await setDoc(doc(db, "users", DRIVER), { ...base, name: "Driver", teamId: TEAM_ID, primaryRole: "drive-team", secondaryRoles: [] });
+      await setDoc(doc(db, "users", PIT_TEAM), { ...base, name: "PitTeam", teamId: TEAM_ID, primaryRole: "pit-team", secondaryRoles: [] });
+      await setDoc(doc(db, "users", MEDIA), { ...base, name: "Media", teamId: TEAM_ID, primaryRole: "media", secondaryRoles: [] });
+      await setDoc(doc(db, "users", OUTSIDER), { ...base, name: "Out", teamId: OTHER_TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: true });
+    });
+  });
+
+  describe("creating follows the form's page access (default roles)", () => {
+    const matrix: [NewFormEntry["formType"], string[], string[]][] = [
+      ["lead-scout", [LEAD, ADMIN_UID, OWNER_UID], [PIT, STRATEGIST, DRIVER, MEDIA, SCOUT_UID]],
+      ["pit-scout", [PIT, ADMIN_UID], [LEAD, STRATEGIST, DRIVER, PIT_TEAM, MEDIA]],
+      ["team-strategy", [STRATEGIST, ADMIN_UID], [LEAD, PIT, DRIVER, MEDIA]],
+      ["match-strategy", [STRATEGIST, ADMIN_UID], [LEAD, PIT, DRIVER, MEDIA]],
+      ["drive-reflection", [DRIVER, ADMIN_UID], [LEAD, PIT, STRATEGIST, MEDIA]],
+      ["helper", [PIT, PIT_TEAM, ADMIN_UID], [LEAD, STRATEGIST, DRIVER, MEDIA]],
+    ];
+    for (const [formType, allowed, refused] of matrix) {
+      it(`${formType}: ${allowed.length} may, ${refused.length} may not`, async () => {
+        for (const uid of allowed) expect(await ok(uid, formType), `${uid} -> ${formType}`).toBe(true);
+        for (const uid of refused) expect(await ok(uid, formType), `${uid} -> ${formType}`).toBe(false);
+      });
+    }
+
+    it("a custom form is open to any teammate (but not another team's)", async () => {
+      expect(await ok(MEDIA, "custom")).toBe(true);
+      expect(await ok(SCOUT_UID, "custom")).toBe(true);
+      expect(await ok(OUTSIDER, "custom")).toBe(false);
+    });
+
+    it("follows the page-access doc: the role matrix, an explicit grant, an explicit deny", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "teams", TEAM_ID, "settings", "pageAccess"), {
+          roleGrants: {},
+          pageRoles: { "pit-scout-form": ["media"], "lead-scout-form": ["lead-scout"], "helper-form": [] },
+          memberOverrides: { [DRIVER]: { grant: ["pit-scout-form"], deny: [] }, [LEAD]: { grant: [], deny: ["lead-scout-form"] }, [PIT_TEAM]: { grant: ["helper-form"], deny: [] } },
+          updatedBy: ADMIN_UID,
+          updatedAt: new Date(),
+        });
+      });
+      expect(await ok(MEDIA, "pit-scout")).toBe(true); // the matrix gave Media the page
+      expect(await ok(PIT, "pit-scout")).toBe(false); // and took it from Pit Scout
+      expect(await ok(DRIVER, "pit-scout")).toBe(true); // an explicit grant
+      expect(await ok(LEAD, "lead-scout")).toBe(false); // an explicit deny beats the role
+      expect(await ok(ADMIN_UID, "pit-scout")).toBe(true); // admins always
+      expect(await ok(PIT_TEAM, "helper")).toBe(true);
+      expect(await ok(PIT, "helper")).toBe(false);
+    });
+
+    it("a form type the doc doesn't list falls back to its default roles", async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "teams", TEAM_ID, "settings", "pageAccess"), { roleGrants: {}, pageRoles: { "pit-scout-form": [] }, memberOverrides: {}, updatedBy: ADMIN_UID, updatedAt: new Date() });
+      });
+      expect(await ok(STRATEGIST, "team-strategy")).toBe(true);
+      expect(await ok(PIT, "pit-scout")).toBe(false);
+    });
+  });
+
+  describe("what a created entry must look like", () => {
+    it("is written as yourself, in your team, as a real non-scout-entry type, not already excluded, with server times", async () => {
+      await assertSucceeds(create(PIT, "pit-scout"));
+      await assertFails(addDoc(collection(asUid(PIT), "formEntries"), formEntryDoc(TEAM_ID, LEAD, input("pit-scout")))); // someone else's uid
+      await assertFails(addDoc(collection(asUid(PIT), "formEntries"), formEntryDoc(OTHER_TEAM_ID, PIT, input("pit-scout")))); // another team
+      await assertFails(create(PIT, "pit-scout", {}, { formType: "match-scout" })); // match scouting has its own collection
+      await assertFails(create(PIT, "pit-scout", {}, { excluded: true }));
+      await assertFails(create(PIT, "pit-scout", {}, { createdAt: new Date("2020-01-01") }));
+      await assertFails(create(PIT, "pit-scout", {}, { isAdmin: true })); // no extra fields
+      await assertFails(create(PIT, "pit-scout", {}, { alliance: "green" }));
+      await assertFails(create(PIT, "pit-scout", {}, { formId: "bad id!" }));
+      await assertFails(create(PIT, "pit-scout", {}, { values: "nope" }));
+      await assertFails(create(PIT, "pit-scout", {}, { stickyNotes: new Array(51).fill({}) }));
+    });
+
+    it("carries the optional parts when given: match, alliance, team, the linked plan and its difference count", async () => {
+      await assertSucceeds(create(DRIVER, "drive-reflection", { matchKey: "Q12", alliance: "red", linkedEntryId: "plan-1", planDifferences: 2 }));
+      await assertSucceeds(create(PIT, "pit-scout", { teamNumber: 3468, matchKey: null, alliance: null }));
+      await assertFails(create(PIT, "pit-scout", {}, { teamNumber: -5 }));
+      await assertFails(create(PIT, "pit-scout", {}, { teamNumber: "3468" }));
+    });
+  });
+
+  describe("reading, updating and deleting", () => {
+    it("every teammate reads; another team does not; signed-out visitors do not", async () => {
+      const id = await seedEntry(PIT);
+      await assertSucceeds(getDoc(doc(asUid(MEDIA), "formEntries", id)));
+      await assertSucceeds(getDoc(doc(asUid(PIT), "formEntries", id)));
+      await assertSucceeds(getDocs(query(collection(asUid(MEDIA), "formEntries"), where("teamId", "==", TEAM_ID))));
+      await assertSucceeds(getDocs(query(collection(asUid(MEDIA), "formEntries"), where("teamId", "==", TEAM_ID), where("formId", "==", "pit-scout-v1"))));
+      await assertFails(getDoc(doc(asUid(OUTSIDER), "formEntries", id)));
+      await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "formEntries", id)));
+    });
+
+    it("the writer may change only their values and notes (a finished photo is attached this way); nothing else", async () => {
+      const id = await seedEntry(PIT);
+      const ref = (uid: string) => doc(asUid(uid), "formEntries", id);
+      await assertSucceeds(updateDoc(ref(PIT), { values: { notes: "edited" }, stickyNotes: [{ id: "1", text: "a", color: "y", createdAt: 1 }], updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(ref(PIT), { "values.photos": arrayUnion({ url: "https://x.public.blob.vercel-storage.com/a.jpg", pathname: "a.jpg", size: 1, contentType: "image/jpeg" }), updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(PIT), { formId: "other", updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(PIT), { uid: LEAD, updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(PIT), { excluded: true, updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(PIT), { flags: [{ id: "x" }], updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(PIT), { values: "nope", updatedAt: serverTimestamp() }));
+      // someone else on the team cannot
+      await assertFails(updateDoc(ref(LEAD), { values: { notes: "hijack" }, updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref(OUTSIDER), { values: { notes: "hijack" }, updatedAt: serverTimestamp() }));
+    });
+
+    it("an admin may edit an entry (exclude it, flag it, fix values) but never change who wrote it, its form or its date", async () => {
+      const id = await seedEntry(PIT);
+      const ref = doc(asUid(ADMIN_UID), "formEntries", id);
+      await assertSucceeds(updateDoc(ref, { excluded: true, updatedAt: serverTimestamp() }));
+      await assertSucceeds(updateDoc(ref, { flags: [{ id: "f", reason: "Other", addedAt: "now" }], values: { notes: "fixed" }, updatedAt: serverTimestamp() }));
+      await assertFails(updateDoc(ref, { uid: LEAD }));
+      await assertFails(updateDoc(ref, { formId: "other" }));
+      await assertFails(updateDoc(ref, { formType: "helper" }));
+      await assertFails(updateDoc(ref, { teamId: OTHER_TEAM_ID }));
+      await assertFails(updateDoc(ref, { createdAt: new Date("2020-01-01") }));
+      await assertFails(updateDoc(doc(asUid(OUTSIDER), "formEntries", id), { excluded: true }));
+    });
+
+    it("only an admin deletes", async () => {
+      const id = await seedEntry(PIT);
+      await assertFails(deleteDoc(doc(asUid(PIT), "formEntries", id)));
+      await assertFails(deleteDoc(doc(asUid(LEAD), "formEntries", id)));
+      await assertFails(deleteDoc(doc(asUid(OUTSIDER), "formEntries", id)));
+      await assertSucceeds(deleteDoc(doc(asUid(ADMIN_UID), "formEntries", id)));
     });
   });
 });

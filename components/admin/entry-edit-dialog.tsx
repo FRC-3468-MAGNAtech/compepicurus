@@ -9,7 +9,7 @@ import { formatMatch } from "@/lib/analytics/game-schema";
 import { logAuditEvent } from "@/lib/audit-log";
 import { entryValues } from "@/lib/forms/legacy";
 import { calculateScore } from "@/lib/forms/scoring";
-import { SYSTEM_FIELD_TYPES, type FieldValue, type FormValues } from "@/lib/forms/types";
+import { isSystemField, type FormValue, type FormValues } from "@/lib/forms/types";
 import { normalizeValues } from "@/lib/forms/values";
 import { visibleFieldKeys } from "@/lib/forms/visibility";
 import { useForms } from "@/lib/forms/forms-context";
@@ -52,7 +52,7 @@ export function EntryEditDialog({
   }, [entry, form]);
 
   if (!entry) return null;
-  const setFieldValue = (key: string, value: FieldValue) => setValues((v) => ({ ...v, [key]: value }));
+  const setFieldValue = (key: string, value: FormValue) => setValues((v) => ({ ...v, [key]: value }));
 
   const handleSave = async () => {
     if (!form) return;
@@ -93,7 +93,7 @@ export function EntryEditDialog({
         ) : (
           <div className="mt-4 flex flex-col gap-4">
             {form.sections.map((section) => {
-              const fields = section.fields.filter((f) => !(SYSTEM_FIELD_TYPES as readonly string[]).includes(f.type) && visible.has(f.key));
+              const fields = section.fields.filter((f) => !isSystemField(f) && visible.has(f.key));
               if (fields.length === 0) return null;
               return (
                 <div key={section.id} className="flex flex-col gap-3">

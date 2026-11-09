@@ -1,5 +1,5 @@
 import type { Form, FormField, FormSection, PhaseKey, StatRole } from "@/lib/forms/types";
-import { SYSTEM_FIELD_TYPES } from "@/lib/forms/types";
+import { isSystemField } from "@/lib/forms/types";
 
 // P21: a flat, convenient view of a form's fields for the stats code (team stats, team cards, match breakdown, dashboards): each value
 // field with where it sits, the phase its points roll into, its per-tally/per-toggle points, its game element, and its stat roles.
@@ -24,7 +24,7 @@ export function formFieldMeta(form: Pick<Form, "sections">): FieldMeta[] {
   const out: FieldMeta[] = [];
   for (const section of form.sections) {
     for (const field of section.fields) {
-      if ((SYSTEM_FIELD_TYPES as readonly string[]).includes(field.type)) continue;
+      if (isSystemField(field)) continue;
       const mode = field.scoring?.mode;
       const base = (mode === "whenOn" || mode === "perTally") && field.scoring?.value ? field.scoring.value : undefined;
       out.push({

@@ -620,6 +620,66 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // P27: formEntries/{entryId}: the entries of the team's other forms (Lead Scout, Pit Scout, Team Strategy, Match Strategy, Drive Reflection, Helper and
+    // custom ones). Match Scout entries stay in scoutEntries. Every teammate reads. CREATE needs the right page access (P26) for the form's type, as yourself
+    // and in your own team: the page ids and default roles below are the ones in lib/page-access/pages.ts (keep in sync); a 'custom' form is open to the team.
+    // UPDATE: an admin may edit anything but who, where and what form it is; the person who wrote it may only change `values`, `stickyNotes` and `updatedAt`
+    // (a photo that finished uploading after submit is attached this way, and notes are edited). DELETE: admins only.
+    function formEntryCreateAllowed(formType) {
+      return formType == 'lead-scout' ? pageAccessAllowed('lead-scout-form', ['lead-scout'])
+        : formType == 'pit-scout' ? pageAccessAllowed('pit-scout-form', ['pit-scout'])
+        : formType == 'team-strategy' ? pageAccessAllowed('team-strategy-form', ['lead-strategist'])
+        : formType == 'match-strategy' ? pageAccessAllowed('match-strategy-form', ['lead-strategist'])
+        : formType == 'drive-reflection' ? pageAccessAllowed('drive-reflection-form', ['drive-team'])
+        : formType == 'helper' ? pageAccessAllowed('helper-form', ['pit-scout', 'pit-team'])
+        : formType == 'custom';
+    }
+
+    function validFormEntry(d) {
+      return d.keys().hasAll(['teamId', 'uid', 'scoutName', 'formId', 'formVersion', 'formType', 'eventCode', 'values', 'stickyNotes', 'excluded', 'flags', 'createdAt', 'updatedAt'])
+        && d.keys().hasOnly(['teamId', 'uid', 'scoutName', 'formId', 'formVersion', 'formType', 'eventCode', 'matchKey', 'alliance', 'teamNumber', 'values',
+                             'stickyNotes', 'linkedEntryId', 'planDifferences', 'flags', 'excluded', 'createdAt', 'updatedAt'])
+        && d.formId is string && d.formId.matches('^[A-Za-z0-9_-]{1,40}$')
+        && d.formVersion is int && d.formVersion >= 0
+        && d.formType in ['lead-scout', 'pit-scout', 'team-strategy', 'match-strategy', 'drive-reflection', 'helper', 'custom']
+        && d.scoutName is string && d.scoutName.size() <= 80
+        && d.eventCode is string && d.eventCode.size() <= 40
+        && (!('matchKey' in d) || d.matchKey == null || (d.matchKey is string && d.matchKey.size() <= 40))
+        && (!('alliance' in d) || d.alliance == null || d.alliance in ['red', 'blue'])
+        && (!('teamNumber' in d) || d.teamNumber == null || (d.teamNumber is int && d.teamNumber > 0))
+        && (!('linkedEntryId' in d) || d.linkedEntryId == null || d.linkedEntryId is string)
+        && (!('planDifferences' in d) || d.planDifferences is int)
+        && d.values is map
+        && d.stickyNotes is list && d.stickyNotes.size() <= 50
+        && d.flags is list && d.flags.size() <= 20
+        && d.excluded == false
+        && d.createdAt == request.time && d.updatedAt == request.time;
+    }
+
+    match /formEntries/{entryId} {
+      allow read: if sameTeam(resource.data.teamId);
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && sameTeam(request.resource.data.teamId)
+        && validFormEntry(request.resource.data)
+        && formEntryCreateAllowed(request.resource.data.formType);
+
+      allow update: if sameTeam(resource.data.teamId) && (
+        (isAdmin()
+          && request.resource.data.teamId == resource.data.teamId
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.formId == resource.data.formId
+          && request.resource.data.formType == resource.data.formType
+          && request.resource.data.createdAt == resource.data.createdAt)
+        || (request.auth.uid == resource.data.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['values', 'stickyNotes', 'updatedAt'])
+          && request.resource.data.values is map
+          && request.resource.data.stickyNotes is list && request.resource.data.stickyNotes.size() <= 50));
+
+      allow delete: if sameTeam(resource.data.teamId) && isAdmin();
+    }
+
     // P21: forms/{teamId}_{formId}: one form of one account, the working draft plus the latest published version number
     // (see lib/forms/resolve.ts FormDoc). Every teammate reads (scouts fill the active form in); only admins and the owner write
     // (the same people who can manage members: `can('manageForms')`). Forms are never deleted, only archived, so an entry's

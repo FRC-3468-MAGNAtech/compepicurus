@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Group, SwitchRow, TextRow } from "@/components/forms/builder/controls";
 import { useBuilder } from "@/components/forms/builder/context";
+import { CompareSettings, FormTypeSettings, StickyNotesSettings } from "@/components/forms/builder/p27-form-settings";
 import { FORM_LIMITS } from "@/lib/forms/validate";
 
 // P22: the form-level settings (shown when nothing is selected): name, description, tags, whether the form scores at all, and the key aliases
@@ -42,6 +43,8 @@ export function FormInspector() {
         />
       </Group>
 
+      <FormTypeSettings />
+
       <Group title="Scoring">
         <SwitchRow
           label="This form scores"
@@ -50,6 +53,9 @@ export function FormInspector() {
           onChange={(v) => update((f) => ({ ...f, scoringEnabled: v }))}
         />
       </Group>
+
+      <StickyNotesSettings />
+      <CompareSettings />
 
       <Group title="Old key names (aliases)" defaultOpen={aliases.length > 0} badge={aliases.length > 0 ? <Badge variant="outline">{aliases.length}</Badge> : undefined}>
         {aliases.length === 0 ? (

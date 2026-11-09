@@ -8,6 +8,7 @@ import { FIELD_ICON_NAMES } from "@/components/scout/field-icons";
 import { Group, NumberRow, SelectRow, SwitchRow, TextRow } from "@/components/forms/builder/controls";
 import { ConditionEditor } from "@/components/forms/builder/condition-editor";
 import { OptionsEditor } from "@/components/forms/builder/options-editor";
+import { ImageSettings, MatrixSettings, SequenceSettings, SliderSettings } from "@/components/forms/builder/p27-inspectors";
 import { useBuilder } from "@/components/forms/builder/context";
 import { changeFieldType, duplicateField, FIELD_TYPE_LABEL, findField, isSystemField, keyFromLabel, keyProblem, moveFieldBy, removeField, setFieldKey, uniqueKey, updateField } from "@/lib/forms/edit";
 import { scoringModesFor, FORM_LIMITS } from "@/lib/forms/validate";
@@ -203,6 +204,10 @@ export function FieldInspector({ field }: { field: FormField }) {
           <NumberRow label="Stars" value={field.scale} min={2} max={10} step={1} onChange={(v) => patch({ scale: v === undefined ? undefined : Math.round(v) })} hint="2 to 10." />
         </Group>
       )}
+      {field.type === "slider" && <SliderSettings field={field} patch={patch} />}
+      {field.type === "image" && <ImageSettings field={field} patch={patch} />}
+      {field.type === "sequence" && <SequenceSettings field={field} patch={patch} />}
+      {field.type === "matrix" && <MatrixSettings field={field} patch={patch} />}
       {(field.type === "select" || field.type === "radio") && (
         <Group title="Options">
           <OptionsEditor field={field} />

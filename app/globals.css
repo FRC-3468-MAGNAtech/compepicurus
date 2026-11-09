@@ -391,3 +391,54 @@ html[data-workspace] {
 html[data-workspace] body {
   overflow: hidden;
 }
+
+/* P27: the form slider (a native range input with a big, theme-coloured thumb). Colours are theme tokens, so it reads in every theme. */
+.field-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.field-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.field-slider::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--color-primary) var(--slider-fill, 0%), rgba(255, 255, 255, 0.14) var(--slider-fill, 0%));
+}
+.field-slider::-moz-range-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.field-slider::-moz-range-progress {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-primary);
+}
+.field-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 32px;
+  width: 32px;
+  margin-top: -11px;
+  border-radius: 999px;
+  border: 3px solid var(--color-primary-foreground);
+  background: var(--color-primary);
+  box-shadow: 0 2px 10px rgba(var(--glow), 0.55);
+}
+.field-slider::-moz-range-thumb {
+  height: 26px;
+  width: 26px;
+  border-radius: 999px;
+  border: 3px solid var(--color-primary-foreground);
+  background: var(--color-primary);
+  box-shadow: 0 2px 10px rgba(var(--glow), 0.55);
+}
+.field-slider:focus-visible {
+  outline: 2px solid rgba(var(--glow), 0.6);
+  outline-offset: 4px;
+  border-radius: 999px;
+}

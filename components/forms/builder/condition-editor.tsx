@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { SYSTEM_FIELD_TYPES, type FormField, type VisibleWhen } from "@/lib/forms/types";
+import { repeatGroupOf } from "@/lib/forms/repeat";
+import { isSystemField, type FormField, type VisibleWhen } from "@/lib/forms/types";
 import { allFormFields } from "@/lib/forms/validate";
 import { updateField } from "@/lib/forms/edit";
 import { NumberRow, SelectRow, TextRow } from "@/components/forms/builder/controls";
@@ -47,7 +48,11 @@ const NUMERIC = new Set(["counter", "number", "rating"]);
 
 export function ConditionEditor({ field }: { field: FormField }) {
   const { form, update } = useBuilder();
-  const candidates = useMemo(() => allFormFields(form).filter((f) => f.id !== field.id && !(SYSTEM_FIELD_TYPES as readonly string[]).includes(f.type)), [form, field.id]);
+  // A condition can wait on a simple answer only: not a system picker, a photo/sequence/grid, or anything inside a per-team repeating group (its values are per slot).
+  const candidates = useMemo(() => {
+    const inRepeat = new Set(form.sections.flatMap((s) => s.fields.filter((f) => repeatGroupOf(s, f)).map((f) => f.id)));
+    return allFormFields(form).filter((f) => f.id !== field.id && !isSystemField(f) && f.type !== "image" && f.type !== "sequence" && f.type !== "matrix" && !inRepeat.has(f.id));
+  }, [form, field.id]);
   const when = field.visibleWhen;
   const target = when ? allFormFields(form).find((f) => f.key === when.fieldKey) : undefined;
   const set = (next: VisibleWhen | undefined) => update((f) => updateField(f, field.id, (x) => (next ? { ...x, visibleWhen: next } : { ...x, visibleWhen: undefined })), `cond:${field.id}`);

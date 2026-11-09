@@ -127,7 +127,7 @@ export function parseImportCsv(schema: GameSchema, csvText: string): ImportResul
 
   const header = table[0];
   // P21: the input columns are Match / Team / Scout plus every column derived from a form field; score, accuracy and script status are recomputed.
-  const inputCols = exportableColumns(schema).filter((c) => !!c.field || c.key === "match" || c.key === "team" || c.key === "scout");
+  const inputCols = exportableColumns(schema).filter((c) => !c.derived && (!!c.field || c.key === "match" || c.key === "team" || c.key === "scout"));
   const colIndexByKey = new Map<string, number>();
   for (const col of inputCols) {
     const idx = header.indexOf(csvHeaderFor(col));
@@ -157,14 +157,19 @@ export function parseImportCsv(schema: GameSchema, csvText: string): ImportResul
       const field = col.field;
       if (!field) continue;
       const cell = get(col.key);
+      if (col.parseCell) {
+        col.parseCell(cell, values);
+        continue;
+      }
+      const storeKey = col.valueKey ?? field.key;
       if (field.type === "select" || field.type === "radio") {
         // the table and CSV show an option's label; the stored value is its value
         const opt = field.options?.find((o) => o.label === cell.trim() || o.value === cell.trim());
-        values[field.key] = coerceFieldValue(field, opt?.value ?? "");
+        values[storeKey] = coerceFieldValue(field, opt?.value ?? "");
       } else if (field.type === "textarea" || field.type === "text") {
-        values[field.key] = coerceFieldValue(field, cell);
+        values[storeKey] = coerceFieldValue(field, cell);
       } else {
-        values[field.key] = coerceFieldValue(field, cell.trim());
+        values[storeKey] = coerceFieldValue(field, cell.trim());
       }
     }
 

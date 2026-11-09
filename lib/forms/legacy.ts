@@ -33,7 +33,8 @@ const cache = new WeakMap<object, Cached>();
 
 function coerce(raw: Record<string, unknown>): FormValues {
   const out: FormValues = {};
-  for (const [k, v] of Object.entries(raw)) if (typeof v === "boolean" || typeof v === "number" || typeof v === "string") out[k] = v;
+  // P27: a value can also be a list (a sequence, photos) or a map of cells (a matrix); anything else (null, undefined, functions) is dropped
+  for (const [k, v] of Object.entries(raw)) if (typeof v === "boolean" || typeof v === "number" || typeof v === "string" || (v !== null && typeof v === "object")) out[k] = v as FormValues[string];
   return out;
 }
 

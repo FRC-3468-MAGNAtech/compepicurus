@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { GroupRepeatControls } from "@/components/forms/builder/p27-form-settings";
 import { Group, SelectRow, SwitchRow, TextRow } from "@/components/forms/builder/controls";
 import { useBuilder } from "@/components/forms/builder/context";
 import { addGroup, duplicateSection, findSection, isSystemField, moveGroupBy, moveSectionBy, phaseKeyFromName, removeGroup, removeSection, setPhaseLabel, updateGroup, updateSection } from "@/lib/forms/edit";
@@ -123,7 +124,8 @@ export function SectionInspector({ sectionId }: { sectionId: string }) {
 
       <Group title="Groups (sub-headings)" defaultOpen={(section.groups?.length ?? 0) > 0}>
         {(section.groups ?? []).map((g, i, all) => (
-          <div key={g.id} className="flex items-center gap-1.5">
+          <div key={g.id} className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
             <Input aria-label={`Group ${i + 1} title`} value={g.title} maxLength={FORM_LIMITS.label} onChange={(e) => update((f) => updateGroup(f, sectionId, g.id, e.target.value), `g:${g.id}`)} />
             {!compact && (
               <>
@@ -138,6 +140,8 @@ export function SectionInspector({ sectionId }: { sectionId: string }) {
                 </Button>
               </>
             )}
+          </div>
+          {!compact && <GroupRepeatControls sectionId={sectionId} group={g} />}
           </div>
         ))}
         {!compact && (

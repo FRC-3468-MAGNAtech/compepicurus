@@ -4,7 +4,13 @@
 //
 // Types only; the zod validator is lib/forms/validate.ts, and `Form` here is exactly what that validator produces.
 
-export type FormType = "match-scout";
+/**
+ * What a form is for (P27). `match-scout` is the original game form. The others are the team's other forms, saved in
+ * `formEntries` rather than `scoutEntries`; which system fields each one must carry is `REQUIRED_SYSTEM_FIELDS`. `custom` is any other form
+ * an admin makes in the builder.
+ */
+export const FORM_TYPES = ["match-scout", "lead-scout", "pit-scout", "team-strategy", "match-strategy", "drive-reflection", "helper", "custom"] as const;
+export type FormType = (typeof FORM_TYPES)[number];
 export type FormStatus = "draft" | "published";
 
 /**
@@ -29,20 +35,70 @@ export type FieldType =
   | "select"
   | "radio"
   | "rating"
-  // system fields (match-scout forms): required, locked, can be moved within Pre-Match but never deleted or retyped
+  // P27: a range slider, photos, an ordered step builder and a checkbox grid
+  | "slider"
+  | "image"
+  | "sequence"
+  | "matrix"
+  // system fields: required where the form type needs them, locked, can be moved within Pre-Match but never deleted or retyped
   | "matchPicker"
   | "teamPicker"
-  | "scoutName";
+  | "scoutName"
+  // P27: the account's active events, and Red or Blue (which pulls that alliance's teams from the schedule)
+  | "eventPicker"
+  | "alliancePicker";
 
-export const SYSTEM_FIELD_TYPES = ["matchPicker", "teamPicker", "scoutName"] as const;
+export const SYSTEM_FIELD_TYPES = ["matchPicker", "teamPicker", "scoutName", "eventPicker", "alliancePicker"] as const;
 export type SystemFieldType = (typeof SYSTEM_FIELD_TYPES)[number];
 
-export const USER_FIELD_TYPES = ["toggle", "counter", "checkbox", "number", "text", "textarea", "select", "radio", "rating"] as const;
+export const USER_FIELD_TYPES = ["toggle", "counter", "checkbox", "number", "text", "textarea", "select", "radio", "rating", "slider", "image", "sequence", "matrix"] as const;
 export type UserFieldType = (typeof USER_FIELD_TYPES)[number];
 
+/** The fixed storage key of each system field (it lives on the entry itself: `match`, `teamNumber`, ...). */
+export const SYSTEM_FIELD_KEYS: Record<SystemFieldType, string> = {
+  matchPicker: "match",
+  teamPicker: "teamNumber",
+  scoutName: "scoutName",
+  eventPicker: "eventCode",
+  alliancePicker: "alliance",
+};
+
+/**
+ * A SYSTEM field is a picker of a system type with its fixed key. A `teamPicker` with any other key (the one inside a per-team repeating group, which
+ * holds that slot's team and can be changed) is an ordinary field: it can be moved, duplicated and deleted.
+ */
+export const isSystemField = (f: { type: string; key: string }): boolean =>
+  (SYSTEM_FIELD_TYPES as readonly string[]).includes(f.type) && SYSTEM_FIELD_KEYS[f.type as SystemFieldType] === f.key;
+
+/**
+ * The system fields a form of each type must carry (once each, outside any repeating group). A match-scout form has the match, the team and
+ * the scout; the others need what their page asks for first. `custom` forms need none.
+ */
+export const REQUIRED_SYSTEM_FIELDS: Record<FormType, readonly SystemFieldType[]> = {
+  "match-scout": ["matchPicker", "teamPicker", "scoutName"],
+  "lead-scout": ["eventPicker", "matchPicker", "alliancePicker", "scoutName"],
+  "pit-scout": ["eventPicker", "teamPicker", "scoutName"],
+  "team-strategy": ["eventPicker", "teamPicker", "scoutName"],
+  "match-strategy": ["eventPicker", "alliancePicker", "matchPicker", "scoutName"],
+  "drive-reflection": ["eventPicker", "alliancePicker", "matchPicker", "scoutName"],
+  helper: ["eventPicker", "scoutName"],
+  custom: [],
+};
+
+/** One uploaded photo (the `image` field's value is a list of these). */
+export type ImageValue = { url: string; pathname: string; size: number; contentType: string };
+
+/** A sticky note (P27/P28): free-form text with a theme-safe colour. */
+export type StickyNote = { id: string; text: string; color: string; createdAt: number; pinned?: boolean };
+
 export type FieldValue = boolean | number | string;
+/**
+ * What one field stores. Most are plain (boolean, number, string); P27 adds a list of step ids (`sequence`), one boolean per cell keyed
+ * `${rowKey}_${colKey}` (`matrix`) and a list of photos (`image`).
+ */
+export type FormValue = FieldValue | string[] | Record<string, boolean> | ImageValue[];
 /** Values keyed by field `key`: what an entry stores, what the form edits, what scoring reads. */
-export type FormValues = Record<string, FieldValue>;
+export type FormValues = Record<string, FormValue>;
 
 /** A simple condition on another field: equals / greater than / checked. A field with `visibleWhen` is shown (and counted) only while it holds. */
 export type VisibleWhen =
@@ -87,6 +143,12 @@ export type FieldAnalytics = {
 export const STAT_ROLES = ["primaryScoring", "reliability", "neverStarted", "died", "disabled", "recoveredFromFreeze", "comments"] as const;
 export type StatRole = (typeof STAT_ROLES)[number];
 
+/** A step a `sequence` field offers (the pit scout's auto cycle): `maxCount` 1 = once, 0 = as often as wanted; `pin` forces it to the start or end. */
+export type SequenceStep = { id: string; label: string; icon?: string; maxCount: 1 | 0; pin: "first" | "last" | null };
+
+/** A row or column of a `matrix` field. */
+export type MatrixAxis = { key: string; label: string };
+
 export type FieldUi = {
   size?: "sm" | "md" | "lg";
   icon?: string;
@@ -127,9 +189,40 @@ export type FormField = {
   unrealisticAbove?: number;
   /** A short scouting tip shown while filling the form (P22). */
   tip?: string;
+  /** slider: the labels at the two ends, and tick marks along the track (`min`, `max` and `step` are the integer range). */
+  endLabels?: { min?: string; max?: string };
+  ticks?: boolean;
+  /** image: how many photos (default 1) and whether a phone opens its camera. */
+  maxCount?: number;
+  capture?: boolean;
+  /** sequence: the catalog of steps. */
+  steps?: SequenceStep[];
+  /** matrix: the checkbox grid, and the cells ("row_col") that are not offered (e.g. "Leave" only in Auto). */
+  rows?: MatrixAxis[];
+  cols?: MatrixAxis[];
+  disabledCells?: string[];
 };
 
-export type FormGroup = { id: string; title: string };
+/**
+ * A group whose fields are drawn once per team of the chosen alliance (P27): 2 in qualifications, up to 3 on a playoff alliance (the real
+ * size comes from the schedule). Values are stored by slot, `t1_<fieldKey>`, `t2_<fieldKey>`, ... (`slotKey` in lib/forms/repeat.ts).
+ */
+export type GroupRepeat = { source: "allianceTeams"; maxSlots: number };
+
+export type FormGroup = { id: string; title: string; repeat?: GroupRepeat };
+
+/** The sticky notes side panel (P28): on or off for a form, and whether it starts open. Entries store `stickyNotes: StickyNote[]`. */
+export type StickyNotesConfig = { enabled: boolean; defaultOpen: boolean };
+
+/** What an entry's match is compared on to find its plan (`compareWith`). */
+export type CompareMatchOn = "eventCode" | "matchKey" | "alliance";
+
+/**
+ * Plan versus actual (P27): on a form (Drive Reflection) that reflects on another's entries (Match Strategy). When the event, match and alliance are
+ * chosen, the latest entry of `formId` for the same event/match/alliance is found; `fieldMap` (this form's field key -> the plan form's
+ * field key; slot keys `t1_role` are mapped per slot automatically) says what to prefill and what to compare.
+ */
+export type CompareWith = { formId: string; matchOn: CompareMatchOn[]; fieldMap: Record<string, string> };
 
 export type FormSection = {
   id: string;
@@ -153,6 +246,10 @@ export type Form = {
   status: FormStatus;
   scoringEnabled: boolean;
   sections: FormSection[];
+  /** P27: the sticky notes panel setting. */
+  stickyNotes?: StickyNotesConfig;
+  /** P27: plan versus actual (see CompareWith). */
+  compareWith?: CompareWith;
   origin: FormOrigin;
   baseBuiltInId?: string;
   /** The built-in's content hash when this override was made, to notice later changes to the code-defined original. */

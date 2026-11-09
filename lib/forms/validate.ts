@@ -1,9 +1,14 @@
 import { z } from "zod";
+import { repeatGroupOf, slotKey } from "@/lib/forms/repeat";
 import {
+  FORM_TYPES,
+  REQUIRED_SYSTEM_FIELDS,
   STANDARD_PHASES,
   STAT_ROLES,
+  SYSTEM_FIELD_KEYS,
   SYSTEM_FIELD_TYPES,
   USER_FIELD_TYPES,
+  isSystemField,
   type Form,
   type FormField,
   type FormSection,
@@ -30,6 +35,12 @@ export const FORM_LIMITS = {
   keyAliases: 200,
   /** A form's JSON, so an import can be refused before it is parsed. */
   jsonBytes: 512 * 1024,
+  /** P27 */
+  imagesPerField: 10,
+  steps: 24,
+  matrixAxis: 12,
+  repeatSlots: 4,
+  compareFields: 100,
 } as const;
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
@@ -95,6 +106,27 @@ const fieldSchema = z
     statRoles: z.array(z.enum(STAT_ROLES)).max(STAT_ROLES.length).optional(),
     unrealisticAbove: finite.optional(),
     tip: text(FORM_LIMITS.tip).optional(),
+    endLabels: z.object({ min: text(40).optional(), max: text(40).optional() }).strict().optional(),
+    ticks: z.boolean().optional(),
+    maxCount: z.number().int().min(1).max(FORM_LIMITS.imagesPerField).optional(),
+    capture: z.boolean().optional(),
+    steps: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(KEY),
+            label,
+            icon: z.string().regex(/^[a-z0-9-]{1,40}$/).optional(),
+            maxCount: z.union([z.literal(1), z.literal(0)]),
+            pin: z.union([z.literal("first"), z.literal("last"), z.null()]),
+          })
+          .strict()
+      )
+      .max(FORM_LIMITS.steps)
+      .optional(),
+    rows: z.array(z.object({ key: z.string().regex(KEY), label }).strict()).max(FORM_LIMITS.matrixAxis).optional(),
+    cols: z.array(z.object({ key: z.string().regex(KEY), label }).strict()).max(FORM_LIMITS.matrixAxis).optional(),
+    disabledCells: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/).max(81)).max(FORM_LIMITS.matrixAxis * FORM_LIMITS.matrixAxis).optional(),
   })
   .strict();
 
@@ -103,7 +135,18 @@ const sectionSchema = z
     id: z.string().regex(ID),
     title: label,
     phase: z.string().regex(PHASE),
-    groups: z.array(z.object({ id: z.string().regex(ID), title: label }).strict()).max(FORM_LIMITS.groupsPerSection).optional(),
+    groups: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(ID),
+            title: label,
+            repeat: z.object({ source: z.literal("allianceTeams"), maxSlots: z.number().int().min(1).max(FORM_LIMITS.repeatSlots) }).strict().optional(),
+          })
+          .strict()
+      )
+      .max(FORM_LIMITS.groupsPerSection)
+      .optional(),
     fields: z.array(fieldSchema).max(FORM_LIMITS.fieldsPerSection),
     visible: z.boolean(),
     accent: colorToken.optional(),
@@ -115,12 +158,21 @@ export const formSchema = z
     id: z.string().regex(ID),
     name: z.string().trim().min(1).max(FORM_LIMITS.name).regex(CLEAN),
     description: text(FORM_LIMITS.description),
-    formType: z.literal("match-scout"),
+    formType: z.enum(FORM_TYPES),
     tags: z.array(z.string().min(1).max(30).regex(CLEAN)).max(FORM_LIMITS.tags),
     version: z.number().int().min(0),
     status: z.enum(["draft", "published"]),
     scoringEnabled: z.boolean(),
     sections: z.array(sectionSchema).max(FORM_LIMITS.sections),
+    stickyNotes: z.object({ enabled: z.boolean(), defaultOpen: z.boolean() }).strict().optional(),
+    compareWith: z
+      .object({
+        formId: z.string().regex(ID),
+        matchOn: z.array(z.enum(["eventCode", "matchKey", "alliance"])).min(1).max(3),
+        fieldMap: z.record(z.string().regex(/^(t[1-4]_)?[A-Za-z][A-Za-z0-9_]{0,39}$/), z.string().regex(/^(t[1-4]_)?[A-Za-z][A-Za-z0-9_]{0,39}$/)).refine((m) => Object.keys(m).length <= FORM_LIMITS.compareFields, "too many mapped fields"),
+      })
+      .strict()
+      .optional(),
     origin: z.enum(["built-in", "built-in-override", "custom", "template"]),
     baseBuiltInId: z.string().regex(ID).optional(),
     baseBuiltInHash: z.string().max(64).optional(),
@@ -154,7 +206,13 @@ export type FormIssue = {
   sectionId?: string;
 };
 
-const isSystem = (t: string): boolean => (SYSTEM_FIELD_TYPES as readonly string[]).includes(t);
+const SYSTEM_NAME: Record<(typeof SYSTEM_FIELD_TYPES)[number], string> = {
+  matchPicker: "match picker",
+  teamPicker: "team picker",
+  scoutName: "scout name",
+  eventPicker: "event picker",
+  alliancePicker: "alliance picker",
+};
 const NUMERIC = new Set(["counter", "number", "rating"]);
 const BOOLEAN = new Set(["toggle", "checkbox"]);
 const CHOICE = new Set(["select", "radio"]);
@@ -218,14 +276,25 @@ export function checkForm(form: Form): FormIssue[] {
     if (!f.label.trim()) err("empty-label", "A field has no label.", { id: f.id });
   }
 
-  // system fields: required for match-scout forms, locked in Pre-Match
+  // system fields (a picker of a system type with its fixed key): the form type says which are required; each appears once and stays in Pre-Match.
+  // A team picker with another key (inside a per-team group) is an ordinary field and is not counted here.
+  const required = new Set<string>(REQUIRED_SYSTEM_FIELDS[form.formType]);
   for (const type of SYSTEM_FIELD_TYPES) {
-    const found = form.sections.flatMap((s) => s.fields.map((f) => ({ f, s }))).filter(({ f }) => f.type === type);
-    if (found.length === 0) err("missing-system-field", `The ${type === "matchPicker" ? "match picker" : type === "teamPicker" ? "team picker" : "scout name"} is required.`);
-    else if (found.length > 1) err("duplicate-system-field", `There can be only one ${type}.`, { id: found[1].f.id });
+    const found = form.sections.flatMap((s) => s.fields.map((f) => ({ f, s }))).filter(({ f }) => f.type === type && isSystemField(f));
+    if (found.length === 0 && required.has(type)) err("missing-system-field", `The ${SYSTEM_NAME[type]} is required.`);
+    else if (found.length > 1) err("duplicate-system-field", `There can be only one ${SYSTEM_NAME[type]}.`, { id: found[1].f.id });
     for (const { f, s } of found) {
       if (s.phase !== "prematch") err("system-field-phase", `The ${f.label} must stay in a Pre-Match category.`, { id: f.id, sectionId: s.id });
-      if (f.required === false) err("system-field-required", `The ${f.label} is always required.`, { id: f.id });
+      if (f.required === false && required.has(type)) err("system-field-required", `The ${f.label} is always required.`, { id: f.id });
+    }
+  }
+  // a field of a system type under a key that isn't that type's fixed key is only allowed for the per-team team picker
+  for (const s of form.sections) {
+    for (const f of s.fields) {
+      if ((SYSTEM_FIELD_TYPES as readonly string[]).includes(f.type) && !isSystemField(f)) {
+        if (f.type !== "teamPicker") err("system-field-key", `The ${f.label} must use the data key "${SYSTEM_FIELD_KEYS[f.type as keyof typeof SYSTEM_FIELD_KEYS]}".`, { id: f.id });
+        else if (!repeatGroupOf(s, f)) err("team-picker-key", `A team picker outside a per-team group must use the data key "teamNumber".`, { id: f.id });
+      }
     }
   }
 
@@ -259,7 +328,7 @@ export function checkForm(form: Form): FormIssue[] {
       if (new Set(opts.map((o) => o.value)).size !== opts.length) err("options-duplicate", `"${f.label}" has two options with the same value.`, ctx);
     }
     if (f.type === "rating" && (f.scale === undefined || f.scale < 2)) err("rating-scale", `"${f.label}" needs a rating scale of at least 2.`, ctx);
-    if (isSystem(f.type) && f.visibleWhen) err("system-field-condition", `The ${f.label} can't be conditional.`, ctx);
+    if (isSystemField(f) && f.visibleWhen) err("system-field-condition", `The ${f.label} can't be conditional.`, ctx);
     if (f.required && f.visibleWhen) warn("required-conditional", `"${f.label}" is required but only sometimes shown. It's only required while it's visible.`, ctx);
     // hard to use one-handed: many tiny choices, a long star row, or a long list squeezed into tiles
     if (f.type === "radio" && (f.options?.length ?? 0) > 6) warn("hard-one-handed", `"${f.label}" shows ${f.options!.length} choices as tiles. More than 6 is hard to tap one-handed: use a dropdown instead.`, ctx);
@@ -270,6 +339,73 @@ export function checkForm(form: Form): FormIssue[] {
     if (f.statRoles?.some((r) => r !== "primaryScoring" && r !== "comments") && !BOOLEAN.has(f.type)) err("stat-role-type", `"${f.label}": incident roles (reliability, died, ...) need a toggle or checkbox.`, ctx);
     if (f.statRoles?.includes("comments") && f.type !== "text" && f.type !== "textarea") err("stat-role-comments", `"${f.label}": the comments role needs a text or comments field.`, ctx);
   }
+  // P27: the new field types
+  for (const f of fields) {
+    const ctx = { id: f.id };
+    if (f.type === "slider") {
+      const min = f.min ?? 1;
+      const max = f.max ?? 5;
+      const step = f.step ?? 1;
+      if (!(min < max)) err("slider-range", `"${f.label}": the minimum must be below the maximum.`, ctx);
+      else if (!(step > 0) || !Number.isInteger(min) || !Number.isInteger(max) || !Number.isInteger(step)) err("slider-step", `"${f.label}": the range and step must be whole numbers, and the step above 0.`, ctx);
+      else if ((max - min) / step > 100) err("slider-steps", `"${f.label}": a slider can have at most 100 steps.`, ctx);
+    }
+    if (f.type === "image" && f.statRoles?.length) err("stat-role-type", `"${f.label}": photos can't carry stat roles.`, ctx);
+    if (f.type === "sequence") {
+      const steps = f.steps ?? [];
+      if (steps.length < 2) err("sequence-steps", `"${f.label}" needs at least two steps to choose from.`, ctx);
+      if (new Set(steps.map((x) => x.id)).size !== steps.length) err("sequence-duplicate", `"${f.label}" has two steps with the same id.`, ctx);
+      if (steps.filter((x) => x.pin === "first").length > 1) err("sequence-pins", `"${f.label}" has more than one step pinned to the start.`, ctx);
+      if (steps.filter((x) => x.pin === "last").length > 1) err("sequence-pins", `"${f.label}" has more than one step pinned to the end.`, ctx);
+      if (steps.some((x) => x.pin && x.maxCount !== 1)) err("sequence-pinned-once", `"${f.label}": a pinned step can only be used once.`, ctx);
+    }
+    if (f.type === "matrix") {
+      const rows = f.rows ?? [];
+      const cols = f.cols ?? [];
+      if (rows.length < 1 || cols.length < 1) err("matrix-axes", `"${f.label}" needs at least one row and one column.`, ctx);
+      if (new Set(rows.map((r) => r.key)).size !== rows.length) err("matrix-duplicate", `"${f.label}" has two rows with the same key.`, ctx);
+      if (new Set(cols.map((c) => c.key)).size !== cols.length) err("matrix-duplicate", `"${f.label}" has two columns with the same key.`, ctx);
+      const cells = rows.flatMap((r) => cols.map((c) => `${r.key}_${c.key}`));
+      if (new Set(cells).size !== cells.length) err("matrix-ambiguous", `"${f.label}": two cells would share a data key (a row and column key run together). Rename a key.`, ctx);
+      const known = new Set(cells);
+      for (const d of f.disabledCells ?? []) if (!known.has(d)) err("matrix-disabled", `"${f.label}" disables a cell that doesn't exist ("${d}").`, ctx);
+      if (cells.length > 0 && (f.disabledCells ?? []).filter((d) => known.has(d)).length >= cells.length) err("matrix-empty", `"${f.label}" has every cell disabled.`, ctx);
+    }
+  }
+
+  // P27: per-team repeating groups. Their fields are stored by slot (t1_<key>, t2_<key>...), so they can't score, be conditional, or collide with another key,
+  // and the form needs an alliance picker to know which teams to draw.
+  const hasAlliance = fields.some((f) => f.type === "alliancePicker" && isSystemField(f));
+  const allKeys = new Set(fields.map((f) => f.key));
+  for (const sec of form.sections) {
+    const repeated = sec.fields.filter((f) => repeatGroupOf(sec, f));
+    if (repeated.length > 0 && !hasAlliance) err("repeat-needs-alliance", `"${sec.title}" has a per-team group but the form has no alliance picker to say which teams to draw.`, { sectionId: sec.id });
+    for (const f of repeated) {
+      const g = repeatGroupOf(sec, f)!;
+      if (f.scoring && f.scoring.mode !== "none") err("repeat-scoring", `"${f.label}" is in a per-team group, which can't score points.`, { id: f.id });
+      if (f.visibleWhen) err("repeat-conditional", `"${f.label}" is in a per-team group, which can't be conditional.`, { id: f.id });
+      if (f.statRoles?.length) err("repeat-roles", `"${f.label}" is in a per-team group, which can't carry stat roles.`, { id: f.id });
+      if (isSystemField(f)) err("repeat-system", `The ${f.label} can't be in a per-team group.`, { id: f.id });
+      for (let slot = 1; slot <= g.repeat.maxSlots; slot++) {
+        if (allKeys.has(slotKey(slot, f.key))) err("repeat-key-collision", `"${f.label}": the per-team key "${slotKey(slot, f.key)}" is already used by another field.`, { id: f.id });
+      }
+    }
+  }
+
+  // P27: plan versus actual
+  if (form.compareWith) {
+    const c = form.compareWith;
+    const have = (type: string) => fields.some((f) => f.type === type && isSystemField(f));
+    if (c.matchOn.includes("eventCode") && !have("eventPicker")) err("compare-needs-picker", "Plan comparison matches on the event, but the form has no event picker.");
+    if (c.matchOn.includes("matchKey") && !have("matchPicker")) err("compare-needs-picker", "Plan comparison matches on the match, but the form has no match picker.");
+    if (c.matchOn.includes("alliance") && !have("alliancePicker")) err("compare-needs-picker", "Plan comparison matches on the alliance, but the form has no alliance picker.");
+    if (Object.keys(c.fieldMap).length === 0) warn("compare-empty", "Plan comparison maps no fields, so nothing is prefilled or compared.");
+    for (const key of Object.keys(c.fieldMap)) {
+      const base = /^t[1-4]_/.test(key) ? key.slice(3) : key;
+      if (!allKeys.has(base)) err("compare-field-missing", `Plan comparison maps "${key}", which isn't a field of this form.`);
+    }
+  }
+
   if (form.scoringEnabled && scoringFields === 0) err("scoring-empty", "Scoring is on, but no field scores any points.");
 
   // conditions: must reference a real, other field, be satisfiable, and not form a cycle

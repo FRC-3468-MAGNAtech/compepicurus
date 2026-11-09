@@ -16,10 +16,10 @@ import {
 import { useEffect, useState } from "react";
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 import type { MatchType } from "@/lib/ftc/types";
-import type { Form, FormValues } from "@/lib/forms/types";
+import type { Form, FormValues, StickyNote } from "@/lib/forms/types";
 import { hasLegacyShape, legacyFieldsFromValues } from "@/lib/forms/legacy";
 import { storableScore, type ScoreResult } from "@/lib/forms/scoring";
-import { commentsFrom } from "@/lib/forms/values";
+import { commentsFrom, joinNotes } from "@/lib/forms/values";
 
 export type ScoutEntryFields = {
   autoLeave: boolean;
@@ -121,6 +121,13 @@ export type ScoutEntry = {
   /** P21: present (as `false`) only on entries from a form with scoring off: they have no score, so accuracy and everything that depends on it is "n/a" for them. */
   scored?: false;
   comments: string;
+  /** P27: the sticky notes written while filling the form (the panel itself is P28). `comments` is derived from them too, for the old Comments column. */
+  stickyNotes?: StickyNote[];
+  /** P27: the alliance a form about an alliance (Lead Scout, Match Strategy, Drive Reflection) was filled for; absent on match-scout entries. */
+  alliance?: "red" | "blue" | null;
+  /** P27: for a plan-versus-actual form: the entry it was prefilled from, and how many answers differed from it when it was submitted. */
+  linkedEntryId?: string | null;
+  planDifferences?: number;
   /** Client-set ISO timestamp, usable immediately (including offline, before createdAt syncs). */
   submittedAt: string;
   excluded: boolean;
@@ -147,9 +154,20 @@ export type EntryPayload = {
   score: ScoreBreakdown;
   scored?: false;
   comments: string;
+  stickyNotes?: StickyNote[];
 };
 
-export function entryPayloadFor(form: Pick<Form, "id" | "version" | "sections" | "scoringEnabled">, values: FormValues, score: ScoreResult): EntryPayload {
+/**
+ * The summary comment: the form's `comments` field text (if it has one) and the sticky notes' text, joined with " | " (P27). With no notes it is exactly what it
+ * always was, so the Comments column and every old entry read the same.
+ */
+export function derivedComments(form: Pick<Form, "sections">, values: FormValues, stickyNotes?: readonly StickyNote[]): string {
+  const base = commentsFrom(form, values);
+  const notes = joinNotes(stickyNotes);
+  return [base, notes].filter((x) => x.trim() !== "").join(" | ");
+}
+
+export function entryPayloadFor(form: Pick<Form, "id" | "version" | "sections" | "scoringEnabled">, values: FormValues, score: ScoreResult, extras: { stickyNotes?: StickyNote[] } = {}): EntryPayload {
   return {
     formId: form.id,
     formVersion: form.version,
@@ -157,7 +175,8 @@ export function entryPayloadFor(form: Pick<Form, "id" | "version" | "sections" |
     ...(hasLegacyShape(form) ? { fields: legacyFieldsFromValues(values) as ScoutEntryFields } : {}),
     score: storableScore(score),
     ...(form.scoringEnabled ? {} : { scored: false as const }),
-    comments: commentsFrom(form, values),
+    comments: derivedComments(form, values, extras.stickyNotes),
+    ...(extras.stickyNotes && extras.stickyNotes.length > 0 ? { stickyNotes: extras.stickyNotes } : {}),
   };
 }
 

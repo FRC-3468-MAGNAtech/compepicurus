@@ -292,6 +292,25 @@ function Cell({
     }
     case "comments":
       return <CommentCell text={entry.comments} forceExpanded={autoExpandNotes} />;
+    case "notes":
+      // P27: the sticky notes, joined with " | ", collapsed to one line with click-to-expand like Comments
+      return <CommentCell text={String(col.getValue(entry) ?? "")} forceExpanded={autoExpandNotes} />;
+    case "photos": {
+      // P27: a few thumbnails (each opens the photo in a new tab) and a +N for the rest
+      const urls = String(col.getValue(entry) ?? "").split(" | ").filter(Boolean);
+      if (urls.length === 0) return <span className="text-[var(--muted-foreground)]">—</span>;
+      return (
+        <span className="flex items-center gap-1" data-testid="photos-cell">
+          {urls.slice(0, 3).map((url, i) => (
+            <a key={url} href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open photo ${i + 1} of ${urls.length}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- a Vercel Blob URL on a host we do not configure for next/image */}
+              <img src={url} alt="" loading="lazy" className="h-9 w-9 rounded-lg object-cover" />
+            </a>
+          ))}
+          {urls.length > 3 && <span className="text-xs text-[var(--muted-foreground)]">+{urls.length - 3}</span>}
+        </span>
+      );
+    }
     case "accuracy":
       return <AccuracyCell accuracy={entry.accuracy} />;
     case "scriptStatus":

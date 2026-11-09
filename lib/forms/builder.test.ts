@@ -124,7 +124,7 @@ describe("adding, removing and moving fields", () => {
     f = addField(g.form, "teleop", defaultField(g.form, "counter", "In hive"), { groupId: g.id! });
     expect(layoutOf(section(f, "teleop")).groups[0].fields.map((x) => x.label)).toEqual(["In hive"]);
     expect(addField(f, "nope", defaultField(f, "toggle"))).toBe(f);
-    const sys = { ...defaultField(f, "toggle"), type: "scoutName" as const };
+    const sys = { ...defaultField(f, "toggle"), type: "scoutName" as const, key: "scoutName" }; // a system field is a picker of a system type with its fixed key (P27)
     expect(addField(f, "teleop", sys)).toBe(f);
   });
 
