@@ -177,6 +177,62 @@ test.describe("Settings > Appearance", () => {
   });
 });
 
+// P32: the Gradient intensity control. Subtle / Normal / Vivid set --gradient-strength, which is the opacity of the painted page layer.
+test.describe("Gradient intensity", () => {
+  const strength = (page: Page) => page.evaluate(() => document.documentElement.style.getPropertyValue("--gradient-strength"));
+  const layerOpacity = (page: Page) => page.getByTestId("page-gradient").evaluate((el) => getComputedStyle(el).opacity);
+
+  test("defaults to Vivid, changes the painted page's strength, and survives a reload", async ({ page }) => {
+    await openFixture(page);
+    await pickTheme(page, "nebula");
+    await expect(page.getByTestId("intensity-option-vivid")).toHaveAttribute("aria-pressed", "true");
+    expect(await layerOpacity(page)).toBe("1");
+
+    await page.getByTestId("intensity-option-subtle").click();
+    await expect(page.getByTestId("intensity-option-subtle")).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => strength(page)).toBe("0.35");
+    expect(Number(await layerOpacity(page))).toBeCloseTo(0.35, 2);
+
+    await page.getByTestId("intensity-option-normal").click();
+    await expect.poll(() => strength(page)).toBe("0.65");
+    expect(Number(await layerOpacity(page))).toBeCloseTo(0.65, 2);
+
+    await page.reload();
+    await openFixture(page);
+    await expect(page.getByTestId("intensity-option-normal")).toHaveAttribute("aria-pressed", "true");
+    expect(Number(await layerOpacity(page))).toBeCloseTo(0.65, 2); // applied before the provider mounted, from this browser's copy
+
+    await page.getByTestId("intensity-option-vivid").click();
+    await expect.poll(() => strength(page)).toBe("1");
+  });
+
+  test("the setting is independent of the theme and the mode, and the glass keeps its blur at every level", async ({ page }) => {
+    await openFixture(page);
+    await pickTheme(page, "sunset");
+    await page.getByTestId("intensity-option-subtle").click();
+    await pickMode(page, "light");
+    await pickTheme(page, "pride-intersex");
+    await expect(page.getByTestId("intensity-option-subtle")).toHaveAttribute("aria-pressed", "true");
+    for (const level of ["subtle", "normal", "vivid"]) {
+      await page.getByTestId(`intensity-option-${level}`).click();
+      await settled(page);
+      expect((await inspectGlass(page)).problems, level).toEqual([]);
+    }
+  });
+
+  test("the painted page is a real gradient on a gradient theme and flat on a solid one", async ({ page }) => {
+    await openFixture(page);
+    await pickTheme(page, "nebula");
+    await pickMode(page, "dark");
+    const image = (p: Page) => p.getByTestId("page-gradient").evaluate((el) => getComputedStyle(el).backgroundImage);
+    expect(await image(page)).toMatch(/^linear-gradient\(/);
+    await pickTheme(page, "pride-intersex");
+    expect(await image(page)).toMatch(/^radial-gradient\(/);
+    await pickTheme(page, "ocean");
+    expect(await image(page)).toBe("none"); // a flat color, no gradient image
+  });
+});
+
 test.describe("sidebar", () => {
   test("the collapse arrow is fully visible and clickable, expanded and collapsed", async ({ page, isMobile }) => {
     test.skip(!!isMobile, "the collapsible sidebar is lg+ only; phones and tablets use the drawer");

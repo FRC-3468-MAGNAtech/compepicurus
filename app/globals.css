@@ -13,6 +13,10 @@
      stay fixed. */
   --glass-shade: 1;
 
+  /* P32: how much of a gradient / pride theme's painted page shows over the plain background (Settings > Appearance >
+     Gradient intensity: Subtle .35, Normal .65, Vivid 1). Set on <html> by lib/theme-css.ts's init script and ThemeProvider. */
+  --gradient-strength: 1;
+
   --radius-lg: 28px;
   --radius-md: 20px;
   --radius-sm: 14px;

@@ -75,6 +75,8 @@ export type UserDoc = {
   themeId: string;
   /** P18: "light" | "dark" | "system". Separate from themeId; absent until the user first picks one (then this browser's, or the system's, applies). Ignored while a pride theme is active. */
   colorMode?: "light" | "dark" | "system";
+  /** P32: how strongly a gradient / pride theme's painted page shows (Settings > Appearance > Gradient intensity). Absent means the default, Vivid. Their own to write (the own-profile update rule has no key allowlist). */
+  gradientIntensity?: "subtle" | "normal" | "vivid";
   /** P19: the FTC teams (ids from teams/{teamId}.fieldTeams) this member is assigned to. Admin-only to change (firestore.rules); absent until the migration runs, and an empty/unresolvable list counts as "all teams" (lib/field-teams.ts). */
   fieldTeamIds?: string[];
   /** P19: the FTC team this user is "viewing as" (their own choice, saved so it follows them across devices). Resolved against their assigned teams, so a stale id is harmless. */
@@ -109,7 +111,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
-  updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "activeFieldTeamId" | "avatar">>) => Promise<void>;
+  updateUserProfile: (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "gradientIntensity" | "activeFieldTeamId" | "avatar">>) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   /** FIX2: this account's email is in OWNER_EMAILS but isn't verified yet, so owner access hasn't been applied. Drives the "Verify your email to activate owner access" notice. */
   ownerPendingVerification: boolean;
@@ -318,7 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLinkedProviders(auth.currentUser.providerData.map((p) => p.providerId));
   };
 
-  const updateUserProfile = async (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "activeFieldTeamId" | "avatar">>) => {
+  const updateUserProfile = async (patch: Partial<Pick<UserDoc, "name" | "themeId" | "colorMode" | "gradientIntensity" | "activeFieldTeamId" | "avatar">>) => {
     if (!auth.currentUser) throw new Error("Not signed in.");
     await updateDoc(doc(db, "users", auth.currentUser.uid), patch);
   };

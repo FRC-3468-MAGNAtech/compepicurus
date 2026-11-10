@@ -5,6 +5,10 @@ export function BackgroundBlobs() {
       className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
       style={{ background: "var(--background)" }}
     >
+      {/* P32: the painted page (gradient and pride themes: the theme's sampled OKLCH stops; solid themes: just the background color).
+          Gradient intensity (Settings > Appearance) is this layer's opacity over the plain background above. A sibling of the glass,
+          never an ancestor, so it can't turn a blur off. */}
+      <div aria-hidden className="absolute inset-0" data-testid="page-gradient" style={{ background: "var(--page-bg)", opacity: "var(--gradient-strength)" }} />
       <div
         className="bg-blob absolute -left-1/4 -top-1/4 h-[70vw] w-[70vw] rounded-full opacity-60 blur-3xl"
         style={{

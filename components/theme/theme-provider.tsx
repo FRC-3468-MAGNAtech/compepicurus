@@ -5,13 +5,18 @@ import { useAuth } from "@/lib/auth";
 import { getTheme, isFlagTheme, tokensFor, type ColorMode, type ColorModePreference, type ThemeDefinition } from "@/lib/themes";
 import {
   COLOR_MODE_STORAGE_KEY,
+  GRADIENT_INTENSITY_STORAGE_KEY,
   THEME_STORAGE_KEY,
   effectiveColorMode,
+  gradientStrength,
   oppositeMode,
   parseColorModePreference,
+  parseGradientIntensity,
   resolveColorModePreference,
+  resolveGradientIntensity,
   resolveThemeId,
 } from "@/lib/theme-prefs";
+import { DEFAULT_GRADIENT_INTENSITY, type GradientIntensity } from "@/lib/theme-gradient";
 
 // Theme + light/dark mode (P18). Two independent settings, both kept per user (users/{uid}.themeId / .colorMode),
 // mirrored in this browser's localStorage so they apply before sign-in and before first paint (the inline script in
@@ -38,6 +43,9 @@ type ThemeContextValue = {
   modeLocked: boolean;
   /** The quick sun/moon switch: flips the applied mode by saving an explicit light or dark. */
   toggleColorMode: () => void;
+  /** P32: Subtle / Normal / Vivid (default Vivid): how strongly a gradient or pride theme's painted page shows. Saved per user. */
+  gradientIntensity: GradientIntensity;
+  setGradientIntensity: (intensity: GradientIntensity) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -67,10 +75,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const { user, profile, updateUserProfile } = useAuth();
   const accountThemeId = profile?.themeId;
   const accountMode = profile?.colorMode;
+  const accountIntensity = profile?.gradientIntensity;
 
   // SSR (and the first client render) assume the defaults, matching the markup; the real values sync in right after mount.
   const [themeId, setThemeIdState] = useState("team");
   const [colorMode, setColorModeState] = useState<ColorModePreference>("system");
+  const [gradientIntensity, setGradientIntensityState] = useState<GradientIntensity>(DEFAULT_GRADIENT_INTENSITY);
   const [systemLight, setSystemLight] = useState(false);
   // False until this browser's saved values have been read in, so the defaults above never overwrite them.
   const [ready, setReady] = useState(false);
@@ -82,6 +92,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     /* eslint-disable react-hooks/set-state-in-effect */
     setThemeIdState(resolveThemeId(null, readLocal(THEME_STORAGE_KEY)));
     setColorModeState(resolveColorModePreference(null, readLocal(COLOR_MODE_STORAGE_KEY)));
+    setGradientIntensityState(resolveGradientIntensity(null, readLocal(GRADIENT_INTENSITY_STORAGE_KEY)));
     setSystemLight(systemPrefersLight());
     setReady(true);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -101,6 +112,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (parsed) setColorModeState(parsed);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [accountThemeId, accountMode]);
+
+  useEffect(() => {
+    const parsed = parseGradientIntensity(accountIntensity);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (parsed) setGradientIntensityState(parsed);
+  }, [accountIntensity]);
+
+  // Gradient intensity: this browser's copy, and the CSS variable the page-gradient layer reads (lib/theme-css.ts sets it pre-paint too).
+  useEffect(() => {
+    if (!ready) return;
+    writeLocal(GRADIENT_INTENSITY_STORAGE_KEY, gradientIntensity);
+    document.documentElement.style.setProperty("--gradient-strength", String(gradientStrength(gradientIntensity)));
+  }, [ready, gradientIntensity]);
 
   const resolvedMode = effectiveColorMode(themeId, colorMode, systemLight);
   const theme = useMemo(() => getTheme(themeId), [themeId]);
@@ -135,7 +159,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 
   const save = useCallback(
-    (patch: { themeId?: string; colorMode?: ColorModePreference }) => {
+    (patch: { themeId?: string; colorMode?: ColorModePreference; gradientIntensity?: GradientIntensity }) => {
       if (!user) return; // signed out (the marketing pages): this browser's copy is all there is
       updateUserProfile(patch).catch((err) => console.error("couldn't save the appearance settings:", err));
     },
@@ -159,6 +183,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     [save]
   );
 
+  const setGradientIntensity = useCallback(
+    (intensity: GradientIntensity) => {
+      setGradientIntensityState(intensity);
+      save({ gradientIntensity: intensity });
+    },
+    [save]
+  );
+
   const modeLocked = isFlagTheme(themeId);
   const toggleColorMode = useCallback(() => {
     if (modeLocked) return;
@@ -166,8 +198,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [modeLocked, resolvedMode, setColorMode]);
 
   const value = useMemo(
-    () => ({ theme, themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked, toggleColorMode }),
-    [theme, themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked, toggleColorMode]
+    () => ({ theme, themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked, toggleColorMode, gradientIntensity, setGradientIntensity }),
+    [theme, themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked, toggleColorMode, gradientIntensity, setGradientIntensity]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

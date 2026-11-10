@@ -5,7 +5,8 @@ import { motion } from "framer-motion";
 import { Check, Monitor, Moon, Search, Sun, type LucideIcon } from "lucide-react";
 import { useAppTheme } from "@/components/theme/theme-provider";
 import { Input } from "@/components/ui/input";
-import { themeGroups, tokensFor, type ColorMode, type ColorModePreference, type ThemeDefinition } from "@/lib/themes";
+import { pageBackground, themeGroups, tokensFor, type ColorMode, type ColorModePreference, type ThemeDefinition } from "@/lib/themes";
+import { GRADIENT_INTENSITIES, type GradientIntensity } from "@/lib/theme-gradient";
 import { rgbTriple, parseHex } from "@/lib/theme-color";
 import { spring } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -18,9 +19,11 @@ const MODES: { id: ColorModePreference; label: string; icon: LucideIcon }[] = [
 
 const MODE_LABEL: Record<ColorModePreference, string> = { light: "Light", dark: "Dark", system: "System" };
 
+const INTENSITY_LABEL: Record<GradientIntensity, string> = { subtle: "Subtle", normal: "Normal", vivid: "Vivid" };
+
 /** Settings > Appearance (P18): Light / Dark / System on top, then every theme, grouped, searchable, with a live preview of each. */
 export function AppearancePanel() {
-  const { themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked } = useAppTheme();
+  const { themeId, setThemeId, colorMode, setColorMode, resolvedMode, modeLocked, gradientIntensity, setGradientIntensity } = useAppTheme();
   const [query, setQuery] = useState("");
   const lockedNoteId = useId();
   const searchId = useId();
@@ -75,6 +78,36 @@ export function AppearancePanel() {
         </p>
       </section>
 
+      <section aria-labelledby={`${searchId}-intensity`} className="flex flex-col gap-2">
+        <h3 id={`${searchId}-intensity`} className="text-sm font-semibold">
+          Gradient intensity
+        </h3>
+        <div role="group" aria-labelledby={`${searchId}-intensity`} className="glass-pill grid w-full max-w-md grid-cols-3 gap-1 p-1">
+          {GRADIENT_INTENSITIES.map((id) => {
+            const active = gradientIntensity === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                data-testid={`intensity-option-${id}`}
+                aria-pressed={active}
+                onClick={() => setGradientIntensity(id)}
+                className={cn(
+                  "relative flex h-10 items-center justify-center rounded-full px-3 text-sm font-medium transition-colors",
+                  active ? "text-[var(--color-primary-foreground)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                {active && (
+                  <motion.span layoutId="intensity-pill" transition={spring} className="absolute inset-0 -z-10 rounded-full" style={{ background: "var(--theme-gradient)", boxShadow: "0 4px 18px -4px rgba(var(--glow), 0.6)" }} />
+                )}
+                {INTENSITY_LABEL[id]}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-[var(--muted-foreground)]">How strongly the background gradient shows behind your panels. Applies to gradient and pride themes; solid themes have no gradient.</p>
+      </section>
+
       <section className="flex flex-col gap-4" aria-label="Themes">
         <div className="relative max-w-md">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" aria-hidden />
@@ -107,7 +140,7 @@ function ThemeCard({ theme, mode, active, onSelect }: { theme: ThemeDefinition; 
   const page =
     t.pageStops.length === 1
       ? `radial-gradient(circle at 15% 15%, ${t.blobs[0]}, transparent 62%), radial-gradient(circle at 90% 85%, ${t.blobs[2]}, transparent 60%), ${t.background}`
-      : `linear-gradient(135deg, ${t.pageStops.join(",")})`;
+      : pageBackground(t);
   const gradient = `linear-gradient(135deg, ${t.gradient.join(",")})`;
 
   return (

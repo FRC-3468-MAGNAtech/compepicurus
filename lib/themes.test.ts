@@ -83,6 +83,8 @@ describe("theme registry", () => {
       "Lesbian",
       "Bisexual",
       "Pansexual",
+      "Berri / Laurian",
+      "Almond / Verian",
       "Demisexual",
       "Omnisexual",
       "Transgender",
@@ -109,9 +111,19 @@ describe("theme registry", () => {
     }
   });
 
-  it("leaves out the flags whose colors were not certain (berrisexual, almond / verian)", () => {
-    const names = themes.map((t) => t.name.toLowerCase()).join("|");
-    expect(names).not.toMatch(/berri|almond|verian/);
+  it("has the four flags of P32 with exactly the supplied colors, each labeled Pride:", () => {
+    const stops = (id: string) => getTheme(id).gradientStops;
+    expect(stops("pride-pansexual")).toEqual(["#ff218c", "#ffd800", "#21b1ff"]);
+    expect(stops("pride-berri-laurian")).toEqual(["#335add", "#358df7", "#83e2ff", "#ffffff", "#cd91f3", "#9d54e3", "#563399"]);
+    expect(stops("pride-almond-verian")).toEqual(["#95386f", "#de5990", "#f194b1", "#ffffff", "#a885fb", "#aa3bf2", "#bc39d5"]);
+    expect(stops("pride-intersex")).toEqual(["#ffd800", "#7902aa"]);
+    expect(getTheme("pride-berri-laurian").name).toBe("Pride: Berri / Laurian");
+    expect(getTheme("pride-almond-verian").name).toBe("Pride: Almond / Verian");
+    // flag themes keep one fixed look: no light / dark pair
+    for (const id of ["pride-pansexual", "pride-berri-laurian", "pride-almond-verian", "pride-intersex"]) {
+      expect(hasModes(getTheme(id))).toBe(false);
+      expect(isFlagTheme(id)).toBe(true);
+    }
   });
 
   it("flags carry their widely recognized color sequences", () => {

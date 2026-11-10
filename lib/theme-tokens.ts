@@ -20,6 +20,8 @@ import {
   rgbTriple,
   sampleGradient,
 } from "./theme-color";
+import { oklchStops, type HuePath } from "./oklab";
+import { DARK_TONE, INTENSITY_STRENGTH, LIGHT_TONE, paintGradient, toneColor, type GradientStyle, type PaintedGradient, type Tone } from "./theme-gradient";
 
 export type ColorMode = "light" | "dark";
 /** What the user picks: a mode, or "system" to follow the device. */
@@ -44,8 +46,11 @@ export type ThemeTokens = {
   glowSoft: string;
   surfaceTint: string;
   blobs: [string, string, string];
-  /** The page background: one hex (flat) or several (a diagonal gradient). */
+  /** The painted page background at full (Vivid) strength: one hex (flat) or many (a gradient). Gradient and pride themes carry ~10 sampled stops per transition. */
   pageStops: string[];
+  /** Where each of `pageStops` sits, 0 to 100 (percent along the diagonal, or of the radius for a radial page). Same length. */
+  pagePositions: number[];
+  pageShape: "linear" | "radial";
   glassBg: string;
   glassBgStrong: string;
   glassBorder: string;
@@ -91,15 +96,43 @@ export function tokensFor(theme: ThemeDefinition, mode: ColorMode): ThemeTokens 
   return "fixed" in theme.tokens ? theme.tokens.fixed : theme.tokens[mode];
 }
 
+/**
+ * The painted page as a CSS background (P32): a flat color, or a diagonal (or radial) gradient over the theme's sampled stops
+ * with explicit positions. The stops were interpolated in OKLCH in code, so this is plain hex and renders the same in every browser.
+ */
+export function pageBackground(t: ThemeTokens): string {
+  if (t.pageStops.length === 1) return t.pageStops[0];
+  const list = t.pageStops.map((c, i) => `${c} ${t.pagePositions[i]}%`).join(",");
+  return t.pageShape === "radial" ? `radial-gradient(ellipse at 50% 50%,${list})` : `linear-gradient(135deg,${list})`;
+}
+
 // ---------------------------------------------------------------------------
 // Surfaces the contrast guard (and the focus-ring fit) measure against.
 
-const PAGE_SAMPLES = 5;
+const PAGE_SAMPLES = 12;
 const BLOB_OPACITY = 0.6; // the strongest of BackgroundBlobs' three (see components/layout/background-blobs.tsx)
 
-/** Every opaque color the page can show behind glass: its background, plus each blob at full strength. */
+/** At most PAGE_SAMPLES colors spread along the page gradient, plus its lightest and darkest, so a dense sampled gradient stays cheap to audit. */
+function pageSamples(stops: string[]): string[] {
+  if (stops.length <= PAGE_SAMPLES) return stops;
+  const picks = new Set<string>();
+  for (let i = 0; i < PAGE_SAMPLES; i++) picks.add(stops[Math.round((i / (PAGE_SAMPLES - 1)) * (stops.length - 1))]);
+  const byLum = [...stops].sort((a, b) => luminance(a) - luminance(b));
+  picks.add(byLum[0]);
+  picks.add(byLum[byLum.length - 1]);
+  return [...picks];
+}
+
+/**
+ * Every opaque color the page can show behind glass: its background, the painted gradient (and the Subtle / Normal blends of
+ * it into the plain background, which is what the Gradient intensity setting paints), plus each blob at full strength.
+ */
 export function pageColors(t: ThemeTokens): string[] {
-  const base = t.pageStops.length === 1 ? [t.pageStops[0]] : sampleGradient(t.pageStops, PAGE_SAMPLES);
+  const painted = pageSamples(t.pageStops);
+  const base =
+    t.pageStops.length === 1
+      ? painted
+      : [...painted, ...painted.flatMap((p) => [INTENSITY_STRENGTH.subtle, INTENSITY_STRENGTH.normal].map((k) => mix(t.background, p, k)))];
   const blobs = t.blobs.flatMap((b) => base.map((p) => mix(p, b, BLOB_OPACITY)));
   return [...base, ...blobs, t.background];
 }
@@ -230,10 +263,16 @@ type ModeInput = {
   surfaces?: Partial<Surfaces>;
   /** Force the text-on-accent color. */
   textOnAccent?: string;
-  /** The page background as colors derived from the final background (omit for a flat page). */
-  pageStops?: (background: string, scale: number) => string[];
-  /** Mix amounts for the blobs / page gradient (gradient themes want stronger washes). */
+  /** The painted page (gradient and pride themes). Omit for a flat page. */
+  page?: PaintedGradient;
+  /** Mix amount for the blobs of the flat (solid) themes. */
   wash?: number;
+  /**
+   * Vivid themes keep the page bright and make the PANELS carry the legibility: the surfaces (glass, overlays, text colors)
+   * for one panel level, 0 being the lightest touch. buildTokens takes the first level whose text passes. Without this a
+   * theme dims its background instead (the `wash` scales), which is what made gradient themes read as too dark.
+   */
+  panel?: (level: number) => Partial<Surfaces>;
 };
 
 const DARK_SHADOW = "0 8px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 8px -2px rgba(0, 0, 0, 0.3)";
@@ -283,29 +322,38 @@ const STATUS = {
 /** Washes of the gradient into the page are scaled down until body text clears this, so the guard's 4.5:1 holds with room. */
 const TEXT_SAFE = 4.6;
 const WASH_SCALES = [1, 0.85, 0.7, 0.55, 0.42, 0.32, 0.22];
+const PANEL_LEVELS = [0, 1, 2, 3, 4, 5, 6, 7];
 
 export function buildTokens(mode: ColorMode, input: ModeInput): ThemeTokens {
   let last!: ThemeTokens;
-  for (const scale of WASH_SCALES) {
-    last = assembleTokens(mode, input, scale);
+  // Vivid themes (input.panel) keep the page as painted and raise the panels' opacity until text passes; the others dim the wash.
+  const steps = input.panel ? PANEL_LEVELS.map((level) => ({ scale: 1, level })) : WASH_SCALES.map((scale) => ({ scale, level: 0 }));
+  for (const { scale, level } of steps) {
+    last = assembleTokens(mode, input, scale, level);
     const worstText = Math.min(
       ...textSurfaces(last).flatMap((bg) => [contrastRatio(last.foreground, bg), contrastRatio(last.mutedForeground, bg)])
     );
     if (worstText >= TEXT_SAFE) return last;
   }
-  return last; // the guard will say so if even the faintest wash can't be read
+  return last; // the guard will say so if even the most opaque panel can't be read
 }
 
-function assembleTokens(mode: ColorMode, input: ModeInput, scale: number): ThemeTokens {
+function assembleTokens(mode: ColorMode, input: ModeInput, scale: number, level: number): ThemeTokens {
   const rawGradient = input.gradient ?? [input.primary, input.accent];
   const blobSources: [string, string, string] =
     rawGradient.length >= 2
       ? [rawGradient[0], rawGradient[rawGradient.length - 1], rawGradient[Math.floor(rawGradient.length / 2)]]
       : [input.primary, input.tint, input.secondary];
   const solidBlobs: [string, string, string] = [input.primary, input.tint, input.secondary];
-  const surfaces = { ...defaultSurfaces(mode, input.tint, input.gradient ? blobSources : solidBlobs, (input.wash ?? 1) * scale), ...input.surfaces };
+  const surfaces = {
+    ...defaultSurfaces(mode, input.tint, input.gradient ? blobSources : solidBlobs, (input.wash ?? 1) * scale),
+    ...(input.panel ? input.panel(level) : {}),
+    ...input.surfaces,
+  };
   const { background } = surfaces;
-  const pageStops = input.pageStops ? input.pageStops(background, scale) : [background];
+  const pageStops = input.page ? input.page.colors : [background];
+  const pagePositions = input.page ? input.page.positions : [0];
+  const pageShape = input.page ? input.page.shape : "linear";
   // Buttons and gradients must clear 3:1 against the page everywhere, so fit against its lightest (dark mode) or darkest (light mode) point.
   const byLuminance = [background, ...pageStops].sort((a, b) => luminance(a) - luminance(b));
   const pageRef = mode === "dark" ? byLuminance[byLuminance.length - 1] : byLuminance[0];
@@ -332,6 +380,8 @@ function assembleTokens(mode: ColorMode, input: ModeInput, scale: number): Theme
     surfaceTint: rgbTriple(input.tint),
     blobs: surfaces.blobs,
     pageStops,
+    pagePositions,
+    pageShape,
     glassBg: surfaces.glassBg,
     glassBgStrong: surfaces.glassBgStrong,
     glassBorder: surfaces.glassBorder,
@@ -407,22 +457,66 @@ export function solidTheme(spec: {
   };
 }
 
+// The panels of a vivid theme (P32). The page behind them is bright and colorful, so the legibility comes from here: dark
+// translucent glass in dark mode, whiter glass in light mode, each level a bit more opaque. buildTokens takes the first level
+// that passes, so a calm theme keeps airy glass and a bright one gets denser panels, and the gradient is never dimmed to compensate.
+const PANEL_ALPHA_DARK = [0.3, 0.4, 0.5, 0.6, 0.7, 0.78, 0.86, 0.92];
+const PANEL_ALPHA_LIGHT = [0.62, 0.7, 0.78, 0.84, 0.9, 0.94, 0.96, 0.97];
+
+export function vividPanel(mode: ColorMode, tint: string): (level: number) => Partial<Surfaces> {
+  return (level) => {
+    const i = Math.min(level, PANEL_ALPHA_DARK.length - 1);
+    if (mode === "dark") {
+      const a = PANEL_ALPHA_DARK[i];
+      const shade = mix("#08080c", tint, 0.1);
+      const edge = mix("#ffffff", tint, 0.1);
+      return {
+        foreground: mix("#ffffff", tint, 0.04),
+        mutedForeground: mix("#ffffff", tint, 0.1),
+        glassBg: rgba(shade, a),
+        glassBgStrong: rgba(shade, Math.min(0.94, a + 0.14)),
+        glassBorder: rgba(edge, 0.26),
+        overlayColor: shade,
+        overlayAlpha: Math.min(0.97, 0.84 + i * 0.02),
+        overlayBorder: rgba(edge, 0.32),
+        surfaceSolid: mix(shade, "#ffffff", 0.1),
+      };
+    }
+    const a = PANEL_ALPHA_LIGHT[i];
+    return {
+      // The light page is more colorful than before, so the text is a little darker to keep 4.5:1 straight on it.
+      foreground: mix("#08080c", tint, 0.08),
+      mutedForeground: mix("#2a2a34", tint, 0.1),
+      glassBg: `rgba(255, 255, 255, ${a})`,
+      glassBgStrong: `rgba(255, 255, 255, ${Math.min(0.98, a + 0.12)})`,
+    };
+  };
+}
+
+/** The sampled page gradient (OKLCH), moved into the mode's tone band (lib/theme-gradient.ts), with its blobs. */
+function vividPage(painted: PaintedGradient, tone: Tone): { page: PaintedGradient; blobs: [string, string, string] } {
+  const colors = painted.colors.map((c) => toneColor(c, tone));
+  return { page: { ...painted, colors }, blobs: [colors[0], colors[colors.length - 1], colors[Math.floor(colors.length / 2)]] };
+}
+
 export function gradientTheme(spec: { id: string; name: string; tagline: string; stops: string[]; secondary?: string }): ThemeDefinition {
   const first = spec.stops[0];
   const last = spec.stops[spec.stops.length - 1];
-  const tint = mix(first, last, 0.5);
-  const secondary = spec.secondary ?? mix(first, last, 0.5);
+  // The middle of the gradient is computed in OKLCH, so it stays as colorful as its ends instead of going gray.
+  const painted = paintGradient(spec.stops, "smooth");
+  const tint = painted.colors[Math.floor(painted.colors.length / 2)];
+  const secondary = spec.secondary ?? tint;
   const mk = (mode: ColorMode) => {
-    // The page itself carries the gradient: the stops, washed into the background.
-    const washAmount = mode === "dark" ? 0.3 : 0.28;
+    const { page, blobs } = vividPage(painted, mode === "dark" ? DARK_TONE : LIGHT_TONE);
     return buildTokens(mode, {
       tint,
       primary: first,
       accent: last,
       secondary,
-      gradient: spec.stops,
-      wash: 1.5,
-      pageStops: (bg, k) => [mix(bg, first, washAmount * k), mix(bg, mix(first, last, 0.5), washAmount * 0.55 * k), mix(bg, last, washAmount * k)],
+      gradient: oklchStops(spec.stops, { perTransition: 4 }),
+      page,
+      panel: vividPanel(mode, tint),
+      surfaces: { blobs },
     });
   };
   const dark = mk("dark");
@@ -441,21 +535,23 @@ export function gradientTheme(spec: { id: string; name: string; tagline: string;
   };
 }
 
-export function flagTheme(spec: { id: string; name: string; tagline: string; stops: string[] }): ThemeDefinition {
+export function flagTheme(spec: { id: string; name: string; tagline: string; stops: string[]; style?: GradientStyle; hue?: HuePath }): ThemeDefinition {
   const first = spec.stops[0];
   const last = spec.stops[spec.stops.length - 1];
-  // One fixed, dark glass-and-text treatment for every flag, so the stripes can be anything.
+  // One fixed, dark glass-and-text treatment for every flag, so the stripes can be anything (a white stripe included).
   const tint = "#8a8aa8";
+  const { page, blobs } = vividPage(paintGradient(spec.stops, spec.style ?? "smooth", { hue: spec.hue }), DARK_TONE);
   const draft = buildTokens("dark", {
     tint,
     primary: first,
     accent: last,
     secondary: spec.stops[Math.floor(spec.stops.length / 2)],
-    gradient: spec.stops,
+    gradient: oklchStops(spec.stops, { perTransition: 2, hue: spec.hue }),
     glow: spec.stops[Math.floor(spec.stops.length / 2)],
-    // The page is the flag's own sequence, deepened so it stays a backdrop and never fights the text.
-    pageStops: (bg, k) => spec.stops.map((s) => mix(bg, s, 0.26 * k)),
-    wash: 1.6,
+    // The page is the flag's own colors, interpolated in OKLCH and moved into the dark tone band: bright enough to see, with the panels doing the legibility.
+    page,
+    panel: vividPanel("dark", tint),
+    surfaces: { blobs },
   });
   return {
     id: spec.id,

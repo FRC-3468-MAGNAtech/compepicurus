@@ -6,11 +6,9 @@
 // `html[data-theme="id"]` alone, because it has one fixed token set. The default (Team Colors, dark) is also `:root`.
 
 import { defaultThemeId, themes } from "@/lib/themes";
-import { hasModes, type ThemeDefinition, type ThemeTokens } from "@/lib/theme-tokens";
-import { COLOR_MODE_STORAGE_KEY, THEME_STORAGE_KEY } from "@/lib/theme-prefs";
-
-// Stops are left unpositioned: CSS spaces them evenly, which is what the fitting assumed.
-const gradient = (angle: string, colors: string[]) => `linear-gradient(${angle}, ${colors.length === 1 ? `${colors[0]}, ${colors[0]}` : colors.join(",")})`;
+import { hasModes, pageBackground, type ThemeDefinition, type ThemeTokens } from "@/lib/theme-tokens";
+import { COLOR_MODE_STORAGE_KEY, GRADIENT_INTENSITY_STORAGE_KEY, THEME_STORAGE_KEY } from "@/lib/theme-prefs";
+import { INTENSITY_STRENGTH } from "@/lib/theme-gradient";
 
 /** One theme's variables, as the body of a CSS rule. */
 export function tokensToCss(t: ThemeTokens): string {
@@ -31,7 +29,7 @@ export function tokensToCss(t: ThemeTokens): string {
     "--blob-1": t.blobs[0],
     "--blob-2": t.blobs[1],
     "--blob-3": t.blobs[2],
-    "--page-bg": t.pageStops.length === 1 ? t.pageStops[0] : gradient("135deg", t.pageStops),
+    "--page-bg": pageBackground(t),
     "--glass-bg": t.glassBg,
     "--glass-bg-strong": t.glassBgStrong,
     "--glass-border": t.glassBorder,
@@ -94,5 +92,7 @@ if(flags.indexOf(t)>=0)m="dark";
 de.setAttribute("data-theme",t);de.setAttribute("data-mode",m);
 var s=parseFloat(g("compepicurus.glass-shade"));
 if(s>=0.3&&s<=2)de.style.setProperty("--glass-shade",String(s));
+var gm=${JSON.stringify(INTENSITY_STRENGTH)},gk=g(${JSON.stringify(GRADIENT_INTENSITY_STORAGE_KEY)});
+if(gk&&Object.prototype.hasOwnProperty.call(gm,gk))de.style.setProperty("--gradient-strength",String(gm[gk]));
 }catch(e){}})();`;
 }

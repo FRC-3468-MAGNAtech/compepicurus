@@ -8,9 +8,11 @@
 // `npm run build`) fails if any mode of it is illegible, and the picker, CSS and e2e test pick it up automatically.
 
 import { flagTheme, gradientTheme, solidTheme, type ThemeDefinition, type ThemeKind } from "./theme-tokens";
+import type { HuePath } from "./oklab";
+import type { GradientStyle } from "./theme-gradient";
 
 export type { ColorMode, ColorModePreference, ThemeDefinition, ThemeKind, ThemeTokens } from "./theme-tokens";
-export { hasModes, tokensFor } from "./theme-tokens";
+export { hasModes, pageBackground, tokensFor } from "./theme-tokens";
 
 // ---------------------------------------------------------------------------
 // Solid
@@ -100,27 +102,32 @@ const solid: ThemeDefinition[] = [
 // ---------------------------------------------------------------------------
 // Gradients
 
+// P32: the stops were retuned so the shift is plain to see: every pair is at least 0.22 apart in OKLab (lib/themes.test.ts enforces
+// it), several ends moved further round the hue wheel (Nebula's blue is now a sky blue, Ember reaches amber, Sunset reaches fuchsia).
+// The gradient between them, and its middle, is computed in OKLCH (lib/theme-tokens.ts), so it never goes muddy.
 const gradients: ThemeDefinition[] = [
-  gradientTheme({ id: "nebula", name: "Nebula", tagline: "Purple to blue", stops: ["#7c3aed", "#2563eb"] }),
-  gradientTheme({ id: "lagoon", name: "Lagoon", tagline: "Blue to green", stops: ["#0ea5e9", "#10b981"] }),
-  gradientTheme({ id: "ember", name: "Ember", tagline: "Red to orange", stops: ["#dc2626", "#f97316"] }),
-  gradientTheme({ id: "sunset", name: "Sunset", tagline: "Orange to pink", stops: ["#f97316", "#ec4899"] }),
+  gradientTheme({ id: "nebula", name: "Nebula", tagline: "Purple to sky blue", stops: ["#9333ea", "#0ea5e9"] }),
+  gradientTheme({ id: "lagoon", name: "Lagoon", tagline: "Blue to green", stops: ["#0ea5e9", "#22c55e"] }),
+  gradientTheme({ id: "ember", name: "Ember", tagline: "Red to amber", stops: ["#dc2626", "#fbbf24"] }),
+  gradientTheme({ id: "sunset", name: "Sunset", tagline: "Orange to fuchsia", stops: ["#fb923c", "#d946ef"] }),
   gradientTheme({ id: "aurora", name: "Aurora", tagline: "Green to purple", stops: ["#10b981", "#8b5cf6"] }),
   gradientTheme({ id: "cotton-candy", name: "Cotton Candy", tagline: "Pink to blue", stops: ["#f472b6", "#60a5fa"] }),
-  gradientTheme({ id: "midnight", name: "Midnight", tagline: "Indigo to deep blue", stops: ["#4f46e5", "#1e3a8a"], secondary: "#818cf8" }),
+  gradientTheme({ id: "midnight", name: "Midnight", tagline: "Lavender to deep blue", stops: ["#a78bfa", "#1e3a8a"], secondary: "#818cf8" }),
   gradientTheme({ id: "twilight", name: "Twilight", tagline: "Indigo to magenta", stops: ["#6366f1", "#db2777"] }),
-  gradientTheme({ id: "glacier", name: "Glacier", tagline: "Cyan to periwinkle", stops: ["#22d3ee", "#818cf8"] }),
-  gradientTheme({ id: "citrus", name: "Citrus", tagline: "Lime to gold", stops: ["#84cc16", "#f59e0b"] }),
+  gradientTheme({ id: "glacier", name: "Glacier", tagline: "Cyan to indigo", stops: ["#22d3ee", "#6366f1"] }),
+  gradientTheme({ id: "citrus", name: "Citrus", tagline: "Lime to orange", stops: ["#65d30d", "#f97316"] }),
   gradientTheme({ id: "tropical", name: "Tropical", tagline: "Teal to sunshine", stops: ["#14b8a6", "#facc15"] }),
-  gradientTheme({ id: "rose-gold", name: "Rose Gold", tagline: "Rose to amber", stops: ["#fb7185", "#f59e0b"] }),
+  gradientTheme({ id: "rose-gold", name: "Rose Gold", tagline: "Rose to gold", stops: ["#f43f5e", "#fbbf24"] }),
 ];
 
 // ---------------------------------------------------------------------------
 // Pride flags. Each is the flag's widely recognized color sequence, top to bottom (or hoist to fly).
-// Only flags whose colors are well documented are here. Berrisexual and Almond/Verian are deliberately NOT:
-// I wasn't certain of their exact colors and a pride flag is not something to guess (docs/ASSUMPTIONS.md, P18).
+// Berri / Laurian and Almond / Verian (P32) use the exact colors the team supplied; they were left out of P18 because a flag's colors are
+// not something to guess. Every flag's colors are interpolated in OKLCH (lib/oklab.ts); `style` picks how they are painted
+// (lib/theme-gradient.ts): smooth (default), banded (stripes with soft edges) or radial (a field with a ring), and `hue` the way round the wheel.
 
-const flag = (id: string, name: string, stops: string[]): ThemeDefinition => flagTheme({ id: `pride-${id}`, name: `Pride: ${name}`, tagline: "Fixed colors", stops });
+const flag = (id: string, name: string, stops: string[], extra: { style?: GradientStyle; hue?: HuePath } = {}): ThemeDefinition =>
+  flagTheme({ id: `pride-${id}`, name: `Pride: ${name}`, tagline: "Fixed colors", stops, ...extra });
 
 const flags: ThemeDefinition[] = [
   flag("rainbow", "Rainbow", ["#e40303", "#ff8c00", "#ffed00", "#008026", "#004dff", "#750787"]),
@@ -129,7 +136,11 @@ const flags: ThemeDefinition[] = [
   flag("gay-mlm", "Gay (MLM)", ["#078d70", "#26ceaa", "#98e8c1", "#ffffff", "#7badE2", "#5049cc", "#3d1a78"]),
   flag("lesbian", "Lesbian", ["#d52d00", "#ef7627", "#ff9a56", "#ffffff", "#d162a4", "#b55690", "#a30262"]),
   flag("bisexual", "Bisexual", ["#d60270", "#9b4f96", "#0038a8"]),
-  flag("pansexual", "Pansexual", ["#ff218c", "#ffd800", "#21b1ff"]),
+  // Pan and Intersex were rendered three ways (smooth OKLCH, soft bands, radial) and judged on screenshots: docs/ASSUMPTIONS.md, P32-3.
+  flag("pansexual", "Pansexual", ["#ff218c", "#ffd800", "#21b1ff"], { style: "banded" }),
+  // Seven stripes with a white one in the middle. The fixed glass and text treatment keeps the contrast guard happy across all of it.
+  flag("berri-laurian", "Berri / Laurian", ["#335add", "#358df7", "#83e2ff", "#ffffff", "#cd91f3", "#9d54e3", "#563399"], { style: "banded" }),
+  flag("almond-verian", "Almond / Verian", ["#95386f", "#de5990", "#f194b1", "#ffffff", "#a885fb", "#aa3bf2", "#bc39d5"], { style: "banded" }),
   flag("demisexual", "Demisexual", ["#000000", "#ffffff", "#6e0071", "#d2d2d2"]),
   flag("omnisexual", "Omnisexual", ["#fe9ace", "#ff53bf", "#200044", "#6760fe", "#8ea6ff"]),
   flag("transgender", "Transgender", ["#5bcefa", "#f5a9b8", "#ffffff", "#f5a9b8", "#5bcefa"]),
@@ -140,8 +151,8 @@ const flags: ThemeDefinition[] = [
   flag("genderqueer", "Genderqueer", ["#b57edc", "#ffffff", "#4a8123"]),
   flag("agender", "Agender", ["#000000", "#bcc4c7", "#ffffff", "#b7f684", "#ffffff", "#bcc4c7", "#000000"]),
   flag("polysexual", "Polysexual", ["#f714ba", "#01d66a", "#1594f6"]),
-  // The intersex flag is a purple ring on yellow, not stripes: shown as yellow to purple.
-  flag("intersex", "Intersex", ["#ffd800", "#7902aa"]),
+  // The intersex flag is a purple ring on a yellow field, not stripes: painted as exactly that (radial).
+  flag("intersex", "Intersex", ["#ffd800", "#7902aa"], { style: "radial" }),
   flag("bigender", "Bigender", ["#c479a2", "#eda5cd", "#d5c7e8", "#ffffff", "#d5c7e8", "#9ac7e8", "#6d82d1"]),
 ];
 
