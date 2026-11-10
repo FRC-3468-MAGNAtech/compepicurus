@@ -4235,3 +4235,65 @@ describe("FIX4: profile visibility, every viewer x every state", () => {
     await assertSucceeds(getDoc(doc(asUid(MATE), "profiles", SCOUT_UID)));
   });
 });
+
+// P31: the Pit Scouting and Team Strategy assignments share `assignments/` with Match Scouting: the same readers and writers (Assignments page access), and a doc that
+// names a kind must be one of the two with the matching id.
+describe("P31: team assignments (assignments/{teamId}_{eventCode}_{pit|teamStrategy})", () => {
+  const LEAD = "p31-lead"; // primary Lead Scout: has Assignments by default
+  const MEDIA = "p31-media"; // no Assignments access
+  const OUTSIDER = "p31-outsider"; // another team's admin
+  const EVENT = "USWABON1";
+  const asUid = (uid: string) => testEnv.authenticatedContext(uid).firestore();
+  const version = { generatedBy: LEAD, generatedAt: "2026-11-08T10:00:00.000Z", settings: { scoutUids: [SCOUT_UID], priorityTeams: [], priorityCoverage: 2, mode: "balanced-random", includeOurs: false, seed: 1 }, teams: [{ teamNumber: 100, scoutUids: [SCOUT_UID], locked: false }], counts: { [SCOUT_UID]: 1 }, uneven: false, warning: null };
+  const data = (kind: string, over: Record<string, unknown> = {}) => ({ teamId: TEAM_ID, eventCode: EVENT, kind, current: version, previous: null, updatedAt: new Date(), ...over });
+  const id = (kind: string) => `${TEAM_ID}_${EVENT}_${kind}`;
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const base = { email: "x@example.com", isAdmin: false, isOwner: false, themeId: "team" };
+      await setDoc(doc(db, "users", LEAD), { ...base, name: "Lead", teamId: TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [] });
+      await setDoc(doc(db, "users", MEDIA), { ...base, name: "Media", teamId: TEAM_ID, primaryRole: "media", secondaryRoles: [] });
+      await setDoc(doc(db, "users", OUTSIDER), { ...base, name: "Out", teamId: OTHER_TEAM_ID, primaryRole: "lead-scout", secondaryRoles: [], isAdmin: true });
+    });
+  });
+
+  it("people with Assignments access (an admin, a Lead Scout) write both kinds; nobody else does", async () => {
+    for (const kind of ["pit", "teamStrategy"]) {
+      await assertSucceeds(setDoc(doc(asUid(LEAD), "assignments", id(kind)), data(kind)));
+      await assertSucceeds(setDoc(doc(asUid(ADMIN_UID), "assignments", id(kind)), data(kind, { previous: version })));
+      await assertFails(setDoc(doc(asUid(SCOUT_UID), "assignments", id(kind)), data(kind)));
+      await assertFails(setDoc(doc(asUid(MEDIA), "assignments", id(kind)), data(kind)));
+      await assertFails(setDoc(doc(asUid(OUTSIDER), "assignments", id(kind)), data(kind)));
+    }
+  });
+
+  it("a scout who is assigned can read it (so can the whole team), as a team-scoped query; another team cannot", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "assignments", id("pit")), data("pit"));
+    });
+    const q = (uid: string) => getDocs(query(collection(asUid(uid), "assignments"), where("teamId", "==", TEAM_ID)));
+    expect((await assertSucceeds(q(SCOUT_UID))).size).toBe(1);
+    expect((await assertSucceeds(q(MEDIA))).size).toBe(1);
+    await assertSucceeds(getDoc(doc(asUid(SCOUT_UID), "assignments", id("pit"))));
+    await assertFails(getDoc(doc(asUid(OUTSIDER), "assignments", id("pit"))));
+    await assertFails(getDocs(query(collection(asUid(OUTSIDER), "assignments"), where("teamId", "==", TEAM_ID))));
+  });
+
+  it("the kind and the id must agree, and only the two kinds exist", async () => {
+    const lead = asUid(LEAD);
+    await assertFails(setDoc(doc(lead, "assignments", id("pit")), data("teamStrategy"))); // pit's id, strategy's kind
+    await assertFails(setDoc(doc(lead, "assignments", id("pit")), data("other")));
+    await assertFails(setDoc(doc(lead, "assignments", `${TEAM_ID}_${EVENT}`), data("pit"))); // Match Scouting's id
+    await assertFails(setDoc(doc(lead, "assignments", `${TEAM_ID}_OTHEREVENT_pit`), data("pit"))); // another event's id
+    await assertSucceeds(setDoc(doc(lead, "assignments", `${TEAM_ID}_${EVENT}`), { teamId: TEAM_ID, eventCode: EVENT, current: null, previous: null })); // Match Scouting still works, no kind
+  });
+
+  it("never in another team's name, never deleted", async () => {
+    await assertFails(setDoc(doc(asUid(LEAD), "assignments", id("pit")), data("pit", { teamId: OTHER_TEAM_ID })));
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "assignments", id("pit")), data("pit"));
+    });
+    await assertFails(deleteDoc(doc(asUid(ADMIN_UID), "assignments", id("pit"))));
+  });
+});

@@ -27,7 +27,8 @@ export function useTeamAssignmentSlots(teamId: string | null): { slotsByEvent: M
     const unsubscribe = onSnapshot(
       query(collection(db, "assignments"), where("teamId", "==", teamId)),
       (snap) => {
-        setSlotsByEvent(new Map(snap.docs.map((d) => [String(d.data().eventCode), ((d.data() as AssignmentsDoc).current?.slots ?? []) as ScheduleSlot[]])));
+        // P31: the Pit Scouting / Team Strategy docs (they have a `kind`) share the collection; only the Match Scouting schedule has slots
+        setSlotsByEvent(new Map(snap.docs.filter((d) => d.data().kind === undefined).map((d) => [String(d.data().eventCode), ((d.data() as AssignmentsDoc).current?.slots ?? []) as ScheduleSlot[]])));
         setLoaded(true);
       },
       (err) => {

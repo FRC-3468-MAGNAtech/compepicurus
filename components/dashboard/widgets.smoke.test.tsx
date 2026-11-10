@@ -248,6 +248,8 @@ function makeData(role: RoleId, mode: "rich" | "loading" | "empty"): DashboardDa
     pickListLoaded: !loading,
     formEntries: [],
     formEntriesLoaded: !loading,
+    teamAssignments: [],
+    teamAssignmentsLoaded: !loading,
     scoutStats,
   };
 }
@@ -330,7 +332,7 @@ describe("what the widgets show", () => {
   });
 
   it("Lead Strategist: the pick list snapshot lists the picked teams in order", () => {
-    const html = render(makeData("lead-strategist", "rich"), dashboardRegistry["lead-strategist"][1].render());
+    const html = render(makeData("lead-strategist", "rich"), dashboardRegistry["lead-strategist"].find((w) => w.id === "pick-list")!.render());
     expect(html.indexOf("111")).toBeGreaterThan(-1);
     expect(html.indexOf("111")).toBeLessThan(html.indexOf("222"));
     expect(html).toContain("Estimate, not a prediction");

@@ -14,6 +14,8 @@ import { usePermissions } from "@/lib/permissions";
 import { CATEGORY_IDS, STATUS_CATEGORIES, type StatusCategory } from "@/lib/scout-status/categories";
 import { DEFAULT_FORM_TYPE, scoutStatusFormType, scoutStatusFormTypes, type ScoutStatusFormTypeId } from "@/lib/scout-status/form-types";
 import { saveScoutTargets } from "@/lib/scout-status/store";
+import { assignedTeamCounts } from "@/lib/team-assignments/model";
+import { useTeamAssignmentDocs } from "@/lib/team-assignments/store";
 import { useScoutStatus } from "@/lib/scout-status/use-scout-status";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +50,10 @@ export default function ScoutStatusPage() {
   const [enabledList, setEnabledList] = useState<StatusCategory[]>(CATEGORY_IDS);
   const enabled = useMemo(() => new Set(enabledList), [enabledList]);
   const status = useScoutStatus(enabled);
+  // P31: what Assignments gave each scout prefills the teams-per-scout targets of Pit Scout and Team Strategy ("from assignments"); a manual number overrides it
+  const teamAssignments = useTeamAssignmentDocs(profile?.teamId ?? null);
+  const assignKind = formType.id === "pit-scout" ? "pit" : formType.id === "team-strategy" ? "teamStrategy" : null;
+  const assignedCounts = useMemo(() => (assignKind ? assignedTeamCounts(teamAssignments.docs, status.eventCodes, assignKind) : null), [assignKind, teamAssignments.docs, status.eventCodes]);
   const [editing, setEditing] = useState<string>(ALL_EVENTS);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [now] = useState(() => Date.now());
@@ -177,7 +183,7 @@ export default function ScoutStatusPage() {
               members={status.members}
               canEdit={canEdit}
               practice={status.practice}
-              assignedCounts={null}
+              assignedCounts={assignedCounts}
             />
           ) : (
           <>

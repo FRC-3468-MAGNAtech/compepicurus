@@ -19,6 +19,8 @@ import type { PlanCandidate } from "@/lib/forms/compare";
 import { useForms } from "@/lib/forms/forms-context";
 import { getBuiltinForm } from "@/lib/forms/builtin";
 import type { FtcEvent } from "@/lib/ftc/types";
+import { myAssignedTeams, type TeamAssignKind } from "@/lib/team-assignments/model";
+import { useTeamAssignmentDocs } from "@/lib/team-assignments/store";
 
 /** The match field of these forms: a button that opens the same match picker the Match Scout Form uses (Practice, Qualification, Finals with the bracket). */
 function MatchPickerSlot({ label, event, matchKey, disabled, onPick }: { label: string; event: FtcEvent | null; matchKey: string | null; disabled?: boolean; onPick: (m: PickedMatch) => void }) {
@@ -43,7 +45,7 @@ export function FormPage({
   subtitle,
   hideEventPickerIfSingle,
   photoKind,
-  assignedTeams,
+  assignmentKind,
 }: {
   formId: string;
   title: string;
@@ -52,8 +54,8 @@ export function FormPage({
   hideEventPickerIfSingle?: boolean;
   /** P29: the photo path kind ("pit" for the Pit Scout Form). */
   photoKind?: string;
-  /** P31: the person's assigned teams for this form at the chosen event, with whether each is done; omitted = no quick-pick. */
-  assignedTeams?: (eventCode: string | null) => { teamNumber: number; done: boolean }[] | null;
+  /** P31: which assignment (Pit Scouting or Team Strategy) feeds the "My assigned teams" quick-pick and its progress; omitted = no quick-pick. */
+  assignmentKind?: TeamAssignKind;
 }) {
   const { user, profile } = useAuth();
   const teamId = profile?.teamId ?? null;
@@ -84,6 +86,16 @@ export function FormPage({
     [hasRookie, active, teams]
   );
 
+  // P31: the teams the person was assigned for this event, and which of them they have already done
+  const assignments = useTeamAssignmentDocs(assignmentKind ? teamId : null);
+  const assigned = useMemo(() => {
+    if (!assignmentKind) return null;
+    const mine = myAssignedTeams(assignments.docs, active?.code ?? null, assignmentKind, user?.uid);
+    if (mine.length === 0) return null;
+    const done = new Set(own.entries.filter((e) => e.uid === user?.uid && !e.excluded && typeof e.teamNumber === "number").map((e) => e.teamNumber as number));
+    return mine.map((teamNumber) => ({ teamNumber, done: done.has(teamNumber) }));
+  }, [assignmentKind, assignments.docs, active?.code, user?.uid, own.entries]);
+
   if (!form || !loaded || !forms.loaded) return <Shimmer className="h-64" />;
   return (
     <PhotoUploadProvider>
@@ -105,7 +117,7 @@ export function FormPage({
         suggestFor={suggestFor}
         hideEventPickerIfSingle={hideEventPickerIfSingle}
         photoKind={photoKind}
-        assignedTeams={assignedTeams ? assignedTeams(active?.code ?? null) : null}
+        assignedTeams={assigned}
         onUpdate={(entry, patch) => {
           if (!teamId || !user || !profile) return Promise.reject(new Error("Not signed in."));
           return editOwnFormEntry({ teamId, uid: user.uid, name: profile.name }, entry, patch);

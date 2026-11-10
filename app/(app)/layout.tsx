@@ -11,6 +11,7 @@ import { LibraryBackfill } from "@/components/admin/library-backfill";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { LiveMatchPill } from "@/components/layout/live-match-pill";
 import { ScoresReadyWatcher } from "@/components/layout/scores-ready-watcher";
+import { TeamAssignmentsWatcher } from "@/components/layout/team-assignments-watcher";
 import { useAuth } from "@/lib/auth";
 import { useConnectionNotice } from "@/lib/use-connection-state";
 import { FieldTeamsProvider } from "@/lib/field-teams-context";
@@ -106,6 +107,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
           <SiteFooter className="mt-10" />
         </div>
         <ScoresReadyWatcher />
+        <TeamAssignmentsWatcher />
         {profile.isAdmin && <LibraryBackfill />}
       </div>
       </ImmersiveContext.Provider>

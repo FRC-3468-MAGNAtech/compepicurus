@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { MemberMultiSelect } from "@/components/assignments/member-multiselect";
 import { RandomizeModal } from "@/components/assignments/randomize-modal";
 import { ScheduleGrid } from "@/components/assignments/schedule-grid";
+import { TeamAssignmentsPanel } from "@/components/assignments/team-assignments-connected";
+import type { TeamAssignKind } from "@/lib/team-assignments/model";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/permissions";
 import { useActiveEvents } from "@/lib/active-event";
@@ -27,6 +29,10 @@ import { getEnabledSeasons, DEFAULT_SEASON_ID } from "@/lib/seasons";
 import { DIFFICULTY_LABELS, type Difficulty } from "@/lib/difficulty";
 import { ftcMatchesToInputs, libraryMatchesToInputs } from "@/lib/scheduler/sources";
 import type { MatchInput, ScheduleResult, SlotId } from "@/lib/scheduler/types";
+
+/** P31: the three kinds of assignment. Match Scouting is the original schedule; Pit Scouting and Team Strategy hand out teams. */
+type AssignmentTab = "match" | TeamAssignKind;
+const TAB_LABELS: Record<AssignmentTab, string> = { match: "Match Scouting", pit: "Pit Scouting", teamStrategy: "Team Strategy" };
 
 const MATCH_SOURCE_LABELS: Record<AssignmentMatchSource, string> = {
   event: "Event schedule",
@@ -65,6 +71,7 @@ export default function AssignmentsPage() {
   const effectiveAttendingUids = useMemo(() => attendingUids ?? attendanceUids ?? [], [attendingUids, attendanceUids]);
   const [savingAttendance, setSavingAttendance] = useState(false);
 
+  const [tab, setTab] = useState<AssignmentTab>("match");
   const [matchSource, setMatchSource] = useState<AssignmentMatchSource>("event");
   const [librarySeasonId, setLibrarySeasonId] = useState(DEFAULT_SEASON_ID);
   const [libraryDifficulty, setLibraryDifficulty] = useState<Difficulty>("medium");
@@ -173,6 +180,12 @@ export default function AssignmentsPage() {
             </div>
           )}
         </GlassPanel>
+        {eventCode && (
+          <>
+            <TeamAssignmentsPanel kind="pit" eventCode={eventCode} season={season} members={members} attendingUids={effectiveAttendingUids} canEdit={false} />
+            <TeamAssignmentsPanel kind="teamStrategy" eventCode={eventCode} season={season} members={members} attendingUids={effectiveAttendingUids} canEdit={false} />
+          </>
+        )}
       </div>
     );
   }
@@ -233,6 +246,19 @@ export default function AssignmentsPage() {
             )}
           </GlassPanel>
 
+          <Tabs value={tab} onValueChange={(v) => setTab(v as AssignmentTab)}>
+            <TabsList aria-label="What to assign">
+              {(Object.keys(TAB_LABELS) as AssignmentTab[]).map((t) => (
+                <TabsTrigger key={t} value={t} data-testid={`assign-tab-${t}`}>
+                  {TAB_LABELS[t]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
+          {tab !== "match" && <TeamAssignmentsPanel key={`${eventCode}-${tab}`} kind={tab} eventCode={eventCode} season={season} members={members} attendingUids={effectiveAttendingUids} canEdit />}
+
+          {tab === "match" && (
           <GlassPanel className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-base font-semibold">Schedule</h2>
@@ -319,6 +345,7 @@ export default function AssignmentsPage() {
               <p className="text-sm text-[var(--muted-foreground)]">No schedule published yet for this event.</p>
             )}
           </GlassPanel>
+          )}
         </>
       )}
 

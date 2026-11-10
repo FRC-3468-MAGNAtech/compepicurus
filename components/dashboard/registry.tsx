@@ -6,7 +6,7 @@ import { EventHighlightsWidget, OpponentNamesWidget, ShareResultsWidget } from "
 import { MyAccuracyWidget, MySubmissionsWidget, NextAssignmentWidget, RecentPracticeWidget, ResumeWidget } from "@/components/dashboard/widgets/match-scout";
 import { LatestCommentsWidget, TeamCoverageWidget, TeamLookupWidget, ZeroEntryTeamsWidget } from "@/components/dashboard/widgets/pit-scout";
 import { PhaseVsEventWidget, ScoutsSawWidget } from "@/components/dashboard/widgets/pit-team";
-import { FormCoverageWidget, FormMissingTeamsWidget, HelperLogWidget } from "@/components/dashboard/widgets/team-forms";
+import { FormCoverageWidget, FormMissingTeamsWidget, HelperLogWidget, MyAssignedTeamsWidget } from "@/components/dashboard/widgets/team-forms";
 import { NextMatchWidget, OurResultsWidget, UpcomingMatchesWidget } from "@/components/dashboard/widgets/schedule-widgets";
 import { AttendanceWidget, EventOverviewWidget, InterventionWidget, ScoutingHealthWidget } from "@/components/dashboard/widgets/team-coach";
 import { StrengthBulletsWidget, TeamSummaryWidget } from "@/components/dashboard/widgets/judge";
@@ -34,6 +34,7 @@ export const dashboardRegistry: Record<RoleId, DashboardWidget[]> = {
   ],
 
   "pit-scout": [
+    { id: "my-assigned-teams", title: "My assigned teams", size: "medium", render: () => <MyAssignedTeamsWidget kind="pit" /> },
     { id: "pit-coverage", title: "Teams with a pit entry", size: "small", render: () => <FormCoverageWidget formType="pit-scout" title="Teams with a pit entry" noun="pit entry" href="/pit-scout-form" linkLabel="Pit Scout Form" /> },
     { id: "pit-missing", title: "Teams without a pit entry", size: "medium", render: () => <FormMissingTeamsWidget formType="pit-scout" title="Teams without a pit entry" noun="pit entry" href="/pit-scout-form" linkLabel="Pit Scout Form" /> },
     { id: "team-coverage", title: "Teams scouted", size: "small", render: () => <TeamCoverageWidget /> },
@@ -66,6 +67,7 @@ export const dashboardRegistry: Record<RoleId, DashboardWidget[]> = {
   ],
 
   "lead-strategist": [
+    { id: "my-assigned-teams", title: "My assigned teams", size: "medium", render: () => <MyAssignedTeamsWidget kind="teamStrategy" /> },
     { id: "rank-trend", title: "Our rank & trend", size: "small", render: () => <RankTrendWidget /> },
     { id: "pick-list", title: "Pick list", size: "medium", render: () => <PickSnapshotWidget /> },
     { id: "top-teams", title: "Top teams (scouted)", size: "medium", render: () => <TopTeamsWidget /> },

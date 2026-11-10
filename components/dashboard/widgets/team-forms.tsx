@@ -2,12 +2,15 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
-import { ClipboardList, HandHelping, Lightbulb, Wrench } from "lucide-react";
+import { Check, ClipboardList, HandHelping, Lightbulb, Wrench } from "lucide-react";
 import { Widget } from "@/components/dashboard/widget";
 import { KeyNumber, teamHref } from "@/components/dashboard/shared";
 import { useDashboard } from "@/lib/dashboard/data";
 import { formCoverage, helperSummary } from "@/lib/dashboard/form-coverage";
 import type { FormEntryType } from "@/lib/form-entries-model";
+import { assignmentProgress } from "@/lib/team-assignments/distribute";
+import { TEAM_ASSIGN_KIND_INFO, myAssignedTeams, type TeamAssignKind } from "@/lib/team-assignments/model";
+import { KIND_FORM_TYPE } from "@/lib/team-assignments/store";
 
 // P29: the dashboard widgets for the Pit Scout, Team Strategy and Helper forms. They read the event's `formEntries` from the dashboard's one provider.
 
@@ -84,6 +87,29 @@ export function HelperLogWidget() {
             <span className="min-w-0 flex-1 truncate text-xs text-[var(--muted-foreground)]">{typeof e.values.issues === "string" ? e.values.issues : ""}</span>
             <span className={e.values.successful === "yes" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>{e.values.successful === "yes" ? "Solved" : "Not solved"}</span>
           </div>
+        ))}
+      </div>
+    </Widget>
+  );
+}
+
+/** P31: the teams the person was assigned for this form at the selected event, checked off as they do them: "7 of 12 done". */
+export function MyAssignedTeamsWidget({ kind }: { kind: TeamAssignKind }) {
+  const d = useDashboard();
+  const info = TEAM_ASSIGN_KIND_INFO[kind];
+  const code = d.event?.code ?? null;
+  const mine = useMemo(() => myAssignedTeams(d.teamAssignments, code, kind, d.uid), [d.teamAssignments, code, kind, d.uid]);
+  const done = useMemo(() => new Set(d.formEntries.filter((e) => e.uid === d.uid && e.formType === KIND_FORM_TYPE[kind] && !e.excluded && typeof e.teamNumber === "number").map((e) => e.teamNumber as number)), [d.formEntries, d.uid, kind]);
+  const p = assignmentProgress(mine, done);
+  return (
+    <Widget title="My assigned teams" icon={kind === "pit" ? Wrench : Lightbulb} size="medium" status={!d.teamAssignmentsLoaded || !d.formEntriesLoaded ? "loading" : mine.length === 0 ? "empty" : "ready"} href={info.href} linkLabel={`${info.tab} Form`} emptyText={`No ${info.noun} teams have been assigned to you at this event.`}>
+      <KeyNumber label="Progress" value={`${p.done} of ${p.total}`} hint={p.remaining.length === 0 ? "All done" : `${p.remaining.length} to go`} />
+      <div className="flex flex-wrap gap-1.5" data-testid={`assigned-${kind}`}>
+        {mine.map((t) => (
+          <Link key={t} href={`${info.href}`} className={`glass-pill flex items-center gap-1 px-3 py-1.5 text-sm font-semibold tabular-nums ${done.has(t) ? "opacity-60" : ""}`} title={d.teamNames.get(t)}>
+            {t}
+            {done.has(t) && <Check className="h-3.5 w-3.5 text-emerald-300" aria-label="Done" />}
+          </Link>
         ))}
       </div>
     </Widget>

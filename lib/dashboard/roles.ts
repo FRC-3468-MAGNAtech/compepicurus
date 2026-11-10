@@ -23,15 +23,17 @@ export type DashboardSource =
   /** The selected event's shared pick list. */
   | "pickList"
   /** P29: the event's form entries (Pit Scout, Team Strategy, Helper ...) for the coverage widgets. */
-  | "formEntries";
+  | "formEntries"
+  /** P31: the Pit Scouting and Team Strategy assignments (the team's docs; the widget picks the selected event's). */
+  | "teamAssignments";
 
 export const ROLE_SOURCES: Record<RoleId, DashboardSource[]> = {
   "match-scout": ["members", "sessions", "library", "assignments"],
-  "pit-scout": ["formEntries"],
+  "pit-scout": ["formEntries", "teamAssignments"],
   "pit-team": ["formEntries"],
   "drive-team": [],
   "lead-scout": ["members", "sessions", "attendance", "assignments"],
-  "lead-strategist": ["pickList", "formEntries"],
+  "lead-strategist": ["pickList", "formEntries", "teamAssignments"],
   "team-coach": ["members", "sessions", "attendance"],
   media: [],
   "judge-awards": [],

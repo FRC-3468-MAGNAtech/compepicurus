@@ -18,6 +18,8 @@ import type { EventLifecycleStatus, FtcEvent, FtcRanking, FtcTeam } from "@/lib/
 import { useAllLibraryMatches, type LibraryMatch } from "@/lib/match-library";
 import { useFormEntries } from "@/lib/form-entries";
 import type { FormEntry } from "@/lib/form-entries-model";
+import type { TeamAssignmentsDoc } from "@/lib/team-assignments/model";
+import { useTeamAssignmentDocs } from "@/lib/team-assignments/store";
 import { usePickList, type PickListDoc } from "@/lib/pick-list/store";
 import { useAllTeamPracticeSessions, type PracticeSession } from "@/lib/practice-sessions";
 import type { RoleId } from "@/lib/roles";
@@ -102,6 +104,9 @@ export type DashboardData = {
   /** P29: the selected event's form entries (every non-match form) — only for roles that show form coverage. */
   formEntries: FormEntry[];
   formEntriesLoaded: boolean;
+  /** P31: the team's Pit Scouting / Team Strategy assignment docs (every event) — only for roles that show "My assigned teams". */
+  teamAssignments: TeamAssignmentsDoc[];
+  teamAssignmentsLoaded: boolean;
   /** Scout Accuracy / My Scouting numbers per category (all events, plain) — only when the role needs members. */
   scoutStats: Record<ScoutCategory, ScoutStatsResult> | null;
 };
@@ -180,6 +185,7 @@ export function DashboardProvider({ role, children }: { role: RoleId; children: 
   const { attendance, loaded: attendanceLoaded } = useTeamEventAttendance(needs.has("attendance") ? teamId : null);
   const { assignments, loaded: assignmentsLoaded } = useAssignments(needs.has("assignments") ? teamId : null, eventCode);
   const { list: pickList, loaded: pickListLoaded } = usePickList(needs.has("pickList") ? teamId : null, eventCode, null);
+  const { docs: teamAssignments, loaded: teamAssignmentsLoaded } = useTeamAssignmentDocs(needs.has("teamAssignments") ? teamId : null);
   const { entries: formEntries, loaded: formEntriesLoaded } = useFormEntries(needs.has("formEntries") && eventCode ? teamId : null, { eventCode: eventCode ?? undefined });
 
   const libraryById = useMemo(() => (needs.has("library") ? new Map(libraryMatches.map((m) => [m.id, m])) : EMPTY_LIBRARY), [needs, libraryMatches]);
@@ -253,6 +259,8 @@ export function DashboardProvider({ role, children }: { role: RoleId; children: 
       pickListLoaded,
       formEntries,
       formEntriesLoaded,
+      teamAssignments,
+      teamAssignmentsLoaded,
       scoutStats,
     }),
     [
@@ -260,7 +268,7 @@ export function DashboardProvider({ role, children }: { role: RoleId; children: 
       matchesQ, rankingsQ, teamsQ, rankings, teamNames, ourMatches, nextMatch, ourRanking, record, teamStats,
       entriesLoaded, allEntries, eventEntries, usedEntries, schema, ranked, ourStats, ourScoutedRank,
       members, membersLoaded, sessions, sessionsLoaded, libraryById, attendance, attendingUids, attendanceLoaded,
-      assignments, assignmentsLoaded, pickList, pickListLoaded, formEntries, formEntriesLoaded, scoutStats,
+      assignments, assignmentsLoaded, pickList, pickListLoaded, formEntries, formEntriesLoaded, teamAssignments, teamAssignmentsLoaded, scoutStats,
     ]
   );
 

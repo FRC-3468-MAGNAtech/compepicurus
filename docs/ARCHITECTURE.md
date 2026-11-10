@@ -2338,6 +2338,13 @@ no layout shift, moderation, the Settings editor incl. an admin's disabled toggl
 - Scout Status: lib/scout-status/form-types.ts (registry: unit and target kind per form type), lib/scout-status/form-status.ts (pure: alliance units and coverage, team coverage, teams-per-scout targets and their precedence, per-scout rows, Helper counts, eligible scouts), components/scout-status/form-status-panel.tsx (FormStatusView pure; FormStatusPanel connected). EventSetup.teamTargets is the new optional stored map.
 - Tests: lib/analytics/form-analytics.test.ts, form-csv.test.ts, lib/scout-status/form-status.test.ts; Playwright e2e/form-analytics.e2e.ts and e2e/form-status.e2e.ts (fixtures app/e2e/form-analytics, app/e2e/form-status); a rules test for teamTargets.
 
+## P31 — Assignments for Pit Scouting and Team Strategy
+
+- lib/team-assignments/distribute.ts (pure, seeded: distributeTeams, manual-edit helpers, progress), model.ts (the stored shape, parsing, "my teams", counts per scout, isNewPublish; pure), store.ts (the team-scoped subscription useTeamAssignmentDocs, publishTeamAssignments, undoTeamAssignments).
+- components/assignments/team-assignments-panel.tsx: TeamAssignmentsView (pure: settings, preview/edit table with locks, per-scout totals and warnings, publish and undo; or a scout's read-only "my teams"); team-assignments-connected.tsx wires it to the FIRST team list, page access, the published doc and the person's entries. The Assignments page has the three tabs.
+- Readers of the published version: the form pages (assignmentKind prop of FormPage, quick-pick and progress), the dashboard (DashboardSource "teamAssignments", MyAssignedTeamsWidget), Scout Status (assignedTeamCounts prefill), and components/layout/team-assignments-watcher.tsx (the in-app notice, mounted in the app shell).
+- Tests: lib/team-assignments/distribute.test.ts, model.test.ts, integration.test.ts, components/layout/team-assignments-watcher.test.ts; Playwright e2e/team-assignments.e2e.ts (fixture app/e2e/team-assignments); rules tests in firestore.rules.test.ts.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

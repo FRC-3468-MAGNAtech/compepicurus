@@ -12,14 +12,14 @@ describe("ROLE_SOURCES", () => {
       expect(ROLE_SOURCES[role]).toEqual([]);
     }
     // P29: the pit roles read the event's form entries (pit coverage, pit assists) and nothing else
-    expect(ROLE_SOURCES["pit-scout"]).toEqual(["formEntries"]);
+    expect(ROLE_SOURCES["pit-scout"]).toEqual(["formEntries", "teamAssignments"]);
     expect(ROLE_SOURCES["pit-team"]).toEqual(["formEntries"]);
   });
 
   it("gives the scouting leads the roster, sessions, and assignments they report on", () => {
     expect(ROLE_SOURCES["lead-scout"]).toEqual(expect.arrayContaining(["members", "sessions", "attendance", "assignments"]));
     expect(ROLE_SOURCES["match-scout"]).toEqual(expect.arrayContaining(["assignments", "sessions", "members"]));
-    expect(ROLE_SOURCES["lead-strategist"]).toEqual(["pickList", "formEntries"]);
+    expect(ROLE_SOURCES["lead-strategist"]).toEqual(["pickList", "formEntries", "teamAssignments"]);
   });
 });
 

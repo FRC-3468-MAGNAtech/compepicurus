@@ -967,7 +967,11 @@ service cloud.firestore {
     match /assignments/{id} {
       allow read: if sameTeam(resource.data.teamId);
       // P26: the same Assignments page access as the attendance list above.
-      allow create, update: if pageAccessAllowed('assignments', ['lead-scout']) && sameTeam(request.resource.data.teamId);
+      // P31: the Pit Scouting and Team Strategy assignments live here too ({teamId}_{eventCode}_{pit|teamStrategy}, with a `kind`): same readers, same writers;
+      // a doc that names a kind must be one of the two and have the matching id, so one kind can't overwrite another's or Match Scouting's.
+      allow create, update: if pageAccessAllowed('assignments', ['lead-scout']) && sameTeam(request.resource.data.teamId)
+        && (!('kind' in request.resource.data) || (request.resource.data.kind in ['pit', 'teamStrategy'] && request.resource.data.eventCode is string
+          && id == request.resource.data.teamId + '_' + request.resource.data.eventCode + '_' + request.resource.data.kind));
       allow delete: if false;
     }
 
