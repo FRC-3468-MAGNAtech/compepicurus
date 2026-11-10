@@ -3,16 +3,16 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, Lock } from "lucide-react";
 import { CoverageList } from "@/components/scout-status/coverage-list";
+import { FormStatusPanel } from "@/components/scout-status/form-status-panel";
 import { IndividualTargets, MaxTargets, RangeEntry, type SetupChange } from "@/components/scout-status/setup-panels";
 import { StatusTable } from "@/components/scout-status/status-table";
 import { LoadError } from "@/components/practice/load-error";
 import { GlassPanel } from "@/components/ui/glass-panel";
-import { HoverTip } from "@/components/ui/hover-tip";
 import { Shimmer } from "@/components/ui/shimmer";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/permissions";
 import { CATEGORY_IDS, STATUS_CATEGORIES, type StatusCategory } from "@/lib/scout-status/categories";
-import { scoutStatusFormTypes } from "@/lib/scout-status/form-types";
+import { DEFAULT_FORM_TYPE, scoutStatusFormType, scoutStatusFormTypes, type ScoutStatusFormTypeId } from "@/lib/scout-status/form-types";
 import { saveScoutTargets } from "@/lib/scout-status/store";
 import { useScoutStatus } from "@/lib/scout-status/use-scout-status";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,12 @@ export default function ScoutStatusPage() {
   const { user, profile } = useAuth();
   const { can } = usePermissions();
   const canEdit = can("editScoutTargets");
+
+  // P30: every form type is selectable; Match Scout is the original page, the alliance types (Lead Scout, Match Strategy, Drive Reflection) keep the ranges and
+  // targets setup, the team types (Pit Scout, Team Strategy) and Helper have their own panel
+  const [formTypeId, setFormTypeId] = useState<ScoutStatusFormTypeId>(DEFAULT_FORM_TYPE);
+  const formType = scoutStatusFormType(formTypeId);
+  const matchBased = formType.unit === "robot-match" || formType.unit === "match-alliance";
 
   const [enabledList, setEnabledList] = useState<StatusCategory[]>(CATEGORY_IDS);
   const enabled = useMemo(() => new Set(enabledList), [enabledList]);
@@ -76,21 +82,20 @@ export default function ScoutStatusPage() {
 
         <div role="tablist" aria-label="Form type" className="flex flex-wrap gap-1.5">
           {scoutStatusFormTypes.map((t) =>
-            t.enabled ? (
-              <button key={t.id} type="button" role="tab" aria-selected className="rounded-full px-4 py-2 text-sm font-semibold text-[var(--color-primary-foreground)]" style={{ background: "var(--theme-gradient)" }}>
+            t.id === formTypeId ? (
+              <button key={t.id} type="button" role="tab" aria-selected className="rounded-full px-4 py-2 text-sm font-semibold text-[var(--color-primary-foreground)]" style={{ background: "var(--theme-gradient)" }} data-testid={`form-type-${t.id}`}>
                 {t.label}
               </button>
             ) : (
-              <HoverTip key={t.id} content="Coming soon">
-                <span role="tab" aria-selected={false} aria-disabled className="inline-flex cursor-not-allowed rounded-full border border-[var(--glass-border)] px-4 py-2 text-sm text-[var(--muted-foreground)] opacity-50">
-                  {t.label}
-                </span>
-              </HoverTip>
+              <button key={t.id} type="button" role="tab" aria-selected={false} onClick={() => setFormTypeId(t.id)} className="inline-flex rounded-full border border-[var(--glass-border)] px-4 py-2 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-white/8 hover:text-[var(--foreground)]" data-testid={`form-type-${t.id}`}>
+                {t.label}
+              </button>
             )
           )}
         </div>
 
         {/* 3. Match category filter */}
+        {matchBased && (
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Match categories">
           {STATUS_CATEGORIES.map((c) => {
             const on = enabled.has(c.id);
@@ -102,6 +107,7 @@ export default function ScoutStatusPage() {
           })}
           <span className="text-xs text-[var(--muted-foreground)]">Practice = event practice matches (not practice scouting).</span>
         </div>
+        )}
       </GlassPanel>
 
       {status.setupsError && <LoadError failure={status.setupsError} onRetry={status.retrySetups} />}
@@ -120,6 +126,7 @@ export default function ScoutStatusPage() {
       ) : (
         <>
           {/* Setup: 3 range entry, 4 max targets, 5 individual targets */}
+          {matchBased && (
           <GlassPanel className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <h3 className="text-sm font-semibold">Setup</h3>
@@ -159,7 +166,21 @@ export default function ScoutStatusPage() {
               <IndividualTargets views={status.views} selected={selected} scouts={status.scouts} members={status.members} enabled={enabled} canEdit={setupEditable} onChange={onChange} />
             </Section>
           </GlassPanel>
+          )}
 
+          {formType.unit !== "robot-match" ? (
+            <FormStatusPanel
+              key={formType.id}
+              type={formType}
+              views={status.views}
+              eventCodes={status.eventCodes}
+              members={status.members}
+              canEdit={canEdit}
+              practice={status.practice}
+              assignedCounts={null}
+            />
+          ) : (
+          <>
           {/* 6. Scout status table */}
           <GlassPanel className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold">Scout status table</h3>
@@ -174,6 +195,8 @@ export default function ScoutStatusPage() {
             <h3 className="text-sm font-semibold">Match coverage</h3>
             <CoverageList coverage={status.coverage} enabled={enabled} showEvent={multiEvent} />
           </GlassPanel>
+          </>
+          )}
         </>
       )}
     </div>

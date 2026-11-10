@@ -123,6 +123,8 @@ function fieldColumn(form: Form, section: FormSection, field: FormField, type: C
     const v = valuesOf(e)[key];
     if (v === undefined) return null;
     if (type === "boolean") return v === true;
+    // P30: a number field nobody filled in stays blank (not 0), so it exports blank and imports back blank
+    if (type === "count" && field.type === "number" && v === "") return null;
     if (type === "count") return typeof v === "number" ? v : Number(v) || 0;
     if (field.type === "select" || field.type === "radio") return field.options?.find((o) => o.value === v)?.label ?? String(v);
     if (field.type === "sequence") return Array.isArray(v) ? summarizeSequence(field.steps ?? [], v as string[]) : "";

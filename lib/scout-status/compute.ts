@@ -24,6 +24,8 @@ export type EventSetup = {
   individual: Record<string, Partial<Record<StatusCategory, number>>>;
   /** Members added by hand to the targets table. */
   extraScouts: string[];
+  /** P30: teams-per-scout targets for the team-based forms (Pit Scout, Team Strategy), by form type: one number for everyone and/or per scout. */
+  teamTargets?: Partial<Record<"pit-scout" | "team-strategy", { all?: number | null; individual?: Record<string, number> }>>;
 };
 
 export const EMPTY_SETUP: EventSetup = { ranges: {}, maxOverrides: {}, individual: {}, extraScouts: [] };

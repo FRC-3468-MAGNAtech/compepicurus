@@ -14,11 +14,19 @@ export function AnalyticsTabs() {
 
   return (
     <div className="glass-pill mb-6 flex w-full flex-wrap items-center gap-1 overflow-x-auto p-1.5">
-      {analyticsNav.map((item) => {
+      {analyticsNav.map((item, index) => {
+        const startsGroup = !!item.group && analyticsNav[index - 1]?.group !== item.group;
+        const endsGroup = !!item.group && analyticsNav[index + 1]?.group !== item.group;
         // A Team Profile (/analytics/teams/254) is reached from Team Averages / Rankings; keep Team Averages lit.
         const active = pathname === item.href || (item.href === "/analytics/team-averages" && pathname.startsWith("/analytics/teams/"));
         return (
-          <Link key={item.href} href={withFilters(item.href)} className="relative">
+          <div key={item.href} className="flex items-center gap-1" data-group={item.group}>
+          {startsGroup && (
+            <span className="pl-3 pr-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]" data-testid="analytics-group-label">
+              {item.group}
+            </span>
+          )}
+          <Link href={withFilters(item.href)} className="relative">
             <motion.div
               whileHover={{ scale: active ? 1 : 1.03 }}
               whileTap={{ scale: 0.97 }}
@@ -41,6 +49,8 @@ export function AnalyticsTabs() {
               <span className="relative">{item.label}</span>
             </motion.div>
           </Link>
+          {endsGroup && <span className="mx-1 h-5 w-px bg-[var(--glass-border)]" aria-hidden />}
+          </div>
         );
       })}
     </div>

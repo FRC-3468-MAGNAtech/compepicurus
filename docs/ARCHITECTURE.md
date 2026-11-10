@@ -2330,6 +2330,14 @@ no layout shift, moderation, the Settings editor incl. an admin's disabled toggl
 - Dashboards: `lib/dashboard/form-coverage.ts` (pure coverage/helper-log math) feeds `components/dashboard/widgets/team-forms.tsx`; the provider subscribes to `formEntries` only for roles whose `ROLE_SOURCES` list `"formEntries"`.
 - Tests: `lib/forms/pit-forms.test.ts`, `lib/dashboard/form-coverage.test.ts`, `e2e/team-forms.e2e.ts` (fixture `app/e2e/team-forms`, with a fake uploader that fails offline), page-guard and rules tests.
 
+## P30 — Analytics for the new forms, and Scout Status for them
+
+- lib/analytics/form-analytics.ts: the registry of the six pages (FORM_ANALYTICS_PAGES: slug, href, form type, built-in form, unit), entry selection by type and event scope, "latest per unit", and buildFormSchema (the raw table's columns). lib/analytics/form-summaries.ts: the summary math for each form and the Team Profile data. lib/analytics/csv.ts gained parseFormImportCsv and dedupeFormImport.
+- components/analytics/form-analytics-page.tsx: FormAnalyticsView (pure: entries, form, rights and callbacks in; the table, summary toggle, toolbar, export/import, Config and Delete out) and FormAnalyticsPage (the connected one: useFormEntries, the Event filter, the forms catalogue). Six tiny routes under app/(app)/analytics/<slug>/page.tsx. form-summaries-view.tsx holds the six summaries; pit-and-strategy.tsx the Team Profile section; form-import-dialog.tsx the import. AnalyticsDataTable takes optional onOpenConfig/onDelete (no button when omitted).
+- The filter bar (filter-bar.tsx) drops Practice and Accuracy on those routes (isFormAnalyticsRoute); lib/nav.ts analyticsNav items have an optional group, drawn by components/layout/analytics-tabs.tsx.
+- Scout Status: lib/scout-status/form-types.ts (registry: unit and target kind per form type), lib/scout-status/form-status.ts (pure: alliance units and coverage, team coverage, teams-per-scout targets and their precedence, per-scout rows, Helper counts, eligible scouts), components/scout-status/form-status-panel.tsx (FormStatusView pure; FormStatusPanel connected). EventSetup.teamTargets is the new optional stored map.
+- Tests: lib/analytics/form-analytics.test.ts, form-csv.test.ts, lib/scout-status/form-status.test.ts; Playwright e2e/form-analytics.e2e.ts and e2e/form-status.e2e.ts (fixtures app/e2e/form-analytics, app/e2e/form-status); a rules test for teamTargets.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

@@ -39,7 +39,19 @@ export function setupFromData(data: Record<string, unknown> | undefined): EventS
   }
 
   const extraScouts = Array.isArray(data.extraScouts) ? data.extraScouts.filter((u): u is string => typeof u === "string") : [];
-  return { ranges, maxOverrides, individual, extraScouts };
+
+  // P30: teams-per-scout targets for Pit Scout and Team Strategy (absent on older docs)
+  const teamTargets: NonNullable<EventSetup["teamTargets"]> = {};
+  const rawTeam = (data.teamTargets ?? {}) as Record<string, unknown>;
+  for (const type of ["pit-scout", "team-strategy"] as const) {
+    const t = rawTeam[type];
+    if (!t || typeof t !== "object") continue;
+    const all = (t as Record<string, unknown>).all;
+    const individual: Record<string, number> = {};
+    for (const [uid, v] of Object.entries(((t as Record<string, unknown>).individual ?? {}) as Record<string, unknown>)) if (typeof v === "number") individual[uid] = v;
+    teamTargets[type] = { ...(typeof all === "number" ? { all } : {}), individual };
+  }
+  return { ranges, maxOverrides, individual, extraScouts, ...(Object.keys(teamTargets).length > 0 ? { teamTargets } : {}) };
 }
 
 /** Realtime setups for every event of the team, by event code. Read as a team-scoped query (rules are not filters, and a doc that does not exist yet cannot be read directly). */
@@ -85,6 +97,7 @@ export async function saveScoutTargets(actor: { teamId: string; uid: string }, e
     maxOverrides: setup.maxOverrides,
     individual: setup.individual,
     extraScouts: setup.extraScouts,
+    ...(setup.teamTargets && Object.keys(setup.teamTargets).length > 0 ? { teamTargets: setup.teamTargets } : {}),
     updatedBy: actor.uid,
     updatedAt: serverTimestamp(),
   });

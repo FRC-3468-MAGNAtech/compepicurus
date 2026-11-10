@@ -152,7 +152,8 @@ export function formEntryToRow(entry: FormEntry, form?: Parameters<typeof derive
     submittedAt: new Date(entry.createdAtMs || 0).toISOString(),
     excluded: entry.excluded,
     autoFlags: [],
-    manualFlags: [],
+    // P30: an admin's flags show in the same Config modal as a Match Scout entry's manual flags
+    manualFlags: entry.flags.map((f) => ({ id: f.id, reason: f.reason as ScoutEntry["manualFlags"][number]["reason"], note: f.note, addedAt: f.addedAt })),
     accuracy: null,
     sessionId: null,
     libraryMatchId: null,

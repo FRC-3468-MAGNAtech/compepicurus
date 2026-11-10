@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EventMultiSelect } from "@/components/analytics/event-multiselect";
 import { useAnalyticsData, useAnalyticsEntries, useSingleEvent } from "@/lib/analytics/data-context";
 import { useAnalyticsFilters } from "@/lib/analytics/filter-context";
+import { isFormAnalyticsRoute } from "@/lib/analytics/form-analytics";
 import {
   ACCURACY_PRESETS,
   parseAccuracyText,
@@ -39,6 +40,8 @@ export function isRawAnalyticsRoute(pathname: string): boolean {
 export function AnalyticsFilterBar() {
   const pathname = usePathname();
   const raw = isRawAnalyticsRoute(pathname);
+  // P30: the six form pages have no Practice mode and no accuracy (their entries aren't scored), so the bar is just Game and Event there
+  const formRoute = isFormAnalyticsRoute(pathname);
   const { filters, setFilters, singleEvent, singleEventInPractice } = useAnalyticsFilters();
   const data = useAnalyticsData();
   const single = useSingleEvent();
@@ -78,18 +81,20 @@ export function AnalyticsFilterBar() {
             scope={filters.events}
             onChange={(events) => setFilters({ events })}
             singleEvent={singleMode}
-            practice={filters.practice}
+            practice={filters.practice && !formRoute}
             primaryCode={data.primaryCode}
             singleSelectedCode={single.code}
           />
         </Control>
 
+        {!formRoute && (
         <label className="flex h-11 cursor-pointer items-center gap-2.5 text-sm font-medium">
           <Checkbox checked={filters.practice} onCheckedChange={(v) => setFilters({ practice: v === true, events: { kind: "active" } })} aria-label="Practice data" />
           Practice
         </label>
+        )}
 
-        {filters.practice && (
+        {filters.practice && !formRoute && (
           <>
             <Control label="Mode">
               <Select value={filters.practiceMode} onValueChange={(v) => setFilters({ practiceMode: v as PracticeModeFilter })}>
@@ -122,7 +127,7 @@ export function AnalyticsFilterBar() {
           </>
         )}
 
-        {!raw && (
+        {!raw && !formRoute && (
           <Control
             label="Accuracy"
             hint={
@@ -144,6 +149,7 @@ export function AnalyticsFilterBar() {
         )}
       </div>
 
+      {!formRoute && (
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted-foreground)]">
         <span aria-live="polite" className="tabular-nums">
           {loaded ? (
@@ -160,6 +166,7 @@ export function AnalyticsFilterBar() {
           </span>
         )}
       </div>
+      )}
     </div>
   );
 }

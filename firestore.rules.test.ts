@@ -3330,6 +3330,16 @@ describe("P16: scoutTargets/{teamId}_{eventCode}", () => {
     await assertSucceeds(setDoc(doc(db, "scoutTargets", DOC_ID), targets({ updatedBy: ADMIN_UID, ranges: { qualification: "2-4, 8" } })));
   });
 
+  it("P30: the optional teams-per-scout targets (Pit Scout, Team Strategy) are accepted as a map, and nothing else is", async () => {
+    const teamTargets = { "pit-scout": { all: 8, individual: { [SCOUT_UID]: 3 } }, "team-strategy": { all: 5, individual: {} } };
+    await assertSucceeds(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ teamTargets })));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ teamTargets: "lots" })));
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ teamTargets: { a: {}, b: {}, c: {} } }))); // more than two form types
+    await assertFails(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets({ somethingElse: true })));
+    // a scout who isn't a lead still can't write them
+    await assertFails(setDoc(doc(testEnv.authenticatedContext(SCOUT_UID).firestore(), "scoutTargets", DOC_ID), targets({ teamTargets, updatedBy: SCOUT_UID })));
+  });
+
   it("lets a Lead Scout (primary role) and a member whose SECONDARY role is Lead Scout edit it", async () => {
     await assertSucceeds(setDoc(doc(asLead(), "scoutTargets", DOC_ID), targets()));
     const second = testEnv.authenticatedContext(SECOND_LEAD_UID).firestore();

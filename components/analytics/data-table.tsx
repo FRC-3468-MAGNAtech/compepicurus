@@ -53,8 +53,10 @@ export function AnalyticsDataTable({
   autoExpandNotes: boolean;
   sort: SortState;
   onSortChange: (s: SortState) => void;
-  onOpenConfig: (entry: ScoutEntry) => void;
-  onDelete: (entry: ScoutEntry) => void;
+  /** P30: omitted = no Config button (only admins flag and exclude the new forms' entries). */
+  onOpenConfig?: (entry: ScoutEntry) => void;
+  /** Omitted = no Delete button (admins only). */
+  onDelete?: (entry: ScoutEntry) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const columns = schema.columns;
@@ -179,6 +181,10 @@ export function AnalyticsDataTable({
                 key={entry.id}
                 ref={rowVirtualizer.measureElement}
                 data-index={virtualRow.index}
+                data-testid="analytics-row"
+                data-entry={entry.id}
+                data-team={entry.teamNumber}
+                data-excluded={entry.excluded ? "true" : undefined}
                 style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
                 className={cn(
                   "flex border-b border-[var(--glass-border)] transition-colors hover:bg-white/5",
@@ -261,8 +267,10 @@ function Cell({
   hideNames: boolean;
   nameMap: Map<string, string>;
   autoExpandNotes: boolean;
-  onOpenConfig: (entry: ScoutEntry) => void;
-  onDelete: (entry: ScoutEntry) => void;
+  /** P30: omitted = no Config button (only admins flag and exclude the new forms' entries). */
+  onOpenConfig?: (entry: ScoutEntry) => void;
+  /** Omitted = no Delete button (admins only). */
+  onDelete?: (entry: ScoutEntry) => void;
 }) {
   switch (col.type) {
     case "scoutName": {
@@ -333,6 +341,7 @@ function Cell({
       const hasAuto = entry.autoFlags.some((f) => !f.dismissed);
       return (
         <div className="flex items-center gap-2">
+          {onOpenConfig && (
           <button
             type="button"
             onClick={() => onOpenConfig(entry)}
@@ -347,6 +356,8 @@ function Cell({
           >
             <Settings2 className="h-3.5 w-3.5" /> Config{activeFlagCount > 0 ? ` (${activeFlagCount})` : ""}
           </button>
+          )}
+          {onDelete && (
           <button
             type="button"
             onClick={() => onDelete(entry)}
@@ -355,6 +366,7 @@ function Cell({
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
+          )}
         </div>
       );
     }

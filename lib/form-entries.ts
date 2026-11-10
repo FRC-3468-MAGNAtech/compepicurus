@@ -38,6 +38,11 @@ export async function editOwnFormEntry(actor: { teamId: string; uid: string; nam
   await batch.commit();
 }
 
+/** Admins only (the rules decide): exclude an entry, set its flags, or fix its values (an import-time correction). */
+export async function adminUpdateFormEntry(entryId: string, patch: { excluded?: boolean; flags?: FormEntry["flags"]; values?: FormValues }): Promise<void> {
+  await updateDoc(doc(db, COLLECTION, entryId), { ...patch, updatedAt: serverTimestamp() });
+}
+
 /** Admins only. */
 export async function deleteFormEntry(entryId: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTION, entryId));

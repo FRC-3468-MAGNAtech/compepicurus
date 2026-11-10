@@ -920,7 +920,9 @@ service cloud.firestore {
     // aren't type-checked — only that they're maps of a bounded size; the page validates
     // the range text and clamps numbers, and setupFromData() drops anything malformed on read.
     function validScoutTargets(id, d) {
-      return d.keys().hasOnly(['teamId', 'eventCode', 'ranges', 'maxOverrides', 'individual', 'extraScouts', 'updatedBy', 'updatedAt'])
+      return d.keys().hasOnly(['teamId', 'eventCode', 'ranges', 'maxOverrides', 'individual', 'extraScouts', 'teamTargets', 'updatedBy', 'updatedAt'])
+        // P30: teamTargets (teams-per-scout for Pit Scout and Team Strategy) is optional
+        && (!('teamTargets' in d) || (d.teamTargets is map && d.teamTargets.size() <= 2))
         && d.keys().hasAll(['teamId', 'eventCode', 'ranges', 'maxOverrides', 'individual', 'extraScouts', 'updatedBy', 'updatedAt'])
         && d.teamId is string && d.eventCode is string
         && id == d.teamId + '_' + d.eventCode

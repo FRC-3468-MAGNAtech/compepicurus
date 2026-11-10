@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AnalyticsLink } from "@/components/analytics/analytics-link";
 import { CommentCell } from "@/components/analytics/comment-cell";
+import { PitAndStrategySection } from "@/components/analytics/pit-and-strategy";
 import { ScoreChart } from "@/components/analytics/score-chart";
 import { LowSampleBadge } from "@/components/analytics/team-bits";
 import { useAnalyticsData, useTeamStats } from "@/lib/analytics/data-context";
@@ -57,6 +58,7 @@ export default function TeamProfilePage() {
           body="No scouted data for this team with the current filters."
           showReset
         />
+        <PitAndStrategySection teamNumber={teamNumber} />
       </div>
     );
   }
@@ -78,6 +80,7 @@ export default function TeamProfilePage() {
       <Averages stats={stats} schema={schema} />
       <Elements stats={stats} />
       <Comments stats={stats} />
+      <PitAndStrategySection teamNumber={teamNumber} />
     </div>
   );
 }

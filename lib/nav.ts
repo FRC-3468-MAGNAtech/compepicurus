@@ -59,8 +59,15 @@ export const secondaryNav: NavItem[] = [
   { href: "/account", label: "Account Settings", icon: Settings },
 ];
 
-export const analyticsNav = [
-  { href: "/analytics/match-scout", label: "Match Scout Analytics" },
+/** The Analytics tabs. `group` items sit together under a small label ("Raw data": the entry tables, P30). */
+export const analyticsNav: { href: string; label: string; group?: string }[] = [
+  { href: "/analytics/match-scout", label: "Match Scout Analytics", group: "Raw data" },
+  { href: "/analytics/lead-scout", label: "Lead Scout", group: "Raw data" },
+  { href: "/analytics/pit-scout", label: "Pit Scout", group: "Raw data" },
+  { href: "/analytics/team-strategy", label: "Team Strategy", group: "Raw data" },
+  { href: "/analytics/match-strategy", label: "Match Strategy", group: "Raw data" },
+  { href: "/analytics/drive-reflection", label: "Drive Reflection", group: "Raw data" },
+  { href: "/analytics/helper", label: "Helper Analytics", group: "Raw data" },
   { href: "/analytics/team-averages", label: "Team Averages" },
   { href: "/analytics/match-breakdown", label: "Match Breakdown" },
   { href: "/analytics/rankings", label: "Rankings" },
