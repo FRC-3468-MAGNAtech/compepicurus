@@ -144,7 +144,7 @@ export const STAT_ROLES = ["primaryScoring", "reliability", "neverStarted", "die
 export type StatRole = (typeof STAT_ROLES)[number];
 
 /** A step a `sequence` field offers (the pit scout's auto cycle): `maxCount` 1 = once, 0 = as often as wanted; `pin` forces it to the start or end. */
-export type SequenceStep = { id: string; label: string; icon?: string; maxCount: 1 | 0; pin: "first" | "last" | null };
+export type SequenceStep = { id: string; label: string; /** What the one-line summary says ("Hive" for the button "Score Into Hive"); the label when absent. */ shortLabel?: string; icon?: string; maxCount: 1 | 0; pin: "first" | "last" | null };
 
 /** A row or column of a `matrix` field. */
 export type MatrixAxis = { key: string; label: string };

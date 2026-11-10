@@ -57,7 +57,9 @@ export type AuditAction =
   | "clear-profile-text"
   // P26: page access (the role matrix, member overrides, and deciding an access request)
   | "edit-page-access"
-  | "decide-page-access-request";
+  | "decide-page-access-request"
+  // P29: a scout edited their own earlier form entry (the log keeps what it was and what it became)
+  | "edit-form-entry";
 
 export type AuditLogEntry = {
   id: string;

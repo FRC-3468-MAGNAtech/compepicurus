@@ -3248,6 +3248,19 @@ describe("P27: formEntries", () => {
       await assertFails(updateDoc(doc(asUid(OUTSIDER), "formEntries", id), { excluded: true }));
     });
 
+    it("P29: editing your own entry logs 'edit-form-entry' as yourself; no other audit action, no one else's name, and you can't read the log", async () => {
+      const audit = (uid: string, action: string, over: Record<string, unknown> = {}) =>
+        addDoc(collection(asUid(uid), "auditLog"), { teamId: TEAM_ID, uid, actorName: "Scout", action, target: { entryId: "e1", formId: "pit-scout-v1" }, before: {}, after: {}, createdAt: new Date(), ...over });
+      await assertSucceeds(audit(PIT, "edit-form-entry"));
+      await assertFails(audit(PIT, "hard-reset-scout-data"));
+      await assertFails(audit(PIT, "edit-form-entry", { uid: LEAD }));
+      await assertFails(audit(PIT, "edit-form-entry", { teamId: OTHER_TEAM_ID }));
+      await assertFails(audit(OUTSIDER, "edit-form-entry"));
+      const ref = await audit(PIT, "edit-form-entry");
+      await assertFails(getDoc(doc(asUid(PIT), "auditLog", ref.id)));
+      await assertSucceeds(getDoc(doc(asUid(ADMIN_UID), "auditLog", ref.id)));
+    });
+
     it("only an admin deletes", async () => {
       const id = await seedEntry(PIT);
       await assertFails(deleteDoc(doc(asUid(PIT), "formEntries", id)));

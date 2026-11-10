@@ -246,6 +246,8 @@ function makeData(role: RoleId, mode: "rich" | "loading" | "empty"): DashboardDa
     assignmentsLoaded: !loading,
     pickList: rich ? { teamId: "team", eventCode: EVENT.code, picked: [111, 222], updatedBy: "u2", updatedByName: "Bo", updatedAtMs: 1 } : null,
     pickListLoaded: !loading,
+    formEntries: [],
+    formEntriesLoaded: !loading,
     scoutStats,
   };
 }
@@ -334,8 +336,8 @@ describe("what the widgets show", () => {
     expect(html).toContain("Estimate, not a prediction");
   });
 
-  it("Judge Awards and Pit Scout get exactly one visible 'Coming soon' card each", () => {
-    for (const role of ["judge-awards", "pit-scout", "media"] as const) {
+  it("Judge Awards and Media get exactly one visible 'Coming soon' card each (the Pit Scout has real widgets since P29)", () => {
+    for (const role of ["judge-awards", "media"] as const) {
       const data = makeData(role, "rich");
       const count = dashboardRegistry[role].map((w) => render(data, w.render())).filter((h) => h.includes("Coming soon")).length;
       expect(count, role).toBe(1);

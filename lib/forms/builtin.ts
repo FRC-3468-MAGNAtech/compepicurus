@@ -1,6 +1,7 @@
 import type { Form, FormField, FormSection } from "@/lib/forms/types";
 import { formContentHash } from "@/lib/forms/hash";
 import { TEAM_BUILTIN_FORMS } from "@/lib/forms/builtin-team-forms";
+import { PIT_BUILTIN_FORMS } from "@/lib/forms/builtin-pit-forms";
 
 // P21: the forms that live in code. BIOBUZZ is just the first one: this file is the ONLY place in the app that names a
 // game element. It must behave exactly like the pre-v2 hard-coded form (lib/forms/fixtures/biobuzz-v1.ts is the frozen
@@ -139,7 +140,7 @@ export const BIOBUZZ_FORM: Form = {
 };
 
 /** Every form defined in code, by id. An account's override (copy-on-write) of one of these lives in Firestore and wins when it exists. */
-export const BUILTIN_FORMS: Readonly<Record<string, Form>> = { biobuzz: BIOBUZZ_FORM, ...TEAM_BUILTIN_FORMS };
+export const BUILTIN_FORMS: Readonly<Record<string, Form>> = { biobuzz: BIOBUZZ_FORM, ...TEAM_BUILTIN_FORMS, ...PIT_BUILTIN_FORMS };
 
 export const DEFAULT_FORM_ID = "biobuzz";
 

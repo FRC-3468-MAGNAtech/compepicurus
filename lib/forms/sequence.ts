@@ -78,7 +78,7 @@ export function removeStep(sequence: readonly string[], index: number): string[]
 /** "Start → Hive → Hive → Park": the labels in order (an id the catalog doesn't know shows as itself). */
 export function summarizeSequence(catalog: readonly SequenceStep[], sequence: readonly string[], separator = " → "): string {
   const steps = byId(catalog);
-  return sequence.map((id) => steps.get(id)?.label ?? id).join(separator);
+  return sequence.map((id) => steps.get(id)?.shortLabel ?? steps.get(id)?.label ?? id).join(separator);
 }
 
 /** How many times each step appears (every catalog step present, zero included): what the analytics "count of each step" columns read. */
@@ -91,7 +91,8 @@ export function countSteps(catalog: readonly SequenceStep[], sequence: readonly 
 
 /** Reads the summary text back into ids (for CSV import): labels split on the separator, matched case-insensitively; unknown labels are dropped. */
 export function parseSequenceSummary(catalog: readonly SequenceStep[], text: string, separator = " → "): string[] {
-  const byLabel = new Map(catalog.map((s) => [s.label.trim().toLowerCase(), s.id]));
+  // either the short or the full label reads back to its step
+  const byLabel = new Map(catalog.flatMap((s) => [[s.label.trim().toLowerCase(), s.id] as const, ...(s.shortLabel ? ([[s.shortLabel.trim().toLowerCase(), s.id]] as const) : [])]));
   const ids = text
     .split(separator.trim())
     .map((part) => byLabel.get(part.trim().toLowerCase()))

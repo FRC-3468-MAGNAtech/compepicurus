@@ -22,7 +22,7 @@ async function openLibrary(page: Page, tab: "public" | "mine" = "public") {
 
 const ids = (page: Page) => library(page).locator("[data-template-card]").evaluateAll((els) => els.map((e) => e.getAttribute("data-template-card")));
 // P28 added three official templates (Lead Scout, Match Strategy, Drive Reflection); the older orderings are checked without them
-const NEW_OFFICIAL = ["official-lead-scout", "official-match-strategy", "official-drive-reflection"];
+const NEW_OFFICIAL = ["official-lead-scout", "official-match-strategy", "official-drive-reflection", "official-pit-scout", "official-team-strategy", "official-helper"];
 const olderIds = async (page: Page) => (await ids(page)).filter((id) => !NEW_OFFICIAL.includes(id ?? ""));
 
 test.describe("template library", () => {

@@ -73,7 +73,7 @@ describe("the built-in match-based forms", () => {
       const back = importForm(JSON.parse(JSON.stringify(exportForm(f))));
       expect(back.ok, f.id).toBe(true);
     }
-    expect(officialTemplates().map((t) => t.id)).toEqual(["official-biobuzz", "official-blank", "official-lead-scout", "official-match-strategy", "official-drive-reflection"]);
+    expect(officialTemplates().map((t) => t.id)).toEqual(["official-biobuzz", "official-blank", "official-lead-scout", "official-match-strategy", "official-drive-reflection", "official-pit-scout", "official-team-strategy", "official-helper"]);
   });
 });
 

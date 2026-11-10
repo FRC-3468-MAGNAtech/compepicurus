@@ -2322,6 +2322,14 @@ no layout shift, moderation, the Settings editor incl. an admin's disabled toggl
 
 **Form pages.** `lib/forms/form-page-logic.ts` (`allianceTeamsFor`, `allianceTitle`, `resetSlotValues`, `trimSlots`, `validateSubmission`, `buildSubmission`), `components/forms/form-page.tsx` (`FormPageView`, plain props), `form-page-connected.tsx` (`FormPage`: live data, the existing `MatchPickerDialog`, `saveFormEntry`), `form-renderer.tsx` gained `sectionTitle` and `tintedSections`. Routes `app/(app)/{lead-scout-form,match-strategy-form,drive-reflection-form}/page.tsx`; nav items in `lib/nav.ts`; page ids and default roles in `lib/page-access/pages.ts` (P26). Fixture `/e2e/form-page`.
 
+## P29 — Team-based forms
+
+- `lib/forms/builtin-pit-forms.ts` defines the Pit Scout, Team Strategy and Helper forms as plain `Form` values (no special engine code); `lib/forms/builtin.ts` merges them into `BUILTIN_FORMS`; `lib/templates/official.ts` seeds them as templates. Pages are `app/(app)/{pit-scout,team-strategy,helper}-form/page.tsx`, each a `<FormPage formId=...>`, gated by P26 page access (`lib/page-access/pages.ts`, `REALIZED_PAGES` in the app layout, nav in `lib/nav.ts`).
+- `components/forms/form-page.tsx` (`FormPageView`) gained: the person's own existing entries (`existingEntries`, `myUid`) with the "already submitted" banner, Edit previous / Submit another, `onUpdate`, the assigned-teams quick-pick (`assignedTeams`), `suggestFor(team)` for prefills with hint lines, `hideEventPickerIfSingle`, `photoKind`, and a sticky submit bar. `form-page-connected.tsx` wires them to live data (`useFormEntries`, `editOwnFormEntry`, `rookieSuggestion`).
+- `lib/form-entries.ts` `editOwnFormEntry` updates values, notes and updatedAt and writes an `edit-form-entry` audit entry in one batch; `diffEntryValues` (`lib/form-entries-model.ts`) lists the changed keys. `lib/forms/pit-suggest.ts` holds the rookie suggestion and weight conversion.
+- Dashboards: `lib/dashboard/form-coverage.ts` (pure coverage/helper-log math) feeds `components/dashboard/widgets/team-forms.tsx`; the provider subscribes to `formEntries` only for roles whose `ROLE_SOURCES` list `"formEntries"`.
+- Tests: `lib/forms/pit-forms.test.ts`, `lib/dashboard/form-coverage.test.ts`, `e2e/team-forms.e2e.ts` (fixture `app/e2e/team-forms`, with a fake uploader that fails offline), page-guard and rules tests.
+
 ## Conventions
 
 - **IDs**: Firestore auto-ids for `scoutEntries` and, since P1b, `teams`

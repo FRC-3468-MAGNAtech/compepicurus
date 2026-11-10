@@ -616,7 +616,8 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && sameTeam(request.resource.data.teamId)
-        && (isAdmin() || (request.resource.data.action == 'edit-pick-list' && canEditPickList()));
+        // P29: a scout editing their own form entry logs it ('edit-form-entry'); they still can't read the log
+        && (isAdmin() || (request.resource.data.action == 'edit-pick-list' && canEditPickList()) || request.resource.data.action == 'edit-form-entry');
       allow update, delete: if false;
     }
 

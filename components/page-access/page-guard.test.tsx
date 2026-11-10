@@ -93,11 +93,14 @@ describe("PageGuard", () => {
   });
 });
 
-describe("PageGuard: the P28 form pages", () => {
+describe("PageGuard: the P28 and P29 form pages", () => {
   const FORM_PAGES: [string, string[]][] = [
     ["/lead-scout-form", ["lead-scout"]],
     ["/match-strategy-form", ["lead-strategist"]],
     ["/drive-reflection-form", ["drive-team"]],
+    ["/pit-scout-form", ["pit-scout"]],
+    ["/team-strategy-form", ["lead-strategist"]],
+    ["/helper-form", ["pit-scout", "pit-team"]],
   ];
 
   beforeEach(() => {

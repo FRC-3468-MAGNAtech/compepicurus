@@ -6,6 +6,7 @@ import { EventHighlightsWidget, OpponentNamesWidget, ShareResultsWidget } from "
 import { MyAccuracyWidget, MySubmissionsWidget, NextAssignmentWidget, RecentPracticeWidget, ResumeWidget } from "@/components/dashboard/widgets/match-scout";
 import { LatestCommentsWidget, TeamCoverageWidget, TeamLookupWidget, ZeroEntryTeamsWidget } from "@/components/dashboard/widgets/pit-scout";
 import { PhaseVsEventWidget, ScoutsSawWidget } from "@/components/dashboard/widgets/pit-team";
+import { FormCoverageWidget, FormMissingTeamsWidget, HelperLogWidget } from "@/components/dashboard/widgets/team-forms";
 import { NextMatchWidget, OurResultsWidget, UpcomingMatchesWidget } from "@/components/dashboard/widgets/schedule-widgets";
 import { AttendanceWidget, EventOverviewWidget, InterventionWidget, ScoutingHealthWidget } from "@/components/dashboard/widgets/team-coach";
 import { StrengthBulletsWidget, TeamSummaryWidget } from "@/components/dashboard/widgets/judge";
@@ -33,10 +34,12 @@ export const dashboardRegistry: Record<RoleId, DashboardWidget[]> = {
   ],
 
   "pit-scout": [
+    { id: "pit-coverage", title: "Teams with a pit entry", size: "small", render: () => <FormCoverageWidget formType="pit-scout" title="Teams with a pit entry" noun="pit entry" href="/pit-scout-form" linkLabel="Pit Scout Form" /> },
+    { id: "pit-missing", title: "Teams without a pit entry", size: "medium", render: () => <FormMissingTeamsWidget formType="pit-scout" title="Teams without a pit entry" noun="pit entry" href="/pit-scout-form" linkLabel="Pit Scout Form" /> },
     { id: "team-coverage", title: "Teams scouted", size: "small", render: () => <TeamCoverageWidget /> },
     { id: "zero-entry-teams", title: "Teams with no entries", size: "medium", render: () => <ZeroEntryTeamsWidget /> },
     { id: "team-lookup", title: "Team lookup", size: "medium", render: () => <TeamLookupWidget /> },
-    { id: "pit-forms-soon", title: "Pit scouting forms", size: "small", render: () => <ComingSoonCard title="Pit scouting forms" description="Pit scouting isn't in the app yet." /> },
+    { id: "pit-helper-log", title: "Pit assists", size: "medium", render: () => <HelperLogWidget /> },
     { id: "latest-comments", title: "Latest scout comments", size: "wide", render: () => <LatestCommentsWidget /> },
   ],
 
@@ -45,6 +48,7 @@ export const dashboardRegistry: Record<RoleId, DashboardWidget[]> = {
     { id: "our-results", title: "Our results", size: "medium", render: () => <OurResultsWidget /> },
     { id: "scouts-saw", title: "What scouts saw on us", size: "wide", render: () => <ScoutsSawWidget /> },
     { id: "phases-vs-event", title: "Our phases vs the event", size: "medium", render: () => <PhaseVsEventWidget /> },
+    { id: "pit-helper-log", title: "Pit assists", size: "medium", render: () => <HelperLogWidget /> },
   ],
 
   "drive-team": [
@@ -68,6 +72,7 @@ export const dashboardRegistry: Record<RoleId, DashboardWidget[]> = {
     { id: "opponents", title: "Next-match opponents", size: "wide", render: () => <MatchPreviewWidget opponentsOnly /> },
     { id: "data-confidence", title: "Data confidence", size: "small", render: () => <DataConfidenceWidget /> },
     { id: "hidden-gems", title: "Hidden gems", size: "medium", render: () => <HiddenGemsWidget /> },
+    { id: "strategy-coverage", title: "Teams without a strategy entry", size: "medium", render: () => <FormMissingTeamsWidget formType="team-strategy" title="Teams without a strategy entry" noun="strategy entry" href="/team-strategy-form" linkLabel="Team Strategy Form" /> },
   ],
 
   "team-coach": [

@@ -116,6 +116,7 @@ const fieldSchema = z
           .object({
             id: z.string().regex(KEY),
             label,
+            shortLabel: z.string().trim().min(1).max(FORM_LIMITS.label).regex(CLEAN, "contains control characters").optional(),
             icon: z.string().regex(/^[a-z0-9-]{1,40}$/).optional(),
             maxCount: z.union([z.literal(1), z.literal(0)]),
             pin: z.union([z.literal("first"), z.literal("last"), z.null()]),

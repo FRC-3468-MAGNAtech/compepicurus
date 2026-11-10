@@ -52,6 +52,10 @@ export type FormRendererProps = {
   sectionTitle?: (section: FormSection) => string | undefined;
   /** P28: categories tinted with the chosen alliance's colour. */
   tintedSections?: ReadonlySet<string>;
+  /** P29: a line under a field (by its key), e.g. "Suggested from FIRST data: rookie year 2026". */
+  fieldHints?: Record<string, string>;
+  /** P29: with only one active event the event picker is left out (the page already uses that event). */
+  hideEventPickerIfSingle?: boolean;
 };
 
 const ALLIANCE = {
@@ -60,7 +64,7 @@ const ALLIANCE = {
 } as const;
 
 export function FormRenderer(props: FormRendererProps) {
-  const { form, values, onValuesChange, entry, onEntryChange, events, teams, allianceTeams, renderMatchPicker, errors = {}, photoTarget = null, onPendingPhotos, plan, onPlanChange, disabled, sectionTitle, tintedSections } = props;
+  const { form, values, onValuesChange, entry, onEntryChange, events, teams, allianceTeams, renderMatchPicker, errors = {}, photoTarget = null, onPendingPhotos, plan, onPlanChange, disabled, sectionTitle, tintedSections, fieldHints, hideEventPickerIfSingle } = props;
 
   const visible = useMemo(() => visibleFieldKeys(form, values), [form, values]);
   // Keys the person has changed themselves: the plan and the schedule never overwrite those.
@@ -124,14 +128,19 @@ export function FormRenderer(props: FormRendererProps) {
   // --- drawing ---------------------------------------------------------------------------------------------------------
   const control = (field: FormField, storageKey: string, extra: Partial<Parameters<typeof RenderedField>[0]> = {}) => {
     const note = noteFor(storageKey, field.key);
+    const hint = fieldHints?.[field.key];
     if (field.type === "checkbox") {
       return (
-        <div key={storageKey} className="flex items-center gap-1" data-field-key={storageKey}>
-          <CheckboxTile label={field.label} checked={values[storageKey] === true} disabled={disabled} onChange={(v) => setValue(storageKey, v)} />
-          {note && <PlanDiffIcon text={note} />}
+        <div key={storageKey} data-field-key={storageKey}>
+          <div className="flex items-center gap-1">
+            <CheckboxTile label={field.label} checked={values[storageKey] === true} disabled={disabled} onChange={(v) => setValue(storageKey, v)} />
+            {note && <PlanDiffIcon text={note} />}
+          </div>
+          {hint && <p className="mt-1 px-1 text-xs text-[var(--muted-foreground)]" data-testid={`hint-${field.key}`}>{hint}</p>}
         </div>
       );
     }
+    if (hint) extra = { ...extra, field: { ...field, helpText: hint } };
     return (
       <RenderedField
         key={storageKey}
@@ -154,6 +163,7 @@ export function FormRenderer(props: FormRendererProps) {
   const systemField = (field: FormField): ReactNode => {
     switch (field.type) {
       case "eventPicker":
+        if (hideEventPickerIfSingle && events.length === 1) return null;
         return (
           <div key={field.id} data-field-key={field.key}>
             <FieldLabel htmlFor="form-event" label={field.label} required />

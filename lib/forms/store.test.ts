@@ -211,7 +211,7 @@ describe("resolution and the active form per season", () => {
     await s.saveDraft(pitForm());
     const list = listFormSummaries(s.catalog());
     // the built-ins (BIOBUZZ and, since P28, Lead Scout, Match Strategy and Drive Reflection) and the custom form
-    expect(list.map((f) => f.id).sort()).toEqual(["biobuzz", "drive-reflection-v1", "lead-scout-v1", "match-strategy-v1", "pit-v1"]);
+    expect(list.map((f) => f.id).sort()).toEqual(["biobuzz", "drive-reflection-v1", "helper-v1", "lead-scout-v1", "match-strategy-v1", "pit-scout-v1", "pit-v1", "team-strategy-v1"]);
   });
 });
 

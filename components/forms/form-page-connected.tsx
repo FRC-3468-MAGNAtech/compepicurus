@@ -13,7 +13,8 @@ import { orderPrimaryFirst, pickDefaultActiveEvent } from "@/lib/active-events";
 import { useEventMatches, useEventTeams } from "@/lib/analytics/use-event-data";
 import { useAuth } from "@/lib/auth";
 import { formMatchKey } from "@/lib/form-entries-model";
-import { saveFormEntry, useFormEntries } from "@/lib/form-entries";
+import { editOwnFormEntry, saveFormEntry, useFormEntries } from "@/lib/form-entries";
+import { rookieSuggestion } from "@/lib/forms/pit-suggest";
 import type { PlanCandidate } from "@/lib/forms/compare";
 import { useForms } from "@/lib/forms/forms-context";
 import { getBuiltinForm } from "@/lib/forms/builtin";
@@ -36,7 +37,24 @@ function MatchPickerSlot({ label, event, matchKey, disabled, onPick }: { label: 
 }
 
 /** A match-based form page on live data: the account's active events, the FIRST schedule and teams, the plan entries, and `formEntries` for saving. */
-export function FormPage({ formId, title, subtitle }: { formId: string; title: string; subtitle: string }) {
+export function FormPage({
+  formId,
+  title,
+  subtitle,
+  hideEventPickerIfSingle,
+  photoKind,
+  assignedTeams,
+}: {
+  formId: string;
+  title: string;
+  subtitle: string;
+  /** P29: the Helper form leaves the event picker out while only one event is active. */
+  hideEventPickerIfSingle?: boolean;
+  /** P29: the photo path kind ("pit" for the Pit Scout Form). */
+  photoKind?: string;
+  /** P31: the person's assigned teams for this form at the chosen event, with whether each is done; omitted = no quick-pick. */
+  assignedTeams?: (eventCode: string | null) => { teamNumber: number; done: boolean }[] | null;
+}) {
   const { user, profile } = useAuth();
   const teamId = profile?.teamId ?? null;
   const forms = useForms();
@@ -58,6 +76,14 @@ export function FormPage({ formId, title, subtitle }: { formId: string; title: s
   const { entries } = useFormEntries(form?.compareWith ? teamId : null, { formId: form?.compareWith?.formId, eventCode: active?.code });
   const planEntries = useMemo<PlanCandidate[]>(() => entries.map((e) => ({ id: e.id, formId: e.formId, eventCode: e.eventCode, matchKey: e.matchKey, alliance: e.alliance, createdAtMs: e.createdAtMs, values: e.values })), [entries]);
 
+  // P29: this form's own entries at the event (a team can have several): "You already submitted" and Edit previous read them
+  const own = useFormEntries(teamId, { formId, eventCode: active?.code });
+  const hasRookie = !!form?.sections.some((sec) => sec.fields.some((f) => f.key === "rookie"));
+  const suggestFor = useMemo(
+    () => (hasRookie && active ? (n: number) => rookieSuggestion(teams.find((t) => t.teamNumber === n), active.season) : undefined),
+    [hasRookie, active, teams]
+  );
+
   if (!form || !loaded || !forms.loaded) return <Shimmer className="h-64" />;
   return (
     <PhotoUploadProvider>
@@ -74,6 +100,16 @@ export function FormPage({ formId, title, subtitle }: { formId: string; title: s
         teams={teamOptions}
         planEntries={planEntries}
         onEventChange={setEventCode}
+        myUid={user?.uid}
+        existingEntries={own.entries}
+        suggestFor={suggestFor}
+        hideEventPickerIfSingle={hideEventPickerIfSingle}
+        photoKind={photoKind}
+        assignedTeams={assignedTeams ? assignedTeams(active?.code ?? null) : null}
+        onUpdate={(entry, patch) => {
+          if (!teamId || !user || !profile) return Promise.reject(new Error("Not signed in."));
+          return editOwnFormEntry({ teamId, uid: user.uid, name: profile.name }, entry, patch);
+        }}
         renderMatchPicker={({ field, event, matchKey, disabled, onPick }) => <MatchPickerSlot label={field.label} event={event} matchKey={matchKey} disabled={disabled} onPick={onPick} />}
         onSave={(doc) => {
           if (!teamId || !user) return Promise.reject(new Error("Not signed in."));

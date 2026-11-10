@@ -1,5 +1,6 @@
 import { BIOBUZZ_FORM } from "@/lib/forms/builtin";
 import { DRIVE_REFLECTION_FORM, LEAD_SCOUT_FORM, MATCH_STRATEGY_FORM } from "@/lib/forms/builtin-team-forms";
+import { HELPER_FORM, PIT_SCOUT_FORM, TEAM_STRATEGY_FORM } from "@/lib/forms/builtin-pit-forms";
 import { createBlankForm } from "@/lib/forms/new-form";
 import type { Form } from "@/lib/forms/types";
 import { buildTemplateContent, type TemplateContent } from "@/lib/templates/build";
@@ -24,7 +25,11 @@ export function officialTemplates(): OfficialTemplate[] {
   const lead = buildTemplateContent({ form: LEAD_SCOUT_FORM, name: "Lead Scout", description: LEAD_SCOUT_FORM.description, tags: ["lead scout", "alliance", "official"] });
   const strategy = buildTemplateContent({ form: MATCH_STRATEGY_FORM, name: "Match Strategy", description: MATCH_STRATEGY_FORM.description, tags: ["strategy", "alliance", "official"] });
   const reflection = buildTemplateContent({ form: DRIVE_REFLECTION_FORM, name: "Drive Reflection", description: DRIVE_REFLECTION_FORM.description, tags: ["reflection", "alliance", "official"] });
-  const all = [biobuzz, blank, lead, strategy, reflection];
+  // P29: the team-based forms too
+  const pit = buildTemplateContent({ form: PIT_SCOUT_FORM, name: "Pit Scout", description: PIT_SCOUT_FORM.description, tags: ["pit scout", "team", "official"] });
+  const teamStrategy = buildTemplateContent({ form: TEAM_STRATEGY_FORM, name: "Team Strategy", description: TEAM_STRATEGY_FORM.description, tags: ["strategy", "team", "official"] });
+  const helper = buildTemplateContent({ form: HELPER_FORM, name: "Helper", description: HELPER_FORM.description, tags: ["helper", "team", "official"] });
+  const all = [biobuzz, blank, lead, strategy, reflection, pit, teamStrategy, helper];
   const failed = all.flatMap((r) => (r.ok ? [] : r.errors));
   if (failed.length > 0) throw new Error(`The official templates must be valid: ${failed.join("; ")}`);
   const content = (r: (typeof all)[number]) => (r as { ok: true; content: TemplateContent }).content;
@@ -34,5 +39,8 @@ export function officialTemplates(): OfficialTemplate[] {
     { id: "official-lead-scout", content: content(lead) },
     { id: "official-match-strategy", content: content(strategy) },
     { id: "official-drive-reflection", content: content(reflection) },
+    { id: "official-pit-scout", content: content(pit) },
+    { id: "official-team-strategy", content: content(teamStrategy) },
+    { id: "official-helper", content: content(helper) },
   ];
 }

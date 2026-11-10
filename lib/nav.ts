@@ -19,6 +19,9 @@ import {
   UserSearch,
   Route,
   RotateCcw,
+  Wrench,
+  Lightbulb,
+  HandHelping,
 } from "lucide-react";
 
 export type NavItem = {
@@ -37,6 +40,9 @@ export const mainNav: NavItem[] = [
   { href: "/lead-scout-form", label: "Lead Scout Form", icon: UserSearch },
   { href: "/match-strategy-form", label: "Match Strategy Form", icon: Route },
   { href: "/drive-reflection-form", label: "Drive Reflection Form", icon: RotateCcw },
+  { href: "/pit-scout-form", label: "Pit Scout Form", icon: Wrench },
+  { href: "/team-strategy-form", label: "Team Strategy Form", icon: Lightbulb },
+  { href: "/helper-form", label: "Helper Form", icon: HandHelping },
   { href: "/analytics", label: "Analytics", icon: BarChart3, matchPrefix: true },
   { href: "/practice-scouting", label: "Practice Scouting", icon: FlaskConical },
   { href: "/scout-accuracy", label: "Scout Accuracy", icon: Target },

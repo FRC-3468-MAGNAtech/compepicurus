@@ -90,6 +90,12 @@ export function formEntryDoc(teamId: string, uid: string, input: NewFormEntry, n
 
 const toMs = (v: unknown): number => (v && typeof v === "object" && "toMillis" in v && typeof (v as { toMillis: unknown }).toMillis === "function" ? (v as { toMillis: () => number }).toMillis() : typeof v === "number" ? v : 0);
 
+/** The keys whose stored value differs between two entries' values (for the audit log: it lists what changed, not the whole entry twice). */
+export function diffEntryValues(before: FormValues, after: FormValues): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...keys].filter((k) => JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null)).sort();
+}
+
 /** A stored document as a `FormEntry` (tolerant: a missing field gets its neutral value). */
 export function toFormEntry(id: string, data: Record<string, unknown>): FormEntry {
   return {
